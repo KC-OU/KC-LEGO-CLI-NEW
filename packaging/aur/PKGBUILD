@@ -1,0 +1,32 @@
+# Maintainer: Kieran Collins
+pkgname=wms-go
+pkgver=0.0.0        # set to the release version (without the v)
+pkgrel=1
+pkgdesc='LEGO collection CLI/TUI with ModernWMS and Part-DB tools (telnet + web terminal gateway)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/KC-OU/KC-LEGO-CLI-NEW'
+license=('MIT')
+makedepends=('go')
+optdepends=('docker: ModernWMS/Part-DB bridge' 'ttyd: web terminal gateway')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # replace with `makepkg -g` output for the tagged release
+
+build() {
+  cd "KC-LEGO-CLI-NEW-$pkgver"
+  export CGO_ENABLED=0
+  go build -trimpath -ldflags "-s -w -X main.version=$pkgver" -o wms ./cmd/wms
+}
+
+check() {
+  cd "KC-LEGO-CLI-NEW-$pkgver"
+  go test ./... -count=1
+}
+
+package() {
+  cd "KC-LEGO-CLI-NEW-$pkgver"
+  install -Dm755 wms "$pkgdir/usr/bin/wms"
+  install -Dm644 deploy/systemd/wms-gateway.service "$pkgdir/usr/lib/systemd/system/wms-gateway.service"
+  install -Dm644 deploy/systemd/wms-sync.service "$pkgdir/usr/lib/systemd/system/wms-sync.service"
+  install -Dm644 config.example.env "$pkgdir/etc/wms-go/wms-go.env.example"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

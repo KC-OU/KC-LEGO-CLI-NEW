@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: wms-go
+
+builds:
+  - id: wms
+    main: ./cmd/wms
+    binary: wms
+    env: [CGO_ENABLED=0]
+    # The gateway and plugin sandbox use Unix APIs (flock, process groups), so Windows is not a target.
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+
+archives:
+  - id: wms
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - config.example.env
+      - src: deploy/systemd/*.service
+        dst: systemd
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+nfpms:
+  - id: packages
+    package_name: wms-go
+    vendor: KC-OU
+    homepage: https://github.com/KC-OU/KC-LEGO-CLI-NEW
+    maintainer: Kieran Collins <noreply@users.noreply.github.com>
+    description: LEGO collection CLI/TUI with ModernWMS and Part-DB tools (telnet + web terminal gateway)
+    license: MIT
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: deploy/systemd/wms-gateway.service
+        dst: /lib/systemd/system/wms-gateway.service
+      - src: deploy/systemd/wms-sync.service
+        dst: /lib/systemd/system/wms-sync.service
+      - src: config.example.env
+        dst: /etc/wms-go/wms-go.env.example
+        type: config|noreplace
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]
+
+release:
+  github:
+    owner: KC-OU
+    name: KC-LEGO-CLI-NEW
+  draft: false
+  prerelease: auto

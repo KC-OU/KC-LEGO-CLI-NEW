@@ -1,0 +1,83 @@
+site_name: KC-LEGO-CLI-NEW
+site_description: A LEGO collection manager for the terminal that keeps working offline
+site_url: https://kc-ou.github.io/KC-LEGO-CLI-NEW/
+repo_url: https://github.com/KC-OU/KC-LEGO-CLI-NEW
+repo_name: KC-OU/KC-LEGO-CLI-NEW
+edit_uri: edit/main/docs/
+copyright: MIT licensed. Data from Rebrickable. LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse this project.
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: red
+      accent: amber
+      toggle: {icon: material/brightness-7, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: red
+      accent: amber
+      toggle: {icon: material/brightness-4, name: Switch to light mode}
+
+extra_css:
+  - assets/terminal.css
+
+# Generated at build time (see docs/README.md), never hand-edited.
+exclude_docs: |
+  QA.md
+  README.md
+  requirements.txt
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      base_path: .
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guides:
+      - Adding parts: guides/adding-parts.md
+      - Offline mode: guides/offline-mode.md
+      - Search, detail pages and pictures: guides/search-and-pictures.md
+      - Sets, missing parts and what to build: guides/sets-and-building.md
+      - BrickLink: guides/bricklink.md
+      - History and restore: guides/history.md
+      - Keys, palette and accessibility: guides/keys-and-accessibility.md
+      - Launcher and Script Hub: guides/launcher.md
+      - Plugins: guides/plugins.md
+      - Export and import: guides/export-import.md
+      - Alerts: guides/alerts.md
+      - Backups: guides/backups.md
+      - Telnet and the web terminal: guides/telnet-and-web.md
+      - Security: guides/security.md
+      - "Shipping: preflight, deploy, publish": guides/shipping.md
+  - Reference:
+      - Settings: reference/config.md
+      - Command reference: reference/cli/index.md
+      - Notes from the original suite: reference/legacy-notes.md

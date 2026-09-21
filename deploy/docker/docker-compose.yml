@@ -1,0 +1,25 @@
+# The sync engine, REST API and Prometheus exporter (`wms sync serve`) as a container.
+# The container name differs from the original Python stack's (wms-sync vs partdb-sync)
+# so both can run side by side while you switch over. Adjust the volume paths to your install.
+services:
+  wms-sync:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: wms-sync
+    restart: always
+    ports:
+      - "8083:8082"
+    volumes:
+      - /root/docker-server/partdb/db:/partdb_db:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config:/config
+    environment:
+      PARTDB_DB_PATH: /partdb_db/app.db
+      MODERNWMS_CONTAINER: modernwms
+      PORT: "8082"
+      # Your public addresses (used for links); set them in a .env file next to this one.
+      PARTDB_URL: ${PARTDB_URL:-}
+      MODERNWMS_URL: ${MODERNWMS_URL:-}
+      CREDENTIALS_FILE: /config/credentials.json
+      LINK_OVERRIDES_FILE: /config/link_overrides.json

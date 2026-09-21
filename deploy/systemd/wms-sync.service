@@ -1,0 +1,17 @@
+[Unit]
+Description=wms-go sync engine, REST API and Prometheus exporter
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/wms-go sync serve
+EnvironmentFile=-/etc/wms-go/wms-go.env
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

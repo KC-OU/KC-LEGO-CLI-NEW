@@ -1,0 +1,14 @@
+/* Screens in the docs are real terminal output, drawn as text. */
+pre.term {
+  background: #0c0c0c;
+  color: #cccccc;
+  font-family: "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.72rem;
+  line-height: 1.12;
+  padding: 0.9rem 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+pre.term span { white-space: pre; }
