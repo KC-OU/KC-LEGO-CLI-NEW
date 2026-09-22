@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 	th := NewThrottle()
 
 	for _, port := range listenPorts {
-		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenHost, port))
+		ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, strconv.Itoa(port)))
 		if err != nil {
 			return fmt.Errorf("listening on port %d: %w", port, err)
 		}

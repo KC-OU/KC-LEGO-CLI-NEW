@@ -3,6 +3,7 @@ package lego
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 )
@@ -71,6 +72,62 @@ func (s *PartSyncer) SyncNow(ctx context.Context) (*PartSyncResult, error) {
 			res.Updated++
 		default:
 			res.Unchanged++
+		}
+	}
+	return res, nil
+}
+
+// SetPushResult is what PushSet did.
+type SetPushResult struct {
+	LocationID     int
+	Lines, Created int
+	Changed        int
+	Errors         []error
+}
+
+// PushSet makes Part-DB hold a checked set's parts in the set's own storage
+// location ("LEGO / Sets / <num> <name>"): every part+colour gets a lot there with
+// the count you have, so a stock check can count the set on its own. Parts are
+// shared with your loose stock (same IPN); only the set's lot is touched.
+func (s *PartSyncer) PushSet(ctx context.Context, c *SetCheck, setName string) (*SetPushResult, error) {
+	if !s.Writer.API().Enabled() {
+		return nil, partdb.ErrNoToken
+	}
+	name := strings.TrimSpace(c.SetNum + " " + setName)
+	loc, err := s.Writer.ResolveLocation(ctx, append(append([]string{}, partdb.SetsLocationPath...), name))
+	if err != nil {
+		return nil, err
+	}
+	_ = s.Lego.SetPDBLocation(c.SetNum, loc)
+	res := &SetPushResult{LocationID: loc}
+	cats := map[string]int{}
+	for _, l := range c.Lines {
+		res.Lines++
+		catID, ok := cats[l.Category]
+		if !ok {
+			if catID, err = s.Writer.ResolveCategory(ctx, CategoryPath(l.Category)); err != nil {
+				res.Errors = append(res.Errors, fmt.Errorf("%s: %w", l.PartNum, err))
+				continue
+			}
+			cats[l.Category] = catID
+		}
+		spec := SpecFor(OwnedPart{PartNum: l.PartNum, Name: l.PartName, Category: l.Category, ColorID: l.ColorID, ColorName: l.ColorName}, catID)
+		spec.MinAmount = nil // a set's parts don't change the part's minimum
+		id, created, err := s.Writer.EnsurePart(ctx, spec)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", l.PartNum, err))
+			continue
+		}
+		if created {
+			res.Created++
+		}
+		prev, err := s.Writer.SetLotAt(ctx, id, loc, float64(min(l.Have, l.Need)))
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", l.PartNum, err))
+			continue
+		}
+		if prev != float64(min(l.Have, l.Need)) {
+			res.Changed++
 		}
 	}
 	return res, nil

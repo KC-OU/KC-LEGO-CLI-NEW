@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 )
 
@@ -92,6 +94,12 @@ type Env struct {
 
 	// Trap is a folder handed to the tests as every writable path; it must still be empty afterwards.
 	Trap string
+	// Workers is how many checks run at once (0 = up to 4).
+	Workers int
+	// ToolDir caches the analysis tools (staticcheck, govulncheck, gosec) between runs.
+	ToolDir string
+
+	exportMu sync.Mutex
 }
 
 func (e *Env) run(ctx context.Context, name string, args ...string) (string, error) {
@@ -137,27 +145,44 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// Execute runs the checks in order. A check that panics is a failure, not a crash. When ctx ends the
-// remaining checks are skipped.
+// Execute runs the checks, several at a time (Env.Workers, default up to 4: they
+// are mostly separate go tool runs), and returns the outcomes in the checks' order.
+// A check that panics is a failure, not a crash. When ctx ends the remaining checks
+// are skipped. on is called from one goroutine at a time.
 func Execute(ctx context.Context, e *Env, checks []Check, on func(Event)) []Outcome {
-	out := make([]Outcome, 0, len(checks))
-	for i, c := range checks {
+	out := make([]Outcome, len(checks))
+	workers := e.Workers
+	if workers <= 0 {
+		workers = min(4, max(1, runtime.NumCPU()))
+	}
+	var mu sync.Mutex
+	report := func(ev Event) {
 		if on != nil {
-			on(Event{Index: i, Total: len(checks), Check: c})
-		}
-		start := time.Now()
-		var r Result
-		if ctx.Err() != nil {
-			r = Skipped("interrupted")
-		} else {
-			r = safeRun(ctx, e, c)
-		}
-		o := Outcome{Check: c, Result: r, Duration: time.Since(start)}
-		out = append(out, o)
-		if on != nil {
-			on(Event{Index: i, Total: len(checks), Check: c, Done: true, Outcome: o})
+			mu.Lock()
+			on(ev)
+			mu.Unlock()
 		}
 	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for i, c := range checks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			report(Event{Index: i, Total: len(checks), Check: c})
+			start := time.Now()
+			var r Result
+			if ctx.Err() != nil {
+				r = Skipped("interrupted")
+			} else {
+				r = safeRun(ctx, e, c)
+			}
+			out[i] = Outcome{Check: c, Result: r, Duration: time.Since(start)}
+			report(Event{Index: i, Total: len(checks), Check: c, Done: true, Outcome: out[i]})
+		}()
+	}
+	wg.Wait()
 	return out
 }
 

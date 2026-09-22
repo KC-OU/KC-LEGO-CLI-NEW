@@ -260,3 +260,46 @@ func (r *Report) broke(line int, why string) *Report {
 	r.BrokenAt, r.BrokenWhy = line, why
 	return r
 }
+
+// SignIn is a user's previous successful sign-in and the failed attempts since.
+type SignIn struct {
+	At          time.Time
+	From        string
+	FailedSince int
+}
+
+// LastSignIn finds the user's sign-in before the current one (the newest success
+// is the session just started) and counts failed attempts for that name since.
+func (l *Logger) LastSignIn(user string) (SignIn, bool) {
+	lines, err := l.Tail(20000)
+	if err != nil {
+		return SignIn{}, false
+	}
+	needle := "USER:" + Sanitize(user, 64) + " |"
+	seen := 0
+	failed := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := lines[i]
+		if !strings.Contains(ln, needle) || !strings.Contains(ln, "ACTION:LOGIN") {
+			continue
+		}
+		switch {
+		case strings.Contains(ln, "STATUS:SUCCESS") && (strings.Contains(ln, "ACTION:LOGIN_MODERNWMS") || strings.Contains(ln, "ACTION:LOGIN_PARTDB")):
+			seen++
+			if seen == 2 {
+				var si SignIn
+				if len(ln) > 21 {
+					si.At, _ = time.ParseInLocation("2006-01-02 15:04:05", ln[1:20], time.Local)
+				}
+				if j := strings.Index(ln, "DETAILS:from "); j >= 0 {
+					si.From = strings.TrimSpace(ln[j+len("DETAILS:from "):])
+				}
+				si.FailedSince = failed
+				return si, true
+			}
+		case seen >= 1 && strings.Contains(ln, "ACTION:LOGIN |") && strings.Contains(ln, "STATUS:FAILED"):
+			failed++
+		}
+	}
+	return SignIn{}, false
+}

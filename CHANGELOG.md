@@ -5,6 +5,40 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- **Set checks**: adding a set opens its whole parts list with every line marked have-all; mark what is **missing** (M) or
+  **extra** (E), type counts, filter, undo, save for later. Finishing records who checked it, puts the set's parts into
+  Part-DB in their own location (`LEGO / Sets / <num> <name>`, synced on to ModernWMS), turns extras into loose parts that
+  remember their set (other sets short of that part can take them), and flags the set **INCOMPLETE**. Stock checks recount
+  a set, with a **barcode-scanner mode**. `wms lego check`.
+- **Missing parts and orders**: BrickLink and **BrickOwl** prices, shop links and QR codes (BrickLink, BrickOwl, Rebrickable,
+  Pick a Brick), a shopping list export, **orders** with supplier, invoice and tracking numbers, shipping and prices paid,
+  through to received (which completes the set). **Completion dashboard** and **spend report**. `wms lego shopping`,
+  `wms lego orders`, `wms lego spend`.
+- **Labels** for thermal printers (4x6, 100x150, Brother QL 62 mm, 50x30, 40x30) and A4 / Letter sheets, with QR code and
+  Code 128 barcode, as PDF and HTML. `wms lego labels`.
+- **Control-room sign-on and dashboard**: logo, live system status, collection figures, alerts, message of the day, clock,
+  last sign-in and failed attempts since. `wms motd`.
+- **Notifications** to Discord, Slack, Telegram, Teams, Google Chat, email, Pushover, Gotify and webhooks (WhatsApp),
+  configured with a projectdiscovery/notify provider file and routed per event. `wms notify channels|route|test`.
+- **`wms publish`**: one new commit on top of the public repository; a much faster preflight (parallel checks, cached tools,
+  cached tests). Docs are hosted by GitHub Pages only.
+- Set location and condition (`wms lego set-info`), a sorting-friendly parts list per set.
+- **Access control** ([guide](docs/guides/access-control.md)): groups with a Part-DB-style allow/deny grid (12 areas), per-user
+  overrides, six starter groups (admin, operator, viewer, builder, exporter, stock-clerk). Hidden options, audited denials. A 2FA policy
+  per user (required / exempt / default), exemptions limited to restricted groups, networks, channels and an expiry date. Per-user and
+  global 2FA remember window, idle lock and a new maximum session length; export retention and download-link lifetime. Managed in
+  *Admin → Access Control* and with `wms access`. Users without an entry keep their ModernWMS role's access.
+- **Export from the interface (X)** on Missing Parts, Part / Set Detail, Owned Parts and What Can I Build: JSON with pictures embedded,
+  a real **Excel .xlsx** (picture link per part), CSV, a web page with pictures, BrickLink and Rebrickable lists.
+- **QR-code downloads**: an export made over telnet shows a one-time, 15-minute https link as a QR code to scan onto your phone
+  (`WMS_PUBLIC_URL`; served by the web gateway at `/dl/`, audited).
+- `wms lego export --format xlsx`, `--with-images`; `wms lego detail <part|set> --export json|xlsx|html`.
+- **Themes**: nord, gruvbox, catppuccin, tokyo-night, ibm-3270, matrix, lego, dracula and half-life; a **live-preview picker**, and
+  **per-user themes** (Ctrl-K → My display theme).
+- **Achievements** (Collection Stats → A, `wms lego achievements`) and **Set of the Day**, a daily build challenge (LEGO hub → T,
+  `wms lego today`).
+- A themed **sign-on animation** (skippable; `MODERNWMS_TUI_SPLASH=0`), and the `export_done` plugin event.
+- `GATEWAY_LISTEN_HOST` (default `127.0.0.1`): telnet and the web terminal no longer listen on every interface.
 - **Offline-first LEGO data.** The whole Rebrickable catalog (parts, colours, sets, themes, minifigures, every set's parts list,
   part equivalences) is kept locally; search, adding parts and sets, and missing-parts all work with no API key and no network.
   `wms lego catalog refresh [--from-dir]`, `wms lego search`.

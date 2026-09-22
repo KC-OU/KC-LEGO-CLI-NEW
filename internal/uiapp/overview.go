@@ -14,12 +14,22 @@ import (
 type overviewScreen struct {
 	base
 	body string
+	kpi  bool // K: the ModernWMS / Part-DB KPI table instead of the control room
 }
 
 func (s *overviewScreen) PanelID() string { return "OVERVW" }
 func (s *overviewScreen) Title() string   { return "Executive Dual-System Overview" }
 
 func (s *overviewScreen) OnEnter(app *App) {
+	s.kpi = false
+	app.coll = nil
+	if app.sys == nil {
+		app.pendingCmd = app.statusCmd()
+	}
+}
+
+// loadKPIs builds the ModernWMS / Part-DB KPI table (key K).
+func (s *overviewScreen) loadKPIs(app *App) {
 	ctx := app.ctx()
 	var rows [][]string
 
@@ -116,5 +126,29 @@ func sparkline(val, max, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }
 
-func (s *overviewScreen) Body(app *App) string               { return s.body }
-func (s *overviewScreen) HandleKey(app *App, msg tea.KeyMsg) {}
+func (s *overviewScreen) Body(app *App) string {
+	if s.kpi {
+		return s.body + "\n\n" + app.theme.Muted.Render("K back to the control room")
+	}
+	return dashboardBody(app)
+}
+
+func (s *overviewScreen) HandleKey(app *App, msg tea.KeyMsg) {
+	switch {
+	case isKey(msg, 'k'):
+		s.kpi = !s.kpi
+		if s.kpi {
+			s.loadKPIs(app)
+		}
+	case isKey(msg, 'c'):
+		app.goTo(scrCompletion)
+	case isKey(msg, 'o'):
+		app.goTo(scrOrders)
+	case isKey(msg, 'w'):
+		app.goTo(scrWorkshop)
+	case isKey(msg, 'r'):
+		app.coll = nil
+		app.pendingCmd = app.statusCmd()
+		app.setMsg("Refreshing…", false)
+	}
+}

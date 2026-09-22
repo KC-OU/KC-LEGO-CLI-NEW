@@ -55,7 +55,9 @@ func newGatewayServeCmd() *cobra.Command {
 				if err := sender.Validate(); err != nil {
 					return err
 				}
-				mon := notify.NewMonitor(sender.Send, audit.New(), config.Get(config.ModernWMSBackupDir))
+			}
+			if notify.Enabled() { // notify channels and/or the ntfy / webhook sender
+				mon := notify.NewMonitor(notify.Routed, audit.New(), config.Get(config.ModernWMSBackupDir))
 				mon.LowStock = lowStockLines
 				mon.PriceDrops = priceDropLines
 				mon.OnEvent = func(event string, lines []string) {
@@ -69,8 +71,9 @@ func newGatewayServeCmd() *cobra.Command {
 			}
 
 			g, gctx := errgroup.WithContext(ctx)
-			g.Go(func() error { return gateway.RunTelnetServer(gctx, "0.0.0.0", ports, wmsBinaryPath) })
-			g.Go(func() error { return gateway.RunWebGateway(gctx, gatewayPort, ttydPort, wmsBinaryPath) })
+			host := config.Get(config.GatewayListenHost)
+			g.Go(func() error { return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath) })
+			g.Go(func() error { return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath) })
 			return g.Wait()
 		},
 	}

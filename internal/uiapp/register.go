@@ -1,6 +1,16 @@
 package uiapp
 
 func buildScreens(app *App) map[string]screenModel {
+	m := buildCoreScreens(app)
+	for _, more := range []map[string]screenModel{accessScreens(), workshopScreens(), notifyScreens(), {scrLabels: &labelsScreen{}}} {
+		for id, s := range more {
+			m[id] = s
+		}
+	}
+	return m
+}
+
+func buildCoreScreens(app *App) map[string]screenModel {
 	return map[string]screenModel{
 		scrLogin:        loginScreen(app),
 		scrTwoFACode:    twoFAScreen(app),
@@ -52,31 +62,35 @@ func buildScreens(app *App) map[string]screenModel {
 		scrSettingsSyncAdmin:   settingsSyncAdminScreen(),
 		scrSettings2FA:         settings2FAScreen(),
 		scrSettingsPartDB:      settingsPartDBScreen(),
-		scrSettingsTheme:       settingsThemeScreen(),
+		scrSettingsTheme:       &themeScreen{admin: true},
+		scrMyTheme:             &themeScreen{},
 		scrSettingsBrickLink:   settingsBrickLinkScreen(),
 		scrLegoBLAsk:           legoBLAskScreen(),
 		scrLegoBLResult:        legoBLResultScreen(),
 
-		scrLegoHub:         legoHubScreen(),
-		scrLegoSetSearch:   legoSetSearchScreen(),
-		scrLegoSetResults:  legoSetResultsScreen(),
-		scrLegoSetLookup:   legoSetLookupScreen(),
-		scrLegoSetDetail:   legoSetDetailScreen(),
-		scrLegoSetAdd:      legoSetAddScreen(),
-		scrLegoSetConfirm:  legoSetConfirmScreen(),
-		scrLegoSetFind:     legoSetFindScreen(),
-		scrLegoSetFound:    legoSetFoundScreen(),
-		scrLegoSetFoundAdd: legoSetFoundAddScreen(),
-		scrLegoPartSearch:  legoPartSearchScreen(),
-		scrLegoPartResults: legoPartResultsScreen(),
-		scrLegoPartAdd:     partAddScreen(scrLegoPartAdd),
-		scrLegoPartOwned:   legoPartOwnedScreen(),
-		scrLegoStats:       legoStatsScreen(),
-		scrLegoBuild:       legoBuildScreen(),
-		scrLegoHistory:     legoHistoryScreen(),
-		scrLegoDetailAsk:   legoDetailAskScreen(),
-		scrLegoDetail:      &detailScreen{},
-		scrLegoMissingAsk:  legoMissingAskScreen(),
-		scrLegoMissing:     legoMissingScreen(),
+		scrLegoHub:          legoHubScreen(),
+		scrLegoSetSearch:    legoSetSearchScreen(),
+		scrLegoSetResults:   legoSetResultsScreen(),
+		scrLegoSetLookup:    legoSetLookupScreen(),
+		scrLegoSetDetail:    legoSetDetailScreen(),
+		scrLegoSetAdd:       legoSetAddScreen(),
+		scrLegoSetConfirm:   legoSetConfirmScreen(),
+		scrLegoSetFind:      legoSetFindScreen(),
+		scrLegoSetFound:     legoSetFoundScreen(),
+		scrLegoSetFoundAdd:  legoSetFoundAddScreen(),
+		scrLegoPartSearch:   legoPartSearchScreen(),
+		scrLegoPartResults:  legoPartResultsScreen(),
+		scrLegoPartAdd:      partAddScreen(scrLegoPartAdd),
+		scrLegoPartOwned:    legoPartOwnedScreen(),
+		scrLegoStats:        legoStatsScreen(),
+		scrLegoBuild:        legoBuildScreen(),
+		scrLegoHistory:      legoHistoryScreen(),
+		scrLegoDetailAsk:    legoDetailAskScreen(),
+		scrLegoDetail:       &detailScreen{},
+		scrLegoMissingAsk:   legoMissingAskScreen(),
+		scrLegoMissing:      legoMissingScreen(),
+		scrExport:           &exportScreen{},
+		scrSetCheck:         &setCheckScreen{},
+		scrLegoAchievements: &achievementsScreen{},
 	}
 }

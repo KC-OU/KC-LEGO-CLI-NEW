@@ -278,6 +278,9 @@ func TestConfirmPromptsAppearOneAtATime(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	for i := 0; i < 3; i++ { // location, condition, check the parts now (prefilled)
+		app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	}
 	for _, r := range "yes" {
 		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}

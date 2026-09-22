@@ -486,3 +486,26 @@ func fitWidths(widths []int, avail int) {
 		}
 	}
 }
+
+// AchievementLine is one milestone: a filled or hollow star, the name, a progress
+// bar and the count. The star is backed by the word DONE where the theme spells
+// meaning out (Labels), so it never rests on a glyph or colour alone.
+func AchievementLine(t Theme, name, desc string, have, goal int) string {
+	const barW = 12
+	done := have >= goal
+	filled := barW
+	if !done && goal > 0 {
+		filled = min(barW, have*barW/goal)
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barW-filled)
+	star, style := "☆", t.Muted
+	if done {
+		star, style = "★", t.Success
+	}
+	label := ""
+	if done && t.Labels {
+		label = " DONE"
+	}
+	return fmt.Sprintf(" %s %s %s %s %s", style.Render(star), t.Strong.Render(fmt.Sprintf("%-16s", name)), style.Render(bar),
+		t.Text.Render(fmt.Sprintf("%d/%d%s", have, goal, label)), t.Muted.Render(desc))
+}

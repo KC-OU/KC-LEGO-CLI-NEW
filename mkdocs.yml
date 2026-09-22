@@ -66,6 +66,9 @@ nav:
       - Offline mode: guides/offline-mode.md
       - Search, detail pages and pictures: guides/search-and-pictures.md
       - Sets, missing parts and what to build: guides/sets-and-building.md
+      - Set checks and stock checks: guides/set-checks.md
+      - Missing parts, prices and orders: guides/missing-parts-and-orders.md
+      - Labels: guides/labels.md
       - BrickLink: guides/bricklink.md
       - History and restore: guides/history.md
       - Keys, palette and accessibility: guides/keys-and-accessibility.md
@@ -73,9 +76,11 @@ nav:
       - Plugins: guides/plugins.md
       - Export and import: guides/export-import.md
       - Alerts: guides/alerts.md
+      - Notifications: guides/notifications.md
       - Backups: guides/backups.md
       - Telnet and the web terminal: guides/telnet-and-web.md
       - Security: guides/security.md
+      - Access control: guides/access-control.md
       - "Shipping: preflight, deploy, publish": guides/shipping.md
   - Reference:
       - Settings: reference/config.md

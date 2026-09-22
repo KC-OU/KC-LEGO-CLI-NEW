@@ -1,5 +1,8 @@
 # Alerts
 
+For Discord, Slack, Telegram, Teams, email, WhatsApp and routing events to channels, see [Notifications](notifications.md);
+this page covers what the gateway watches for.
+
 Off unless you set `NOTIFY_URL`. Then the gateway watches for things worth a message and sends **at most one alert per kind per cooldown**.
 
 ```bash

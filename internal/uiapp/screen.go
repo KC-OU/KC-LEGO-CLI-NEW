@@ -36,9 +36,22 @@ func (base) ActiveForm() *ui.FieldList { return nil }
 
 // menuOption is one AS/400-style numbered/lettered menu line.
 type menuOption struct {
-	Key   string
-	Label string
-	Go    func(app *App)
+	Key    string
+	Label  string
+	Go     func(app *App)
+	Hidden bool   // works from the keyboard but is not listed (a key a note on the screen names)
+	Perm   string // the permission it needs (see access.go); without it the option is hidden
+}
+
+// shown is the options that are listed, in order.
+func (s *menuScreen) shown(app *App) []menuOption {
+	var out []menuOption
+	for _, o := range s.options(app) {
+		if !o.Hidden && app.can(o.Perm) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // menuScreen renders "Select one of the following:" and dispatches a single
@@ -79,7 +92,7 @@ func (s *menuScreen) Body(app *App) string {
 }
 
 func (s *menuScreen) menuBody(app *App) string {
-	opts := s.options(app)
+	opts := s.shown(app)
 	rendered := make([][2]string, len(opts))
 	for i, o := range opts {
 		rendered[i] = [2]string{o.Key, o.Label}
@@ -102,7 +115,7 @@ func (s *menuScreen) menuBody(app *App) string {
 func (s *menuScreen) selectLabel(app *App) string {
 	hi := 0
 	var letters []string
-	for _, o := range s.options(app) {
+	for _, o := range s.shown(app) {
 		switch k := o.Key; {
 		case len(k) == 1 && k[0] >= '1' && k[0] <= '9':
 			hi = max(hi, int(k[0]-'0'))
@@ -131,7 +144,9 @@ func (s *menuScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	key := strings.ToLower(string(msg.Runes[0]))
 	for _, o := range s.options(app) {
 		if strings.ToLower(o.Key) == key {
-			o.Go(app)
+			if app.require(o.Perm, "menu "+s.panelID+" "+o.Key) {
+				o.Go(app)
+			}
 			return
 		}
 	}
@@ -141,7 +156,7 @@ func (s *menuScreen) HandleKey(app *App, msg tea.KeyMsg) {
 // App.handleMouse): it triggers whichever option was drawn on bodyRow, the
 // same action a keypress on that option's Key would.
 func (s *menuScreen) HandleClick(app *App, bodyRow int) {
-	for i, o := range s.options(app) {
+	for i, o := range s.shown(app) {
 		if bodyRow == ui.MenuOptionBodyRow(app.theme, i) {
 			o.Go(app)
 			return

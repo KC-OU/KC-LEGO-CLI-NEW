@@ -38,6 +38,11 @@ func newTestEnv(t *testing.T) (*App, *partdbtest.Fake) {
 	t.Setenv(config.LegoDBPath, filepath.Join(dir, "lego.db"))
 	t.Setenv(config.ImageDir, filepath.Join(dir, "imgcache"))
 	t.Setenv(config.PluginDir, filepath.Join(dir, "plugins"))
+	t.Setenv(config.ExportDir, filepath.Join(dir, "exports"))
+	t.Setenv(config.UserPrefsFile, filepath.Join(dir, "user-prefs.json"))
+	t.Setenv(config.AccessFile, filepath.Join(dir, "access.json"))
+	t.Setenv(config.PublicURL, "")
+	t.Setenv(config.TUISplash, "0")
 	t.Setenv(config.RebrickableAPIKey, "")
 	// Nothing in a test may reach a real service, whatever the machine's environment holds.
 	t.Setenv("REBRICKABLE_BASE_URL", "http://127.0.0.1:1")

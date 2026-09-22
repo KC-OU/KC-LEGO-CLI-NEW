@@ -115,7 +115,9 @@ func newPreflightCmd() *cobra.Command {
 				Repository:   envOr("WMS_PUBLISH_REPO", "KC-OU/KC-LEGO-CLI-NEW"),
 				Module:       envOr("WMS_MODULE", "github.com/KC-OU/KC-LEGO-CLI-NEW"),
 				Scratch:      scratch,
-				Trap:         filepath.Join(scratch, "trap"),
+				// A fixed trap folder (emptied each run): the tests read these paths, and a path that
+				// changed every run would defeat Go's test cache.
+				Trap: preflightTrap(home),
 			}
 			for _, s := range []string{"deploy.sh", "publish.sh"} {
 				if p := filepath.Join(repo, "scripts", s); fileExists(p) {
@@ -219,4 +221,10 @@ func loadToolEnv() {
 // livePaths identifies the machine a verdict was earned on: the database and settings it looked at.
 func livePaths() string {
 	return config.Get(config.LegoDBPath) + "|" + config.Get(config.SettingsFile)
+}
+
+func preflightTrap(home string) string {
+	dir := filepath.Join(home, ".cache", "wms-preflight", "trap")
+	_ = os.RemoveAll(dir)
+	return dir
 }

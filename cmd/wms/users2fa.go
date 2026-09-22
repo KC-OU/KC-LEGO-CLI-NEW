@@ -9,6 +9,7 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -128,6 +129,12 @@ func newUsers2FAStatusCmd() *cobra.Command {
 				}
 			}
 			say(ui.Fact(t, username+" ("+source+")", label))
+			if p, err := access.Load(); err == nil {
+				if u := p.Users[access.Key(source, username)]; u != nil {
+					mode := map[string]string{"": "default (required over telnet/web)", "required": "always required", "exempt": "EXEMPT"}[u.TwoFA]
+					say(ui.Fact(t, "Access policy", mode+cidrNote(u)+", channels "+orDash(strings.Join(u.Channels, ","))+", expires "+orDash(u.Expires)))
+				}
+			}
 			return nil
 		},
 	}

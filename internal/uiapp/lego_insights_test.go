@@ -40,7 +40,7 @@ func TestMinimumIsSetInTheFlowShownAsLowAndClearedByRestocking(t *testing.T) {
 	}
 	app.cur, app.stack = scrHub, nil
 	app.goTo(scrOverview)
-	if out := plain(app.View()); !strings.Contains(out, "LEGO Parts Below Minimum") || !strings.Contains(out, "1 LOW") {
+	if out := plain(app.View()); !strings.Contains(out, "1 part(s) LOW") {
 		t.Errorf("Overview must show it:\n%s", out)
 	}
 

@@ -182,7 +182,7 @@ func TestNoColorWinsOverAnyThemeAndEmitsNoColourCodes(t *testing.T) {
 
 func TestThemeSelectionByName(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
-	for name, want := range map[string]string{"": "green", "nonsense": "green", "AMBER": "amber", "high-contrast": "high-contrast", "colorblind": "colorblind"} {
+	for name, want := range map[string]string{"": "green", "nonsense": "green", "AMBER": "amber", "high-contrast": "high-contrast", "colorblind": "colorblind", "Dracula": "dracula", "half-life": "half-life", "hev": "half-life", "Tokyo": "tokyo-night", "3270": "ibm-3270", "lego": "lego", "matrix": "matrix"} {
 		t.Setenv("MODERNWMS_TUI_THEME", name)
 		if got := New().Name; got != want {
 			t.Errorf("theme %q -> %q, want %q", name, got, want)

@@ -4,12 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -56,19 +55,15 @@ func cleartextNote(app *App) string {
 // where none of the header/tab bar/legend chrome exists before login.
 
 func loginScreen(app *App) screenModel {
-	s := &formScreen{panelID: "SIGNON", title: "ModernWMS & Part-DB Sign On", build: loginFields, submit: doLoginSubmit}
+	s := &formScreen{panelID: "SIGNON", title: "ModernWMS & Part-DB Sign On", build: loginFields, submit: doLoginSubmit, preamble: signOnPreamble}
 	if app.theme.Classic {
 		s.title = "ModernWMS & PartDB Terminal Suite - Secure Login"
 		s.bare = true
 		s.preamble = func(app *App) string {
 			t := app.theme
-			// Verbatim from login_prompt. "tap Quit" is real in touch mode:
-			// App.handleMouse quits on a tap of this row.
-			out := loginPanel(app) + "\n  " + t.Danger.Render("[Q] Quit / Exit Suite") + " " + t.Muted.Render("(Press Q / ESC / tap Quit anytime to exit)")
-			if note := cleartextNote(app); note != "" {
-				out += "\n  " + note
-			}
-			return out
+			// The control room, then the quit hint ("tap Quit" is real in touch mode:
+			// App.handleMouse quits on a tap of this row).
+			return signOnPreamble(app) + "\n  " + t.Danger.Render("[Q] Quit / Exit Suite") + " " + t.Muted.Render("(Press Q / ESC / tap Quit anytime to exit)")
 		}
 	}
 	return s
@@ -142,27 +137,34 @@ func doLoginSubmit(app *App, values []string) {
 	if session.Source == "partdb" {
 		action = "LOGIN_PARTDB"
 	}
-	app.audit.Log(session.Username, session.Role, action, "SUCCESS", "")
+	app.audit.Log(session.Username, session.Role, action, "SUCCESS", "from "+app.origin())
 	continueSignOn(app, session)
-}
-
-// graceWindow is how long after a verified code the same origin may sign in
-// again without one (TWOFA_GRACE_MINUTES, default 30; 0 turns it off).
-func graceWindow() time.Duration {
-	mins, err := strconv.Atoi(strings.TrimSpace(config.Get(config.TwoFAGraceMinutes)))
-	if err != nil || mins < 0 {
-		return 0
-	}
-	return time.Duration(mins) * time.Minute
 }
 
 // continueSignOn is what happens after the password is accepted: the 2FA
 // prompt — unless this origin passed a real code within the grace window —
 // then the forced-password-change detour, then the hub.
 func continueSignOn(app *App, session *auth.Session) {
+	app.loadPolicy()
+	u := app.pUser
+	if u.Expired(app.now()) {
+		app.denySignOn("LOGIN_DENIED_EXPIRED", "This account's access ended on "+u.Expires+". Ask an admin.")
+		return
+	}
+	if !u.ChannelAllowed(app.channel()) {
+		app.denySignOn("LOGIN_DENIED_CHANNEL", "This account may not sign in over "+app.channel()+" (allowed: "+strings.Join(u.Channels, ", ")+").")
+		return
+	}
+	if ok, why := u.ExemptFrom(app.remoteAddr); ok {
+		app.audit.Log(session.Username, session.Role, "LOGIN_2FA_EXEMPT", "SUCCESS", why+" via "+app.channel())
+		proceedPastAuth(app, session)
+		return
+	} else if why != "" {
+		app.audit.Log(session.Username, session.Role, "LOGIN_2FA_EXEMPT", "DENIED", why+"; asking for 2FA")
+	}
 	if twofa.IsEnabled(session.Username, session.Source) {
-		if ago, ok := twofa.WithinGrace(session.Username, session.Source, app.graceOrigin, graceWindow()); ok {
-			mins, window := int(ago.Round(time.Minute)/time.Minute), int(graceWindow()/time.Minute)
+		if ago, ok := twofa.WithinGrace(session.Username, session.Source, app.graceOrigin, app.graceWindow()); ok {
+			mins, window := int(ago.Round(time.Minute)/time.Minute), int(app.graceWindow()/time.Minute)
 			app.audit.Log(session.Username, session.Role, "LOGIN_2FA_GRACE", "SUCCESS",
 				fmt.Sprintf("code verified %dm ago from %s (window %dm)", mins, app.graceOrigin, window))
 			proceedPastAuth(app, session)
@@ -177,8 +179,8 @@ func continueSignOn(app *App, session *auth.Session) {
 		app.goTo(scrTwoFACode)
 		return
 	}
-	if app.requireTwoFA {
-		app.audit.Log(session.Username, session.Role, "LOGIN_DENIED_2FA_REQUIRED", "DENIED", "gateway login requires 2FA, none enrolled")
+	if app.requireTwoFA || (u != nil && u.TwoFA == access.TwoFARequired) {
+		app.audit.Log(session.Username, session.Role, "LOGIN_DENIED_2FA_REQUIRED", "DENIED", "2FA required ("+app.channel()+"), none enrolled")
 		app.session = nil
 		app.setMsg("2FA is required for remote access. Ask an admin to run: wms users 2fa enable "+session.Username, true)
 		app.screens[scrLogin].OnEnter(app)
@@ -227,7 +229,7 @@ func doTwoFACodeSubmit(app *App, values []string) {
 	username, source := app.session.Username, app.session.Source
 	// A real code was just accepted: start this origin's grace window. A
 	// failure to record it only costs a future prompt, so it never blocks login.
-	_ = twofa.MarkVerified(username, source, app.graceOrigin, graceWindow())
+	_ = twofa.MarkVerified(username, source, app.graceOrigin, app.graceWindow())
 	proceedPastAuth(app, app.session)
 	// goTo() above clears the message line for the destination screen, so
 	// the backup-code warning is set after navigating, not before.
@@ -285,4 +287,37 @@ func doForcedChangeSubmit(app *App, values []string) {
 	}
 	app.audit.Log(app.session.Username, app.session.Role, "PASSWORD_CHANGED_FIRST_LOGIN", "SUCCESS", "")
 	app.enterHub()
+}
+
+// origin is where this session came from, for the audit log and the last sign-in notice.
+func (a *App) origin() string {
+	switch {
+	case a.transport == "telnet":
+		return "telnet " + a.remoteAddr
+	case a.touchMode:
+		return "web terminal"
+	case !a.requireTwoFA:
+		return "local console"
+	}
+	return "gateway"
+}
+
+// lastSignInNote is shown after sign-in: when and where you last signed in, and
+// any failed attempts on your name since.
+func (a *App) lastSignInNote() string {
+	if a.session == nil || a.audit == nil {
+		return ""
+	}
+	si, ok := a.audit.LastSignIn(a.session.Username)
+	if !ok {
+		return "First sign-in recorded for " + a.session.Username + "."
+	}
+	note := "Last sign-in: " + si.At.Format("Mon 2 Jan 15:04")
+	if si.From != "" {
+		note += " from " + si.From
+	}
+	if si.FailedSince > 0 {
+		note += fmt.Sprintf(" · %d FAILED attempt(s) since", si.FailedSince)
+	}
+	return note
 }

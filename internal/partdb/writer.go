@@ -205,7 +205,7 @@ func (w *Writer) setStock(ctx context.Context, partID int, next func(cur float64
 	if !api.Enabled() {
 		return 0, nil, ErrNoToken
 	}
-	ls, err := w.lots(partID)
+	ls, err := w.looseLots(partID) // a set's own lots are not the loose stock this changes
 	if err != nil {
 		return 0, nil, err
 	}

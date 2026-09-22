@@ -34,6 +34,7 @@ const (
 	TUITheme                = "MODERNWMS_TUI_THEME"
 	ListenPorts             = "LISTEN_PORTS"
 	GatewayPort             = "GATEWAY_PORT"
+	GatewayListenHost       = "GATEWAY_LISTEN_HOST"
 	TTYDPort                = "TTYD_PORT"
 	PartDBURL               = "PARTDB_URL"
 	ModernWMSURL            = "MODERNWMS_URL"
@@ -51,6 +52,16 @@ const (
 	TUIImages               = "MODERNWMS_TUI_IMAGES"
 	Equivalents             = "WMS_EQUIVALENTS"
 	PluginDir               = "WMS_PLUGIN_DIR"
+	ExportDir               = "WMS_EXPORT_DIR"
+	PublicURL               = "WMS_PUBLIC_URL"
+	TUISplash               = "MODERNWMS_TUI_SPLASH"
+	UserPrefsFile           = "WMS_USER_PREFS_FILE"
+	AccessFile              = "WMS_ACCESS_FILE"
+	BrickOwlAPIKey          = "BRICKOWL_API_KEY"
+	BrickOwlCountry         = "BRICKOWL_COUNTRY"
+	SignOnPublicStats       = "WMS_SIGNON_PUBLIC_STATS"
+	MOTD                    = "WMS_MOTD"
+	NotifyProviders         = "WMS_NOTIFY_PROVIDERS"
 	PluginUser              = "WMS_PLUGIN_USER"
 	BricklinkConsumerKey    = "BRICKLINK_CONSUMER_KEY"
 	BricklinkConsumerSecret = "BRICKLINK_CONSUMER_SECRET"
@@ -74,6 +85,7 @@ func Defaults() map[string]string {
 		SyncAdminUser:           "admin",
 		ListenPorts:             "2323,23",
 		GatewayPort:             "7681",
+		GatewayListenHost:       "127.0.0.1", // loopback: reach it through the HTTPS tunnel; 0.0.0.0 exposes raw telnet
 		TTYDPort:                "7682",
 		CredentialsFile:         "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:       "/root/docker-server/partdb-sync/config/link_overrides.json",
@@ -88,6 +100,16 @@ func Defaults() map[string]string {
 		CatalogAutoRefreshHours: "0",
 		ImageDir:                "/root/docker-server/wms/imgcache",
 		PluginDir:               "/root/docker-server/wms/plugins",
+		ExportDir:               "/root/docker-server/wms/exports",
+		PublicURL:               "", // the web terminal's https address, e.g. https://lego-tui.example.com; empty = no download links
+		TUISplash:               "1",
+		UserPrefsFile:           "/root/docker-server/wms/user-prefs.json",
+		AccessFile:              "/root/docker-server/wms/access.json",
+		BrickOwlAPIKey:          "",
+		BrickOwlCountry:         "GB",
+		SignOnPublicStats:       "1",
+		MOTD:                    "",
+		NotifyProviders:         "/root/docker-server/wms/notify-provider-config.yaml",
 		PluginUser:              "nobody",
 		BricklinkCurrency:       "GBP",
 		BricklinkRegion:         "europe",

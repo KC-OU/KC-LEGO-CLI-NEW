@@ -111,7 +111,7 @@ func legoSetAddScreen() screenModel {
 // shows fields up to the first one you can edit, and the summary (where the
 // details came from, what you already own) must be visible up front.
 const (
-	sfName, sfYear, sfPieces, sfTheme, sfQty, sfConfirm = 3, 4, 5, 6, 7, 8
+	sfName, sfYear, sfPieces, sfTheme, sfQty, sfLocation, sfCondition, sfCheck, sfConfirm = 3, 4, 5, 6, 7, 8, 9, 10, 11
 )
 
 func legoSetConfirmScreen() screenModel {
@@ -129,6 +129,12 @@ func legoSetConfirmScreen() screenModel {
 			if d.Existing != nil {
 				owned, qty = fmt.Sprintf("%d — change it below if that's wrong", d.Existing.Qty), strconv.Itoa(d.Existing.Qty)
 			}
+			st := app.legoDB.GetSetState(catalogSetNum(d.Num))
+			// Offer the parts check when the parts list is known and the set was never checked.
+			checkNow := "no"
+			if items, _ := app.legoDB.CatalogSetInventory(catalogSetNum(d.Num)); len(items) > 0 && !st.Checked() && app.can("sets.check") {
+				checkNow = "yes"
+			}
 			num := func(n int) string {
 				if n == 0 {
 					return ""
@@ -144,6 +150,9 @@ func legoSetConfirmScreen() screenModel {
 				{Label: "Pieces", Value: num(d.Pieces), Protected: !d.Manual},
 				{Label: "Theme", Value: d.Theme},
 				{Label: "How many do you own", Value: qty, Fresh: true},
+				{Label: "Where it is kept (shelf, box, bin)", Value: st.Location},
+				{Label: "Condition: sealed, built, in pieces, displayed", Value: st.Condition},
+				{Label: "Check the parts now? (yes / no)", Value: checkNow, Fresh: true},
 				{Label: "Save this? (yes / no)"},
 			}
 		},
@@ -208,9 +217,28 @@ func submitSetConfirm(app *App, v []string) {
 	}
 	app.audit.Log(app.session.Username, app.session.Role, action, "SUCCESS",
 		fmt.Sprintf("set_num=%s qty=%d was=%d details=%s", set.SetNum, qty, was, d.Source))
+	cond := strings.ToLower(strings.TrimSpace(v[sfCondition]))
+	if err := app.legoDB.SetInfo(catalogSetNum(set.SetNum), v[sfLocation], cond, ""); err != nil {
+		app.setMsg("Saved the set, but not its location: "+err.Error(), true)
+	}
 	app.legoSetDraft = nil
 	app.setMsg(msg, false)
 	app.popTo(scrLegoHub)
+	if a := strings.ToLower(strings.TrimSpace(v[sfCheck])); (a == "yes" || a == "y") && qty > 0 {
+		startCheck(app, catalogSetNum(set.SetNum), lego.CheckIntake)
+		if app.cur == scrSetCheck {
+			app.setMsg(msg+" Now mark what is missing (M) or extra (E); F finishes.", false)
+		}
+	}
+}
+
+// catalogSetNum is the catalog's form of a set number ("75192" → "75192-1").
+func catalogSetNum(n string) string {
+	n = strings.TrimSpace(n)
+	if !strings.Contains(n, "-") {
+		return n + "-1"
+	}
+	return n
 }
 
 func parseOptionalInt(s string, min, max int) (int, error) {

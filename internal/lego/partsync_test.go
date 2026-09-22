@@ -79,3 +79,34 @@ func TestPartSyncStopsCleanlyWithoutAToken(t *testing.T) {
 		t.Errorf("no request should be made without a token: %v", fake.Requests())
 	}
 }
+
+func TestPushSetPutsPartsInTheSetsLocation(t *testing.T) {
+	s, pdb, _ := newSyncer(t)
+	ctx := context.Background()
+	c := &SetCheck{SetNum: "1-1", Lines: []CheckLine{
+		{PartNum: "3001", PartName: "Brick 2 x 4", Category: "Bricks", ColorID: 4, ColorName: "Red", Need: 60, Have: 57},
+		{PartNum: "3023", PartName: "Plate 1 x 2", Category: "Plates", ColorID: 1, ColorName: "Blue", Need: 40, Have: 40},
+	}}
+	res, err := s.PushSet(ctx, c, "Fire Station")
+	if err != nil || len(res.Errors) != 0 || res.Created != 2 || res.LocationID == 0 {
+		t.Fatalf("push: %+v %v", res, err)
+	}
+	var loc string
+	if err := pdb.QueryRow(`SELECT name FROM storelocations WHERE id = ?`, res.LocationID).Scan(&loc); err != nil || loc != "1-1 Fire Station" {
+		t.Fatalf("location %q %v", loc, err)
+	}
+	var total float64
+	_ = pdb.QueryRow(`SELECT SUM(amount) FROM part_lots WHERE id_store_location = ?`, res.LocationID).Scan(&total)
+	if total != 97 {
+		t.Fatalf("set lots hold %v, want 97", total)
+	}
+	// Re-pushing after a recount changes only the set's lots.
+	c.Lines[0].Have = 60
+	res, _ = s.PushSet(ctx, c, "Fire Station")
+	if res.Created != 0 || res.Changed != 1 {
+		t.Fatalf("second push: %+v", res)
+	}
+	if st := s.Lego.GetSetState("1-1"); st.PDBLocationID != res.LocationID {
+		t.Errorf("location id not remembered: %+v", st)
+	}
+}

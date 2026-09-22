@@ -1,10 +1,8 @@
 package uiapp
 
-import "github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
-
 func anyModuleAllowed(app *App, modules ...string) bool {
 	for _, m := range modules {
-		if auth.IsModuleAllowed(app.session, m) {
+		if app.moduleAllowed(m) {
 			return true
 		}
 	}
@@ -28,22 +26,22 @@ func hubOptions(app *App) []menuOption {
 		}
 	}
 	var opts []menuOption
-	if auth.IsModuleAllowed(app.session, "dashboard") {
+	if app.moduleAllowed("dashboard") {
 		opts = append(opts, menuOption{Key: "1", Label: "Overview", Go: open("1", scrOverview)})
 	}
-	if auth.IsModuleAllowed(app.session, "partdb") {
+	if app.moduleAllowed("partdb") {
 		opts = append(opts, menuOption{Key: "2", Label: "PartDB Hub", Go: open("2", scrPartDBHub)})
 	}
 	if anyModuleAllowed(app, "asn", "warehouse_ops", "stock_lookup", "master_data", "delivery") {
 		opts = append(opts, menuOption{Key: "3", Label: "Operations", Go: open("3", scrOpsHub)})
 	}
-	if auth.IsModuleAllowed(app.session, "scripts") {
+	if app.moduleAllowed("scripts") {
 		opts = append(opts, menuOption{Key: "4", Label: "Script Hub", Go: open("4", scrScripts)})
 	}
-	if auth.IsModuleAllowed(app.session, "lego") {
+	if app.moduleAllowed("lego") {
 		opts = append(opts, menuOption{Key: "e", Label: "LEGO Collection", Go: open("e", scrLegoHub)})
 	}
-	if anyModuleAllowed(app, "user_mgmt", "settings", "docker") {
+	if anyModuleAllowed(app, "user_mgmt", "settings", "docker", "access") {
 		opts = append(opts, menuOption{Key: "9", Label: "Admin", Go: open("9", scrAdminHub)})
 	}
 	return opts
@@ -63,7 +61,7 @@ func subMenu(panelID, title string, rows []struct{ key, module, label, target st
 		options: func(app *App) []menuOption {
 			var opts []menuOption
 			for _, o := range rows {
-				if !auth.IsModuleAllowed(app.session, o.module) {
+				if !app.moduleAllowed(o.module) {
 					continue
 				}
 				target := o.target
@@ -90,6 +88,7 @@ func adminHubScreen() screenModel {
 		{"1", "user_mgmt", "Users", scrUsers},
 		{"2", "settings", "Settings & API Keys", scrSettingsHub},
 		{"3", "docker", "Containers", scrContainers},
+		{"4", "access", "Access Control (permissions, 2FA, timeouts)", scrAccessHub},
 	})
 }
 

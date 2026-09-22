@@ -17,6 +17,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
 
 const maxImportBytes = 20 << 20
@@ -1113,17 +1114,18 @@ func newLegoRestoreCmd() *cobra.Command {
 func newLegoExportCmd() *cobra.Command {
 	var format, outPath, set string
 	var copies int
-	var missing, force bool
+	var missing, force, withImages bool
 	cmd := &cobra.Command{
-		Use:   "export --format <rebrickable-csv|bricklink-xml|csv|sets-csv|json|html> [-o file]",
+		Use:   "export --format <rebrickable-csv|bricklink-xml|csv|sets-csv|json|xlsx|html> [-o file]",
 		Short: "Write your collection (or one set's missing parts) for another tool",
 		Long: "rebrickable-csv   Part,Color,Quantity: Rebrickable's parts list, and what `wms lego import-parts` reads back\n" +
 			"bricklink-xml     your parts as a BrickLink inventory (needs `wms bricklink colors sync` for colours)\n" +
 			"csv / sets-csv    open in Excel or LibreOffice (text that could be read as a formula is neutralised)\n" +
-			"json              everything, structured\n" +
+			"json              everything, structured (--with-images adds each part's picture URL, embedding cached pictures)\n" +
+			"xlsx              an Excel workbook: Parts (with a picture link per row) and Sets sheets\n" +
 			"html              a printable page: open it in a browser and Print > Save as PDF\n" +
 			"With --set N --missing it exports what that set still needs instead of what you own.",
-		Example: "  wms lego export --format rebrickable-csv -o my-parts.csv\n  wms lego export --format html -o inventory.html\n  wms lego export --format csv --set 75192 --missing -o falcon-shopping.csv",
+		Example: "  wms lego export --format rebrickable-csv -o my-parts.csv\n  wms lego export --format html -o inventory.html\n  wms lego export --format csv --set 75192 --missing -o falcon-shopping.csv\n  wms lego export --format xlsx --set 75192 --missing --with-images -o falcon.xlsx",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -1155,50 +1157,21 @@ func newLegoExportCmd() *cobra.Command {
 				}
 			}
 
-			var body []byte
-			var warns lego.ExportWarnings
-			switch strings.ToLower(format) {
-			case "rebrickable-csv":
-				body, warns = lego.RebrickableCSV(data)
-			case "bricklink-xml":
-				body, warns, err = lego.BrickLinkXML(data)
-			case "csv":
-				body = lego.SpreadsheetCSV(data)
-			case "sets-csv":
-				body = lego.SetsCSV(data)
-			case "json":
-				body, err = lego.JSON(data)
-			case "html":
-				body, err = lego.HTML(data)
-			default:
-				return usageError("--format must be rebrickable-csv, bricklink-xml, csv, sets-csv, json or html")
+			if withImages {
+				data.AddPartImages(img.NewFetcher(config.Get(config.ImageDir)))
 			}
+			body, _, warns, err := lego.Encode(format, data)
 			if err != nil {
-				return err
+				return usageError("%v", err)
 			}
 			if outPath == "" {
 				_, _ = os.Stdout.Write(body)
 				return nil
 			}
-			flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-			if force {
-				flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-			}
-			f, err := os.OpenFile(outPath, flags, 0o644)
+			abs, err := writeExportFile(outPath, body, force)
 			if err != nil {
-				if errors.Is(err, os.ErrExist) {
-					return usageError("%s already exists — use --force to replace it", outPath)
-				}
 				return err
 			}
-			_, werr := f.Write(body)
-			if cerr := f.Close(); werr == nil {
-				werr = cerr
-			}
-			if werr != nil {
-				return werr
-			}
-			abs, _ := filepath.Abs(outPath)
 			say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d part line(s), %d set(s))", abs, len(data.Rows), len(data.Sets))))
 			for _, w := range warns {
 				say(ui.Warn(t, w))
@@ -1212,6 +1185,31 @@ func newLegoExportCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&missing, "missing", false, "export what --set still needs instead of what you own")
 	cmd.Flags().IntVar(&copies, "copies", 1, "copies of the set")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	cmd.Flags().BoolVar(&withImages, "with-images", false, "add picture links to each part (json, xlsx, html); cached pictures are embedded")
 	_ = cmd.MarkFlagRequired("format")
 	return cmd
+}
+
+// writeExportFile writes an export to path, refusing to replace a file unless force.
+func writeExportFile(path string, body []byte, force bool) (string, error) {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", usageError("%s already exists — use --force to replace it", path)
+		}
+		return "", err
+	}
+	_, werr := f.Write(body)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return "", werr
+	}
+	abs, _ := filepath.Abs(path)
+	return abs, nil
 }

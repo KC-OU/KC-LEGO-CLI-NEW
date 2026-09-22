@@ -17,6 +17,15 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `MODERNWMS_BACKUP_DIR` | `/root/backups/modernwms` | where backups go |
 | `WMS_IMAGE_DIR` | `/root/docker-server/wms/imgcache` | cached pictures |
 | `WMS_PLUGIN_DIR` / `WMS_PLUGIN_USER` | `/root/docker-server/wms/plugins` / `nobody` | plugins |
+| `WMS_EXPORT_DIR` | `/root/docker-server/wms/exports` | where the X key saves exports (kept 7 days) |
+| `WMS_PUBLIC_URL` | *(empty)* | the web terminal's https address; set it to get one-time download links and QR codes for exports |
+| `WMS_NOTIFY_PROVIDERS` | `/root/docker-server/wms/notify-provider-config.yaml` | alert channels ([Notifications](../guides/notifications.md)) |
+| `BRICKOWL_API_KEY` / `BRICKOWL_COUNTRY` | *(empty)* / `GB` | BrickOwl prices for missing parts |
+| `WMS_SIGNON_PUBLIC_STATS` | `1` | `0` hides the collection figures and alerts on the sign-on screen |
+| `WMS_MOTD` | *(empty)* | message of the day on the sign-on screen (`wms motd`) |
+| `WMS_ACCESS_FILE` | `/root/docker-server/wms/access.json` | the permission policy, 2FA exemptions and timings ([Access control](../guides/access-control.md)) |
+| `WMS_USER_PREFS_FILE` | `/root/docker-server/wms/user-prefs.json` | each user's own display theme |
+| `MODERNWMS_TUI_SPLASH` | `1` | `0` turns off the sign-on animation |
 | `PARTDB_URL`, `MODERNWMS_URL` | *(empty)* | your public addresses, used for links; omitted when empty |
 
 ## Keys and tokens
@@ -33,7 +42,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `MODERNWMS_TUI_THEME` | `green` | `green`, `amber`, `high-contrast`, `colorblind` |
+| `MODERNWMS_TUI_THEME` | `green` | `green`, `amber`, `high-contrast`, `colorblind`, `dracula`, `half-life`, `nord`, `gruvbox`, `catppuccin`, `tokyo-night`, `ibm-3270`, `matrix`, `lego` (everyone's default; users can pick their own) |
 | `NO_COLOR` | unset | any value turns colour off |
 | `MODERNWMS_TUI_IMAGES` | `auto` | `auto`, `blocks`, `ascii`, `off` |
 | `MODERNWMS_TUI_CLASSIC` | `1` | `0` uses the older fixed 80-column frame |
@@ -41,6 +50,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `CATALOG_AUTO_REFRESH_HOURS` | `0` (off) | the gateway refreshes the offline catalog this often (never more than once a day) |
 | `TWOFA_GRACE_MINUTES` | `30` | `0` = always ask for a code |
 | `LISTEN_PORTS` / `GATEWAY_PORT` | `2323,23` / `7681` | telnet and web gateway |
+| `GATEWAY_LISTEN_HOST` | `127.0.0.1` | address both gateways bind; `0.0.0.0` exposes them on every interface |
 | `WMS_EQUIVALENTS` | `default` | `default`, `none`, or `alt,mold,print` |
 | `BRICKLINK_CURRENCY` / `BRICKLINK_REGION` / `BRICKLINK_CONDITION` | `GBP` / `europe` / `U` | price guide selection |
 | `BRICKLINK_DAILY_BUDGET` | `4500` | hard cap on calls a day (max 5000) |

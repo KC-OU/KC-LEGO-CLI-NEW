@@ -3,12 +3,12 @@ package uiapp
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
@@ -133,6 +133,24 @@ type App struct {
 	detail            *detailReq      // what the detail screen is showing
 	blRows            [][]string      // the last BrickLink lookup, for its result screen
 	legoMissing       *missingView    // the last "missing parts for a set" result, for its table screen
+	exportJob         *exportJob      // what the X key is exporting (see export.go)
+	exportRes         *exportResult   // the saved file and its download link, once exported
+	dayPick           *dayPick        // today's Set of the Day, worked out once a day (see extras.go)
+	splashFrame       int             // the sign-on animation's frame, 0 when not showing (see splash.go)
+
+	policy     *access.Policy // the access policy as of sign-on (see access.go)
+	pUser      *access.User   // this user's policy entry; nil = the legacy role rules
+	perms      access.Perms   // their effective permissions, when governed
+	signedOnAt time.Time      // for the maximum session length
+	accessEdit *accessEdit    // the group or user the Access Control screens are editing
+	checking   *checkState    // the parts check in progress (see set_check.go)
+	workshop   *workshopState // the Set Workshop's focus: set, order, line (see workshop.go)
+	labelSets  []string       // the sets the label screen is printing
+
+	sys       *sysStatus  // the control room's system status (controlroom.go)
+	coll      *collection // cached collection figures
+	logoFrame int         // the sign-on logo's sweep
+	clockOn   bool
 }
 
 func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Logger, requireTwoFA, touchMode bool) *App {
@@ -159,6 +177,7 @@ func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Lo
 		a.audit.Log(user, role, action, status, details)
 	})
 	a.lastInput = a.now()
+	a.logoFrame = logoFrames
 	a.screens = buildScreens(a)
 	a.screens[scrLogin].OnEnter(a)
 	return a
@@ -169,7 +188,10 @@ func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Lo
 // session never skips the code prompt.
 func (a *App) SetGraceOrigin(origin string) { a.graceOrigin = origin }
 
-func (a *App) Init() tea.Cmd { return idleTick() }
+func (a *App) Init() tea.Cmd {
+	a.logoFrame = 0 // the sign-on logo sweeps in once, when the program starts
+	return tea.Batch(idleTick(), a.statusCmd(), logoTick(), clockTick())
+}
 
 // LockedOut reports that this session ended because the sign-on attempts ran out.
 func (a *App) LockedOut() bool { return a.lockedOut }
@@ -191,22 +213,18 @@ func idleTick() tea.Cmd {
 	return tea.Tick(15*time.Second, func(time.Time) tea.Msg { return idleTickMsg{} })
 }
 
-// idleLimit is TUI_IDLE_LOCK_MINUTES (default 15; 0 or junk = never lock).
-func idleLimit() time.Duration {
-	mins, err := strconv.Atoi(strings.TrimSpace(config.Get(config.IdleLockMinutes)))
-	if err != nil || mins <= 0 {
-		return 0
-	}
-	return time.Duration(mins) * time.Minute
-}
-
 // checkIdle locks a signed-in session that has seen no key or tap for the idle
 // limit, and closes a gateway session that has sat at sign-on too long.
 func (a *App) checkIdle() {
 	idle := a.now().Sub(a.lastInput)
 	switch {
+	case a.authed && a.maxSession() > 0 && a.now().Sub(a.signedOnAt) >= a.maxSession():
+		hours := int(a.maxSession() / time.Hour)
+		a.audit.Log(a.session.Username, a.session.Role, "SESSION_MAX_AGE", "SUCCESS", fmt.Sprintf("signed out after %d h", hours))
+		a.lock()
+		a.setMsg(fmt.Sprintf("Signed out: sessions last at most %d hour(s). Sign in again.", hours), true)
 	case a.authed:
-		if limit := idleLimit(); limit > 0 && idle >= limit {
+		if limit := a.idleLimit(); limit > 0 && idle >= limit {
 			a.audit.Log(a.session.Username, a.session.Role, "SESSION_IDLE_LOCK", "SUCCESS", fmt.Sprintf("idle %d min", int(idle/time.Minute)))
 			a.lock()
 			mins := int(limit / time.Minute)
@@ -232,6 +250,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tea.KeyMsg, tea.MouseMsg:
 		a.lastInput = a.now()
+	}
+	if used, cmd := a.splashUpdate(msg); used {
+		return a, cmd
+	}
+	if used, cmd := a.controlRoomUpdate(msg); used {
+		return a, cmd
+	}
+	if _, ok := msg.(tea.KeyMsg); ok && a.logoFrame < logoFrames {
+		a.logoFrame = logoFrames // a key finishes the logo sweep (and is still typed)
 	}
 	if a.closeHelpOn(msg) {
 		return a, nil
@@ -296,6 +323,9 @@ func (a *App) toolFinished(m toolDoneMsg) {
 const minWidth = 40
 
 func (a *App) View() string {
+	if a.splashFrame > 0 {
+		return a.splashView()
+	}
 	if a.helpOpen && a.authed {
 		return a.helpView()
 	}
@@ -443,6 +473,9 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) bool {
 }
 
 func (a *App) goTo(id string) {
+	if a.governed() && !a.require(screenPerm[id], "open "+id) {
+		return
+	}
 	a.stack = append(a.stack, a.cur)
 	a.cur = id
 	a.message = ""
@@ -521,9 +554,11 @@ func (a *App) lock() {
 func (a *App) resetSession() {
 	a.session = nil
 	a.authed = false
+	a.pUser, a.perms = nil, access.Perms{}
 	a.stack = nil
 	a.cur = scrLogin
 	a.loginAttempts = 0
+	a.applyTheme(config.Get(config.TUITheme)) // the next person signs on in the default theme, not the last user's
 	a.screens[scrLogin].OnEnter(a)
 }
 
@@ -533,13 +568,25 @@ func (a *App) resetSession() {
 // "Login Successful!" line on the hub.
 func (a *App) enterHub() {
 	a.authed = true
+	a.signedOnAt = a.now()
+	if a.policy == nil {
+		a.loadPolicy()
+	}
 	if a.session != nil {
 		a.legoDB.SetActor(a.session.Username) // the journal records who changed what
 	}
+	a.applyUserTheme()
+	a.startSplash()
 	a.activeTab = "1"
 	a.goTo(scrHub)
-	if a.theme.Classic && a.session != nil {
-		a.setMsg(fmt.Sprintf("Login Successful! Welcome, %s [%s] (%s).", a.session.Username, srcLabel(a.session.Source), a.session.Role), false)
+	if a.session == nil {
+		return
+	}
+	last := a.lastSignInNote()
+	if a.theme.Classic {
+		a.setMsg(fmt.Sprintf("Login Successful! Welcome, %s [%s] (%s). %s", a.session.Username, srcLabel(a.session.Source), a.session.Role, last), strings.Contains(last, "FAILED"))
+	} else if last != "" {
+		a.setMsg(last, strings.Contains(last, "FAILED"))
 	}
 }
 
@@ -574,7 +621,7 @@ func (a *App) openQuickAdd() {
 // only changes a.cur/a.stack, same as goTo, just without pushing a stack
 // frame, since this is a top-level toggle rather than normal drill-down nav.
 func (a *App) toggleLego() {
-	if a.session == nil || !a.authed || !auth.IsModuleAllowed(a.session, "lego") {
+	if a.session == nil || !a.authed || !a.moduleAllowed("lego") {
 		return
 	}
 	if strings.HasPrefix(a.cur, "lego_") {
@@ -596,6 +643,9 @@ func (a *App) toggleLego() {
 // checkWrite mirrors check_write_permission: shows the denial on the
 // message line and logs it, returning whether the action may proceed.
 func (a *App) checkWrite(action string) bool {
+	if a.governed() {
+		return a.require(actionPerm[action], action)
+	}
 	if auth.CheckWritePermission(a.session) {
 		return true
 	}
@@ -614,6 +664,16 @@ func (a *App) checkWrite(action string) bool {
 // login credentials, which CanWrite (e.g. a Picker's stock-quantity write
 // access) was never meant to gate.
 func (a *App) checkAdmin(action string) bool {
+	if a.governed() {
+		p, ok := actionPerm[action]
+		if strings.HasPrefix(action, "script hub:") {
+			p, ok = "scripts.run", true
+		}
+		if !ok {
+			p = "settings.edit" // an admin-only action with no finer permission
+		}
+		return a.require(p, action)
+	}
 	if a.session != nil && a.session.Permissions != nil && a.session.Permissions.IsAdmin {
 		return true
 	}

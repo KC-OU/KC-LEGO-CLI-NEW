@@ -14,6 +14,7 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
@@ -218,9 +219,9 @@ func detailKeys(r *detailReq) string {
 		return ""
 	}
 	if r.Kind == "set" {
-		return "A add to your collection   M missing parts   P BrickLink price   Q back"
+		return "A add  K check  M missing  P price  L label  X export  Q back"
 	}
-	return "A add / update this part   P BrickLink price   Q back"
+	return "A add / update this part   P BrickLink price   X export   Q back"
 }
 
 func (s *detailScreen) HandleKey(app *App, msg tea.KeyMsg) {
@@ -235,28 +236,29 @@ func (s *detailScreen) HandleKey(app *App, msg tea.KeyMsg) {
 			startPartFlow(app, app.detail.Num)
 		}
 	case "m":
-		if app.detail.Kind != "set" {
-			return
+		if app.detail.Kind == "set" {
+			showMissing(app, app.detail.Num)
 		}
-		inv := app.legoDB.LookupSetInventory(app.ctx(), app.rebrick, app.detail.Num)
-		if len(inv.Items) == 0 {
-			app.setMsg(strings.Join(inv.Notes, " "), true)
-			return
-		}
-		rep, err := app.legoDB.MissingFor(inv.Items, 1)
-		if err != nil {
-			app.setMsg(err.Error(), true)
-			return
-		}
-		name := ""
-		if set, _ := app.legoDB.CatalogSet(app.detail.Num); set != nil {
-			name = set.Name
-		}
-		app.legoMissing = &missingView{SetNum: app.detail.Num, Name: name, Report: rep, Source: inv.Source}
-		app.goTo(scrLegoMissing)
 	case "p":
+		if !app.require("bricklink.price", "BRICKLINK_PRICE") {
+			return
+		}
 		fetchDetailPrice(app)
 		s.OnEnter(app)
+	case "x":
+		startExport(app, detailExportJob(app.detail, s.page))
+	case "k":
+		if app.detail.Kind == "set" {
+			kind := lego.CheckIntake
+			if app.legoDB.GetSetState(catalogSetNum(app.detail.Num)).Checked() {
+				kind = lego.CheckRecount
+			}
+			startCheck(app, catalogSetNum(app.detail.Num), kind)
+		}
+	case "l":
+		if app.detail.Kind == "set" {
+			startLabels(app, []string{catalogSetNum(app.detail.Num)})
+		}
 	}
 }
 
@@ -452,6 +454,7 @@ func buildSetDetail(app *App, req *detailReq) *detailPage {
 	} else {
 		pg.Rows = append(pg.Rows, []string{"You own", "not in your collection"})
 	}
+	pg.Rows = append(pg.Rows, setStatusRows(app, catalogSetNum(req.Num))...)
 	if figs, err := db.MinifigsInSet(req.Num, 4); err == nil && len(figs) > 0 {
 		pg.Rows = append(pg.Rows, []string{"Minifigures", strings.Join(figs, "; ")})
 	}
@@ -462,4 +465,49 @@ func buildSetDetail(app *App, req *detailReq) *detailPage {
 	}
 	pg.Rows = append(pg.Rows, priceRow(app, "SET", req.Num, -1))
 	return pg
+}
+
+// showMissing opens the Missing Parts screen for one copy of a set.
+func showMissing(app *App, setNum string) {
+	inv := app.legoDB.LookupSetInventory(app.ctx(), app.rebrick, setNum)
+	if len(inv.Items) == 0 {
+		app.setMsg(strings.Join(inv.Notes, " "), true)
+		return
+	}
+	rep, err := app.legoDB.MissingFor(inv.Items, 1)
+	if err != nil {
+		app.setMsg(err.Error(), true)
+		return
+	}
+	name := ""
+	if set, _ := app.legoDB.CatalogSet(setNum); set != nil {
+		name = set.Name
+	}
+	app.legoMissing = &missingView{SetNum: setNum, Name: name, Report: rep, Source: inv.Source}
+	app.goTo(scrLegoMissing)
+}
+
+// setStatusRows are the check, location and order facts for a set.
+func setStatusRows(app *App, setNum string) [][]string {
+	st := app.legoDB.GetSetState(setNum)
+	var rows [][]string
+	switch {
+	case !st.Checked():
+		rows = append(rows, []string{"Parts check", "not checked yet — press K"})
+	case st.Incomplete():
+		v := fmt.Sprintf("INCOMPLETE — %d missing", st.MissingQty)
+		if st.OnOrderQty > 0 {
+			v += fmt.Sprintf(", %d on order", st.OnOrderQty)
+		}
+		rows = append(rows, []string{"Parts check", v})
+	default:
+		rows = append(rows, []string{"Parts check", "COMPLETE"})
+	}
+	if c := st.LastCheck; c != nil {
+		rows = append(rows, []string{"Last checked", fmt.Sprintf("%s by %s (%s)", c.FinishedAt.Local().Format("2 Jan 2006 15:04"), c.CheckedBy, c.Kind)})
+	}
+	if st.Location != "" || st.Condition != "" {
+		rows = append(rows, []string{"Kept", strings.Trim(st.Location+" · "+st.Condition, " ·")})
+	}
+	return rows
 }

@@ -50,6 +50,7 @@ An enabled plugin is called as `wms-<name> hook <event>` with the event as one J
 | `price_drop` | a watch is at or under its limit | `lines` |
 | `backup_done` | `wms backup` or `wms lego backup` finishes | kind, file, bytes, encrypted |
 | `catalog_refreshed` | the offline catalog changed | files_updated, rows |
+| `export_done` | an export is saved from the interface (X) | file, format, kind, num, user |
 
 A slow or failing plugin never blocks the others or the action that triggered it.
 

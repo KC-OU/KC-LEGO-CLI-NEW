@@ -102,7 +102,7 @@ func TestSetDetailShowsThemeMinifigsAndHowMuchYouCanBuild(t *testing.T) {
 			t.Errorf("set detail lacks %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "M missing parts") {
+	if !strings.Contains(out, "M missing") || !strings.Contains(out, "K check") {
 		t.Errorf("set keys:\n%s", out)
 	}
 }

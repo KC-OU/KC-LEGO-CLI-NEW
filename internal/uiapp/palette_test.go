@@ -114,15 +114,20 @@ func TestPaletteRespectsPermissionsAndActions(t *testing.T) {
 	key(app, tea.KeyCtrlK)
 	typeInto(app, "settings")
 	key(app, tea.KeyEnter)
-	if app.cur == scrSettingsHub || !app.messageErr {
-		t.Errorf("a non-admin must be refused by the palette exactly as by the menu (cur=%q msg=%q)", app.cur, app.message)
+	if app.cur == scrSettingsHub || app.cur == scrSettingsTheme {
+		t.Errorf("a non-admin must not reach settings through the palette (it hides them) (cur=%q msg=%q)", app.cur, app.message)
+	}
+	for _, e := range app.paletteEntries("settings") {
+		if strings.HasPrefix(e.Label, "Settings") {
+			t.Errorf("palette lists %q to a non-admin", e.Label)
+		}
 	}
 	app.session.Permissions.CanWrite = false
 	app.cur, app.stack = scrHub, nil
 	key(app, tea.KeyCtrlK)
 	typeInto(app, "create")
 	key(app, tea.KeyEnter)
-	if app.cur == scrPartDBCreate || !app.messageErr {
+	if app.cur == scrPartDBCreate {
 		t.Errorf("a read-only role cannot open a write screen through the palette (cur=%q)", app.cur)
 	}
 	app.cur, app.stack = scrHub, nil

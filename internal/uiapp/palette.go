@@ -54,7 +54,11 @@ var paletteScreens = []struct{ Label, ID, Hint string }{
 	{"Users", scrUsers, "admin"},
 	{"Settings & API keys", scrSettingsHub, "admin"},
 	{"Settings: BrickLink API", scrSettingsBrickLink, "admin"},
-	{"Settings: Display theme", scrSettingsTheme, "admin"},
+	{"Settings: Display theme", scrSettingsTheme, "admin — also everyone's default"},
+	{"My display theme", scrMyTheme, "13 themes, live preview"},
+	{"Access control", scrAccessHub, "admin — permissions, 2FA, timeouts"},
+	{"Security settings", scrAccessSettings, "admin — 2FA window, idle, exports"},
+	{"LEGO achievements", scrLegoAchievements, "collection milestones"},
 }
 
 func (a *App) openPalette() {
@@ -76,6 +80,9 @@ func (a *App) paletteEntries(query string) []palEntry {
 	var all []palEntry
 	for _, s := range paletteScreens {
 		s := s
+		if !a.mayOpen(s.ID) {
+			continue
+		}
 		all = append(all, palEntry{Label: s.Label, Hint: s.Hint, Run: func(app *App) { app.goFromHub(s.ID) }})
 	}
 	all = append(all,

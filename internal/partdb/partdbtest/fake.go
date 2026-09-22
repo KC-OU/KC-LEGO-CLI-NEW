@@ -142,6 +142,8 @@ func (f *Fake) serve(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		f.postCategory(db, w, body)
 	case r.Method == http.MethodPost && path == "parts":
 		f.postPart(db, w, body)
+	case r.Method == http.MethodPost && path == "storage_locations":
+		f.postLocation(db, w, body)
 	case r.Method == http.MethodPost && path == "part_lots":
 		f.postLot(db, w, body)
 
@@ -281,6 +283,26 @@ func (f *Fake) postLot(db *sql.DB, w http.ResponseWriter, body map[string]any) {
 	}
 	id, _ := res.LastInsertId()
 	writeJSON(w, 201, map[string]any{"@id": "/api/part_lots/" + strconv.FormatInt(id, 10), "id": id})
+}
+
+func (f *Fake) postLocation(db *sql.DB, w http.ResponseWriter, body map[string]any) {
+	name, _ := body["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		violation(w, "name", "This value should not be blank.")
+		return
+	}
+	var parent any
+	if id, ok := idFromIRI(str(body["parent"]), "/api/storage_locations/"); ok {
+		parent = id
+	}
+	res, err := db.Exec(`INSERT INTO storelocations (name, parent_id, is_full, only_single_part, limit_to_existing_parts, comment, not_selectable)
+		VALUES (?, ?, 0, 0, 0, '', 0)`, name, parent)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"detail": err.Error()})
+		return
+	}
+	id, _ := res.LastInsertId()
+	writeJSON(w, 201, map[string]any{"@id": "/api/storage_locations/" + strconv.FormatInt(id, 10), "id": id, "name": name})
 }
 
 func str(v any) string { s, _ := v.(string); return s }

@@ -4,7 +4,8 @@ What is protected, how, and the honest limits. To report a problem: see `SECURIT
 
 | Area | Protection |
 |------|------------|
-| Sign-in | Passwords checked against ModernWMS / Part-DB; single-use 2FA codes; lockout with escalating delay; idle lock |
+| Sign-in | Passwords checked against ModernWMS / Part-DB; single-use 2FA codes; lockout with escalating delay; idle lock and maximum session length |
+| Permissions | Groups with an allow/deny grid per user, 2FA exemptions limited by network, channel and expiry, all audited — see [Access control](access-control.md) |
 | Audit log | Every line hash-chained; `wms audit verify` names the first edited, removed or reordered line; field values sanitised so nothing can forge an entry |
 | Secrets | API keys and tokens in a mode-0600 settings file, entered masked, never logged; `doctor` flags loose permissions |
 | Backups | age passphrase encryption; the plaintext is removed only after the sealed copy is proven to decrypt |

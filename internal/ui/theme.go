@@ -52,7 +52,7 @@ type Theme struct {
 }
 
 // Themes lists the names MODERNWMS_TUI_THEME accepts, default first.
-var Themes = []string{"green", "amber", "high-contrast", "colorblind"}
+var Themes = []string{"green", "amber", "high-contrast", "colorblind", "dracula", "half-life", "nord", "gruvbox", "catppuccin", "tokyo-night", "ibm-3270", "matrix", "lego"}
 
 // New selects the color theme from MODERNWMS_TUI_THEME (green by default; amber,
 // high-contrast and colorblind are the alternatives; Admin > Settings can save
@@ -71,13 +71,25 @@ func New() Theme {
 
 // ByName returns the named theme; an unknown or empty name is the default green.
 func ByName(name string) Theme {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
 	case "amber":
 		return amberTheme()
 	case "high-contrast", "highcontrast", "contrast":
 		return highContrastTheme()
 	case "colorblind", "colourblind", "cvd":
 		return colorblindTheme()
+	case "halflife", "hev":
+		name = "half-life"
+	case "tokyonight", "tokyo":
+		name = "tokyo-night"
+	case "3270", "ibm":
+		name = "ibm-3270"
+	case "lego-classic", "brick":
+		name = "lego"
+	}
+	if p, ok := palettes[name]; ok {
+		return paletteTheme(name, p)
 	}
 	return greenTheme()
 }
@@ -159,6 +171,74 @@ func monoTheme() Theme {
 		TitleReverse: rev, HeaderReverse: rev, KeyLegend: rev,
 		BadgeAdmin: rev, BadgeOperator: rev, BadgeView: bold.Underline(true),
 	}
+}
+
+// palette is a named colour scheme in 256-colour codes (what telnet clients show
+// reliably); paletteTheme turns one into a Theme.
+type palette struct {
+	brand, text, muted, ok, warn, bad, accent, strong string
+	bar, barText                                      string // title/heading/key-legend bars: background and its text
+	admin, operator, view                             string // role badge backgrounds (text is barText; view is always light text)
+}
+
+func paletteTheme(name string, p palette) Theme {
+	c := func(s string) lipgloss.Color { return lipgloss.Color(s) }
+	fg := func(col string) lipgloss.Style { return lipgloss.NewStyle().Foreground(c(col)) }
+	bold := func(col string) lipgloss.Style { return fg(col).Bold(true) }
+	badge := func(bg string) lipgloss.Style {
+		return lipgloss.NewStyle().Bold(true).Foreground(c(p.barText)).Background(c(bg))
+	}
+	rev := badge(p.bar)
+	return Theme{
+		Name:          name,
+		Brand:         bold(p.brand),
+		Text:          fg(p.text),
+		Muted:         fg(p.muted),
+		Success:       bold(p.ok),
+		Warning:       bold(p.warn),
+		Danger:        bold(p.bad),
+		Accent:        bold(p.accent).Underline(true),
+		Protected:     fg(p.muted),
+		Strong:        bold(p.strong),
+		TitleReverse:  rev,
+		HeaderReverse: rev,
+		KeyLegend:     rev,
+		BadgeAdmin:    badge(p.admin),
+		BadgeOperator: badge(p.operator),
+		BadgeView:     lipgloss.NewStyle().Bold(true).Foreground(c("15")).Background(c(p.view)),
+	}
+}
+
+// palettes are the named schemes beyond the classic terminal colours, approximated in
+// 256 colours from each scheme's published hex values.
+var palettes = map[string]palette{
+	// draculatheme.com: purple bars, pink brand, cyan input, on a dark grey background.
+	"dracula": {brand: "212", text: "253", muted: "61", ok: "84", warn: "228", bad: "203", accent: "117", strong: "212",
+		bar: "141", barText: "236", admin: "212", operator: "117", view: "203"},
+	// ~/.zsh/themes/half-life.zsh-theme: hazard orange, HEV cyan, lambda gold, biohazard green.
+	"half-life": {brand: "208", text: "208", muted: "240", ok: "118", warn: "214", bad: "196", accent: "51", strong: "214",
+		bar: "208", barText: "0", admin: "51", operator: "208", view: "196"},
+	// nordtheme.com: frost blues on polar night, aurora for states.
+	"nord": {brand: "110", text: "253", muted: "60", ok: "108", warn: "222", bad: "167", accent: "116", strong: "255",
+		bar: "110", barText: "236", admin: "116", operator: "110", view: "167"},
+	// gruvbox: warm retro browns, yellow brand, aqua input.
+	"gruvbox": {brand: "214", text: "223", muted: "245", ok: "142", warn: "214", bad: "167", accent: "108", strong: "229",
+		bar: "214", barText: "235", admin: "175", operator: "214", view: "124"},
+	// catppuccin mocha: soft pastels, mauve bars.
+	"catppuccin": {brand: "183", text: "189", muted: "103", ok: "151", warn: "223", bad: "211", accent: "117", strong: "218",
+		bar: "183", barText: "235", admin: "218", operator: "117", view: "161"},
+	// tokyo night: deep navy, neon blue and violet.
+	"tokyo-night": {brand: "111", text: "189", muted: "60", ok: "149", warn: "179", bad: "204", accent: "117", strong: "141",
+		bar: "111", barText: "234", admin: "141", operator: "111", view: "204"},
+	// IBM 3270: the colour mainframe terminal — green fields, turquoise input, blue/white headings.
+	"ibm-3270": {brand: "15", text: "40", muted: "33", ok: "40", warn: "226", bad: "196", accent: "51", strong: "15",
+		bar: "33", barText: "15", admin: "15", operator: "51", view: "196"},
+	// the Matrix: everything green, brightness does the work.
+	"matrix": {brand: "46", text: "34", muted: "22", ok: "46", warn: "154", bad: "160", accent: "118", strong: "46",
+		bar: "46", barText: "16", admin: "118", operator: "46", view: "124"},
+	// LEGO Classic: brick red, yellow and blue, like the logo and a 2x4 brick.
+	"lego": {brand: "196", text: "231", muted: "250", ok: "34", warn: "226", bad: "196", accent: "226", strong: "226",
+		bar: "196", barText: "226", admin: "226", operator: "27", view: "88"},
 }
 
 func greenTheme() Theme { return buildTheme("green", "2", "10") }

@@ -2,7 +2,6 @@ package uiapp
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/api"
@@ -215,51 +214,6 @@ func settingsPartDBScreen() screenModel {
 				return
 			}
 			app.onBack()
-		},
-	}
-}
-
-// settingsThemeScreen saves the display theme for every session (a per-user
-// choice would need per-user storage, and this box has one owner). It applies
-// to the current session at once.
-func settingsThemeScreen() screenModel {
-	return &formScreen{
-		panelID: "SETTHM",
-		title:   "Display Theme",
-		build: func(app *App) []ui.Field {
-			current := config.Get(config.TUITheme)
-			if current == "" {
-				current = "green"
-			}
-			return []ui.Field{
-				{Label: "Current theme", Value: current, Protected: true},
-				{Label: "New theme: " + strings.Join(ui.Themes, ", ") + " (blank = keep)"},
-			}
-		},
-		preamble: func(app *App) string {
-			return app.theme.Muted.Render("high-contrast: nothing dimmed, reverse video for problems. colorblind: blue and orange instead of green and red.\nOK / FAIL / WARN are spelled out in both. Set NO_COLOR=1 for no colour at all.")
-		},
-		submit: func(app *App, values []string) {
-			name := strings.ToLower(strings.TrimSpace(values[1]))
-			if name == "" {
-				app.setMsg("No change made.", false)
-				app.onBack()
-				return
-			}
-			if !slices.Contains(ui.Themes, name) {
-				app.setMsg("Unknown theme. Choose one of: "+strings.Join(ui.Themes, ", ")+".", true)
-				return
-			}
-			if err := config.SetOverride(config.TUITheme, name); err != nil {
-				app.setMsg(err.Error(), true)
-				return
-			}
-			width := app.theme.Width
-			app.theme = ui.New()
-			app.theme.Width = width
-			app.audit.Log(app.session.Username, app.session.Role, "SETTINGS_CHANGED", "SUCCESS", "tui_theme="+name)
-			app.onBack()
-			app.setMsg("Theme set to "+name+".", false)
 		},
 	}
 }

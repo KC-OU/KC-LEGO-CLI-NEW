@@ -12,6 +12,12 @@ wms preflight all --quick # skip the slow checks while you work
 On a terminal it is animated (a checklist, a progress bar, the verdict); with `--plain`, `--json` or in a pipe it prints one
 line per check.
 
+It is quick: independent checks run **in parallel** (up to four at once), the analysis tools (staticcheck, govulncheck, gosec)
+are installed **once** into `~/.cache/wms-preflight/bin` and reused for a week instead of being fetched on every run, the
+exported tree is shared between the checks that need it, and the tests use Go's **test cache** (the trap folder has a fixed
+path, so unchanged packages are not re-run). A publish preflight leaves the race detector to CI, which runs it on every
+push; a deploy preflight still runs it. A publish preflight takes about a minute the first time and under half a minute after.
+
 ## What it checks
 
 | Group | Checks |
@@ -34,8 +40,25 @@ run `wms preflight --require deploy|publish`, which succeeds only for a **full**
 ```bash
 wms preflight all          # read it
 bash scripts/deploy.sh     # backs up, applies the private values, swaps the binary, rolls back on failure
-bash scripts/publish.sh    # fresh one-commit history, public repo, docs site, CI, tagged release
+wms publish --wait         # one new commit on top of the public main branch; waits for CI and the docs
 ```
+
+## Publishing
+
+`wms publish` pushes what is **committed** here to the public repository without your private history: it keeps a clone of
+the public repository in `~/.cache/wms-publish/` (fetched, never re-cloned), exports `HEAD` over it, and commits only the
+difference — one commit, with your GitHub noreply address — on top of `main`. It refuses without a fresh GO from
+`wms preflight publish` for that commit, and runs the preflight itself when there is none.
+
+```bash
+wms publish -m "Set checks, orders and labels" --wait
+wms publish --tag v1.2.0      # also tags a release (the release workflow builds archives and packages)
+wms publish --dry-run         # everything but the commit and push
+```
+
+The documentation is built by the repository's own **Docs** workflow and served by **GitHub Pages** only
+(https://kc-ou.github.io/KC-LEGO-CLI-NEW/). `vercel.json` turns Vercel's Git deployments off. `scripts/publish.sh` is for
+creating the repository the first time (a fresh one-commit history).
 
 Private values are never in the repository: `~/.config/wms-go/deploy.env` (mode 600) holds what deploy writes into the live
 settings, and `tools.env` in the same folder holds machine-specific paths such as `WMS_MKDOCS`.

@@ -8,6 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -81,43 +83,45 @@ func TestBackPreservesMessage(t *testing.T) {
 	}
 }
 
-// TestLoginScreenMatchesOldPythonLook pins the bare classic sign-on screen
-// (the default) to the user's reference screenshot: a full-width card with
-// the title inside its top border, the quit line directly under it, one
-// inline prompt — and none of the 5250 chrome.
-func TestLoginScreenMatchesOldPythonLook(t *testing.T) {
+// TestLoginScreenIsTheControlRoom pins the sign-on screen: the KC-PARTS logo, the
+// system / collection / alert tiles, the clock line, the quit hint and one inline
+// prompt, all inside the window, and none of the 5250 chrome.
+func TestLoginScreenIsTheControlRoom(t *testing.T) {
 	app := newTestApp(t)
+	_ = app.legoDB.UpsertSet(lego.Set{SetNum: "10696", Name: "Box", Qty: 2, PartsQty: 484})
 	app.session, app.authed = nil, false
-	app.theme.Width = 100
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	app.cur = scrLogin
 	app.screens[scrLogin].OnEnter(app)
 
-	lines := strings.Split(plain(app.View()), "\n")
-	if len(lines) < 5 {
-		t.Fatalf("login screen too short: %q", lines)
+	out := plain(app.View())
+	lines := strings.Split(out, "\n")
+	for _, want := range []string{"██╗  ██╗", "SYSTEM", "COLLECTION", "ALERTS", "2 sets · 968 pieces", "local console", "[Q] Quit / Exit Suite"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("sign-on lacks %q:\n%s", want, out)
+		}
 	}
-	if !strings.HasPrefix(lines[0], "┌") || !strings.Contains(lines[0], " ModernWMS & PartDB Terminal Suite - Secure Login ") || !strings.HasSuffix(lines[0], "┐") {
-		t.Errorf("row 0 must be the card's top border with the title inside it, got %q", lines[0])
+	if !strings.HasPrefix(lines[len(lines)-1], "Username / User ID (or 'q' to Quit): ") {
+		t.Errorf("the last row must be the username prompt, got %q", lines[len(lines)-1])
 	}
-	if got := len([]rune(lines[0])); got != 100 {
-		t.Errorf("the card must span the terminal width (100), got %d", got)
+	if strings.Contains(out, "Password") {
+		t.Error("the password prompt must not appear until the username is answered")
 	}
-	if !strings.Contains(lines[1], "Login using ModernWMS or PartDB account credentials.") || !strings.HasPrefix(lines[2], "└") {
-		t.Errorf("unexpected card body/bottom: %q / %q", lines[1], lines[2])
-	}
-	if want := "  [Q] Quit / Exit Suite (Press Q / ESC / tap Quit anytime to exit)"; lines[3] != want {
-		t.Errorf("row 3 (directly under the card, no blank line) = %q, want %q", lines[3], want)
-	}
-	if !strings.HasPrefix(lines[4], "Username / User ID (or 'q' to Quit): ") {
-		t.Errorf("row 4 must be the inline username prompt, got %q", lines[4])
-	}
-	if len(lines) != 5 {
-		t.Errorf("the password prompt must not appear until the username is answered; got %d rows: %q", len(lines), lines)
+	if len(lines) > 30 {
+		t.Errorf("sign-on is %d rows in a 30-row window", len(lines))
 	}
 	for _, chrome := range []string{"KCPARTS", "F3=Exit", "Selection or command", "===>"} {
-		if strings.Contains(strings.Join(lines, "\n"), chrome) {
+		if strings.Contains(out, chrome) {
 			t.Errorf("classic login must not show the 5250 chrome %q", chrome)
 		}
+	}
+	t.Setenv(config.SignOnPublicStats, "0")
+	if out := plain(app.View()); strings.Contains(out, "COLLECTION") || !strings.Contains(out, "SYSTEM") {
+		t.Errorf("with public stats off the collection must be hidden:\n%s", out)
+	}
+	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if lines := strings.Split(plain(app.View()), "\n"); len(lines) > 24 {
+		t.Errorf("sign-on is %d rows at 80x24", len(lines))
 	}
 }
 

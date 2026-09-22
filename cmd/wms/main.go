@@ -24,6 +24,9 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(newTUICmd())
 	root.AddCommand(newUsersCmd())
+	root.AddCommand(newAccessCmd())
+	root.AddCommand(newMOTDCmd())
+	root.AddCommand(newPublishCmd())
 	root.AddCommand(newReceiveCmd())
 	root.AddCommand(newBackupCmd())
 	root.AddCommand(newSyncCmd())

@@ -32,22 +32,24 @@ func legoHubScreen() screenModel {
 		title:   "LEGO Collection",
 		options: func(app *App) []menuOption {
 			return []menuOption{
-				{Key: "1", Label: "Search My Sets", Go: func(app *App) { app.goTo(scrLegoSetSearch) }},
-				{Key: "2", Label: "Search Sets (offline catalog first)", Go: func(app *App) { app.goTo(scrLegoSetFind) }},
-				{Key: "3", Label: "Search Parts (offline catalog first)", Go: func(app *App) { app.goTo(scrLegoPartSearch) }},
-				{Key: "4", Label: "Add / Update a Set", Go: func(app *App) { app.goTo(scrLegoSetAdd) }},
-				{Key: "5", Label: "Add / Update an Owned Part (for sync to Part-DB)", Go: func(app *App) { app.goTo(scrLegoPartAdd) }},
-				{Key: "6", Label: "List Owned Parts", Go: func(app *App) { app.goTo(scrLegoPartOwned) }},
-				{Key: "7", Label: "Collection Stats", Go: func(app *App) { app.goTo(scrLegoStats) }},
-				{Key: "8", Label: "Missing Parts for a Set", Go: func(app *App) { app.goTo(scrLegoMissingAsk) }},
-				{Key: "9", Label: "BrickLink Lookup by Number (price, live)", Go: func(app *App) { app.goTo(scrLegoBLAsk) }},
-				{Key: "H", Label: "History of Changes and Growth Chart", Go: func(app *App) { app.goTo(scrLegoHistory) }},
-				{Key: "B", Label: "What Can I Build? (from your loose parts)", Go: func(app *App) { app.goTo(scrLegoBuild) }},
-				{Key: "D", Label: "Part / Set Detail with picture", Go: func(app *App) { app.goTo(scrLegoDetailAsk) }},
+				{Key: "1", Label: "Search My Sets", Go: func(app *App) { app.goTo(scrLegoSetSearch) }, Perm: "lego.search"},
+				{Key: "2", Label: "Search Sets (offline catalog first)", Go: func(app *App) { app.goTo(scrLegoSetFind) }, Perm: "lego.search"},
+				{Key: "3", Label: "Search Parts (offline catalog first)", Go: func(app *App) { app.goTo(scrLegoPartSearch) }, Perm: "lego.search"},
+				{Key: "4", Label: "Add / Update a Set", Go: func(app *App) { app.goTo(scrLegoSetAdd) }, Perm: "lego.edit"},
+				{Key: "5", Label: "Add / Update an Owned Part (for sync to Part-DB)", Go: func(app *App) { app.goTo(scrLegoPartAdd) }, Perm: "lego.edit"},
+				{Key: "6", Label: "List Owned Parts", Go: func(app *App) { app.goTo(scrLegoPartOwned) }, Perm: "lego.view"},
+				{Key: "7", Label: "Collection Stats (A: achievements)", Go: func(app *App) { app.goTo(scrLegoStats) }, Perm: "lego.view"},
+				{Key: "8", Label: "Set Workshop: parts checks, missing parts, orders, labels", Go: func(app *App) { app.goTo(scrWorkshop) }, Perm: "lego.view"},
+				{Key: "9", Label: "BrickLink Lookup by Number (price, live)", Go: func(app *App) { app.goTo(scrLegoBLAsk) }, Perm: "bricklink.view"},
+				{Key: "H", Label: "History of Changes and Growth Chart", Go: func(app *App) { app.goTo(scrLegoHistory) }, Perm: "lego.view"},
+				{Key: "B", Label: "What Can I Build? (from your loose parts)", Go: func(app *App) { app.goTo(scrLegoBuild) }, Perm: "lego.view"},
+				{Key: "D", Label: "Part / Set Detail with picture", Go: func(app *App) { app.goTo(scrLegoDetailAsk) }, Perm: "lego.view"},
+				{Key: "A", Label: "Achievements", Go: func(app *App) { app.goTo(scrLegoAchievements) }, Hidden: true, Perm: "lego.view"},
+				{Key: "T", Label: "Set of the Day (a build challenge)", Go: openSetOfTheDay, Hidden: true, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
-		intro: lowStockNote,
+		intro: legoHubIntro,
 	}
 }
 
@@ -173,11 +175,16 @@ func legoPartOwnedScreen() screenModel {
 				}
 				rows[i] = []string{p.PartNum, colour, p.Name, p.Category, qty, synced}
 			}
-			title := fmt.Sprintf("%d owned part(s) — / filter", len(owned))
+			title := fmt.Sprintf("%d owned part(s) — / filter, X export", len(owned))
 			if pending := countUnsynced(owned); pending > 0 {
 				title += fmt.Sprintf(" — %d not in Part-DB yet, run `wms lego sync-parts`", pending)
 			}
 			return rows, title, nil
+		},
+		extra: func(app *App, msg tea.KeyMsg) {
+			if isKey(msg, 'x') {
+				startExport(app, ownedExportJob())
+			}
 		},
 	}
 }
@@ -357,7 +364,12 @@ func legoStatsScreen() screenModel {
 				{"Sets by theme", top(st.Themes)},
 				{"Loose pieces by colour", top(st.Colours)},
 				{"Loose pieces by category", top(st.Categories)},
-			}, "Collection at a glance", nil
+			}, "Collection at a glance — A achievements", nil
+		},
+		extra: func(app *App, msg tea.KeyMsg) {
+			if isKey(msg, 'a') {
+				app.goTo(scrLegoAchievements)
+			}
 		},
 	}
 }
@@ -447,8 +459,13 @@ func legoMissingScreen() screenModel {
 				notes = append(notes, "BrickLink list: wms lego wanted --set "+v.SetNum)
 			}
 			src, _, _ := strings.Cut(v.Source, ",") // "offline catalog", not the refresh date
-			title += "\n" + strings.Join(append([]string{src}, notes...), " — ")
+			title += "\n" + strings.Join(append([]string{src, "X export"}, notes...), " — ")
 			return rows, title, nil
+		},
+		extra: func(app *App, msg tea.KeyMsg) {
+			if isKey(msg, 'x') && app.legoMissing != nil {
+				startExport(app, missingExportJob(app.legoMissing))
+			}
 		},
 	}
 }
@@ -471,15 +488,18 @@ func legoBuildScreen() screenModel {
 				}
 				rows[i] = []string{r.SetNum, r.Name, theme, strconv.Itoa(r.Year), fmt.Sprintf("%d%%", r.Percent), strconv.Itoa(r.Have) + "/" + strconv.Itoa(r.Total), strconv.Itoa(r.Missing)}
 			}
-			title := fmt.Sprintf("%d set(s) at least 50%% covered by loose parts — D detail, / filter", len(res))
+			title := fmt.Sprintf("%d set(s) at least 50%% covered by loose parts — D detail, X export, / filter", len(res))
 			if len(res) == 0 {
 				title = "No set is half covered by your loose parts yet"
 			}
 			return rows, title, nil
 		},
 		extra: func(app *App, msg tea.KeyMsg) {
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && (msg.Runes[0] == 'd' || msg.Runes[0] == 'D') {
+			switch {
+			case isKey(msg, 'd'):
 				app.goTo(scrLegoDetailAsk)
+			case isKey(msg, 'x'):
+				startExport(app, buildExportJob())
 			}
 		},
 	}

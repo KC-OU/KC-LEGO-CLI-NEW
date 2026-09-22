@@ -152,6 +152,40 @@ func ensureSchema(db *sql.DB) error {
 			color_name TEXT NOT NULL DEFAULT '', cond TEXT NOT NULL DEFAULT 'U', max_price REAL NOT NULL,
 			last_price REAL NOT NULL DEFAULT 0, last_checked TEXT NOT NULL DEFAULT '', last_alert TEXT NOT NULL DEFAULT '', alert_price REAL NOT NULL DEFAULT 0,
 			UNIQUE (item_type, item_no, color_id, cond))`,
+		// A set's parts check (intake when added, recount for a stock check), and what the set is short.
+		`CREATE TABLE IF NOT EXISTS set_state (
+			set_num TEXT PRIMARY KEY, location TEXT NOT NULL DEFAULT '', condition TEXT NOT NULL DEFAULT '', condition_note TEXT NOT NULL DEFAULT '',
+			missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0, pdb_location_id INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS set_checks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+			checked_by TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT '',
+			lines INTEGER NOT NULL DEFAULT 0, pieces INTEGER NOT NULL DEFAULT 0, have INTEGER NOT NULL DEFAULT 0,
+			missing INTEGER NOT NULL DEFAULT 0, extra INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS idx_set_checks_set ON set_checks(set_num, id)`,
+		`CREATE TABLE IF NOT EXISTS set_check_lines (
+			check_id INTEGER NOT NULL, part_num TEXT NOT NULL, part_name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+			color_id INTEGER NOT NULL, color_name TEXT NOT NULL DEFAULT '', bl_id TEXT NOT NULL DEFAULT '', bl_color INTEGER NOT NULL DEFAULT 0,
+			need INTEGER NOT NULL, have INTEGER NOT NULL, extra INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (check_id, part_num, color_id))`,
+		// How many of a loose part came from a set's extras (for "2 spare in 10696").
+		`CREATE TABLE IF NOT EXISTS part_origins (
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, origin_set TEXT NOT NULL, qty INTEGER NOT NULL,
+			PRIMARY KEY (part_num, color_id, origin_set))`,
+		`CREATE TABLE IF NOT EXISTS orders (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_kind TEXT NOT NULL, supplier TEXT NOT NULL DEFAULT '',
+			order_no TEXT NOT NULL DEFAULT '', invoice_no TEXT NOT NULL DEFAULT '', tracking_no TEXT NOT NULL DEFAULT '', carrier TEXT NOT NULL DEFAULT '',
+			currency TEXT NOT NULL DEFAULT '', shipping REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'wanted',
+			created_at TEXT NOT NULL, ordered_at TEXT NOT NULL DEFAULT '', shipped_at TEXT NOT NULL DEFAULT '', received_at TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS order_lines (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, set_num TEXT NOT NULL DEFAULT '',
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, color_name TEXT NOT NULL DEFAULT '', part_name TEXT NOT NULL DEFAULT '',
+			qty INTEGER NOT NULL, unit_price REAL NOT NULL DEFAULT 0, received_qty INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines(order_id)`,
+		`CREATE TABLE IF NOT EXISTS bo_prices (
+			bl_id TEXT NOT NULL, bl_color INTEGER NOT NULL, boid TEXT NOT NULL DEFAULT '', avg REAL NOT NULL DEFAULT 0, low REAL NOT NULL DEFAULT 0,
+			currency TEXT NOT NULL DEFAULT '', missing INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL,
+			PRIMARY KEY (bl_id, bl_color))`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

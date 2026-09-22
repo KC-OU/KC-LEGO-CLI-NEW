@@ -25,8 +25,13 @@ through the same navigation as the menus, so a screen your role may not use boun
 
 ## Accessibility
 
-- **Themes:** *Admin → Settings → Display Theme* (or `MODERNWMS_TUI_THEME`): `green` (default), `amber`, `high-contrast` (nothing dimmed,
-  reverse video for problems) and `colorblind` (blue and orange instead of green and red).
+- **Themes:** press **Ctrl-K** and choose *My display theme* — ↑/↓ previews each one on a sample panel, **Enter** keeps it **for you**
+  (every user can have their own; it is applied when you sign on). Admins also get *Admin → Settings → Display Theme*, where **D** makes
+  the highlighted theme **everyone's default** (`MODERNWMS_TUI_THEME`). The themes: `green` (default), `amber`, `high-contrast` (nothing
+  dimmed, reverse video for problems), `colorblind` (blue and orange instead of green and red), `dracula`, `half-life` (matches the zsh
+  theme), `nord`, `gruvbox`, `catppuccin`, `tokyo-night`, `ibm-3270`, `matrix` and `lego`.
+- After sign-on a short **themed animation** plays (an HEV boot for half-life, a brick for lego, falling glyphs for matrix); any key
+  skips it and `MODERNWMS_TUI_SPLASH=0` turns it off.
 - **`NO_COLOR=1`** turns colour off entirely; pictures switch to ASCII.
 - In the high-contrast, colour-blind and no-colour modes **OK / FAIL / WARN are spelled out** beside the icons, and **LOW** is always
   spelled out, so meaning never depends on colour alone.

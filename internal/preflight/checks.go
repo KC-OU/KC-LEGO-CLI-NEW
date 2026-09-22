@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "modernc.org/sqlite" // registers the driver for the read-only integrity check of the live database
 )
@@ -48,11 +49,11 @@ func Standard() []Check {
 	})
 	add("Code", "go vet", both, false, goTool("go vet ./...", "go", "vet", "./..."))
 	add("Code", "staticcheck", both, true, func(ctx context.Context, e *Env) Result {
-		name, args := "staticcheck", []string{"./..."}
-		if _, err := exec.LookPath(name); err != nil {
-			name, args = "go", []string{"run", "honnef.co/go/tools/cmd/staticcheck@latest", "./..."}
+		name, err := e.tool(ctx, "staticcheck", "honnef.co/go/tools/cmd/staticcheck")
+		if err != nil {
+			return Caution("could not install staticcheck: "+firstLine(err.Error()), "go install honnef.co/go/tools/cmd/staticcheck@latest")
 		}
-		out, err := e.run(ctx, name, args...)
+		out, err := e.run(ctx, name, "./...")
 		if err != nil {
 			if offline(out) {
 				return Caution("could not fetch staticcheck (offline?)", "install it: go install honnef.co/go/tools/cmd/staticcheck@latest")
@@ -71,11 +72,11 @@ func Standard() []Check {
 	})
 	add("Code", "tests (with -race unless --quick) and no test touches a live path", both, false, checkTests)
 	add("Code", "known vulnerabilities (govulncheck)", both, true, func(ctx context.Context, e *Env) Result {
-		name, args := "govulncheck", []string{"./..."}
-		if _, err := exec.LookPath(name); err != nil {
-			name, args = "go", []string{"run", "golang.org/x/vuln/cmd/govulncheck@latest", "./..."}
+		name, err := e.tool(ctx, "govulncheck", "golang.org/x/vuln/cmd/govulncheck")
+		if err != nil {
+			return Caution("could not install govulncheck: "+firstLine(err.Error()), "run: govulncheck ./...")
 		}
-		out, err := e.run(ctx, name, args...)
+		out, err := e.run(ctx, name, "./...")
 		if err != nil {
 			if offline(out) {
 				return Caution("could not reach the vulnerability database (offline?)", "run: govulncheck ./...")
@@ -217,9 +218,13 @@ func checkClean(ctx context.Context, e *Env) Result {
 }
 
 func checkTests(ctx context.Context, e *Env) Result {
-	args := []string{"test", "./...", "-count=1"}
+	// No -count=1: Go's test cache makes an unchanged package free, and the trap
+	// paths are fixed (see cmd/wms/preflight.go) so they don't defeat the cache. The
+	// race detector runs for a deploy; a publish leaves it to CI, which runs -race
+	// on every push.
+	args := []string{"test", "./..."}
 	label := "passed"
-	if !e.Quick {
+	if !e.Quick && e.Target != TargetPublish {
 		args = append(args, "-race")
 		label = "passed with -race"
 	}
@@ -273,9 +278,10 @@ func checkTests(ctx context.Context, e *Env) Result {
 }
 
 func checkGosec(ctx context.Context, e *Env) Result {
-	name, args := "gosec", []string{"-fmt=json", "-quiet", "-exclude-generated", "-exclude=G104", "./..."}
-	if _, err := exec.LookPath(name); err != nil {
-		name, args = "go", append([]string{"run", "github.com/securego/gosec/v2/cmd/gosec@latest"}, args...)
+	args := []string{"-fmt=json", "-quiet", "-exclude-generated", "-exclude=G104", "./..."}
+	name, err := e.tool(ctx, "gosec", "github.com/securego/gosec/v2/cmd/gosec")
+	if err != nil {
+		return Caution("could not install gosec: "+firstLine(err.Error()), "run: gosec ./...")
 	}
 	out, _ := e.run(ctx, name, args...) // gosec exits 1 when it finds anything
 	i := strings.Index(out, "{")
@@ -318,6 +324,8 @@ func checkGosec(ctx context.Context, e *Env) Result {
 // ---- publish ----
 
 func (e *Env) export(ctx context.Context) (string, error) {
+	e.exportMu.Lock() // several checks share one export; the first one makes it
+	defer e.exportMu.Unlock()
 	dir := filepath.Join(e.Scratch, "tree")
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 		return dir, nil
@@ -366,7 +374,7 @@ func checkGitHub(ctx context.Context, e *Env) Result {
 		return Pass("signed in")
 	}
 	if _, err := e.run(ctx, "gh", "repo", "view", e.Repository, "--json", "name"); err == nil {
-		return Caution(e.Repository+" already exists", "publish.sh will refuse to create it again")
+		return Pass("signed in; " + e.Repository + " exists (wms publish adds a commit to it)")
 	}
 	return Pass("signed in; " + e.Repository + " is free")
 }
@@ -584,4 +592,34 @@ func checkScripts(ctx context.Context, e *Env) Result {
 		return Pass(fmt.Sprintf("%d script(s): syntax, shellcheck and the preflight gate", len(e.Scripts)))
 	}
 	return Pass(fmt.Sprintf("%d script(s): syntax and the preflight gate (shellcheck is not installed)", len(e.Scripts)))
+}
+
+// tool finds an analysis tool: on $PATH, else in the tool cache, installing it
+// there (go install …@latest) when missing or older than a week. Installing once
+// instead of `go run …@latest` on every preflight is most of what made it slow.
+func (e *Env) tool(ctx context.Context, name, pkg string) (string, error) {
+	if p, err := exec.LookPath(name); err == nil {
+		return p, nil
+	}
+	dir := e.ToolDir
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".cache", "wms-preflight", "bin")
+	}
+	bin := filepath.Join(dir, name)
+	if fi, err := os.Stat(bin); err == nil && time.Since(fi.ModTime()) < 7*24*time.Hour {
+		return bin, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if out, err := e.Run.Run(ctx, e.Repo, []string{"GOBIN=" + dir}, "go", "install", pkg+"@latest"); err != nil {
+		if _, serr := os.Stat(bin); serr == nil {
+			return bin, nil // offline: an older copy will do
+		}
+		return "", fmt.Errorf("%s", firstLine(out))
+	}
+	now := time.Now()
+	_ = os.Chtimes(bin, now, now)
+	return bin, nil
 }

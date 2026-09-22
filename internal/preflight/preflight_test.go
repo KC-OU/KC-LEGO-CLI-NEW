@@ -3,6 +3,7 @@ package preflight
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,7 +41,12 @@ func (f *fakeRunner) Run(ctx context.Context, dir string, env []string, name str
 func env(t *testing.T, r Runner) *Env {
 	t.Helper()
 	dir := t.TempDir()
-	return &Env{Repo: dir, Run: r, Now: time.Now, Scratch: filepath.Join(dir, "scratch"), Trap: filepath.Join(dir, "trap")}
+	tools := filepath.Join(dir, "tools") // stand-ins, so no check tries to install the real tools
+	_ = os.MkdirAll(tools, 0o755)
+	for _, n := range []string{"staticcheck", "govulncheck", "gosec"} {
+		_ = os.WriteFile(filepath.Join(tools, n), nil, 0o755)
+	}
+	return &Env{Repo: dir, Run: r, Now: time.Now, Scratch: filepath.Join(dir, "scratch"), Trap: filepath.Join(dir, "trap"), ToolDir: tools}
 }
 
 func TestSelectHonoursTargetAndQuick(t *testing.T) {
@@ -85,7 +91,7 @@ func TestACancelledRunSkipsTheRest(t *testing.T) {
 		{Name: "first", Run: func(context.Context, *Env) Result { cancel(); return Pass("done") }},
 		{Name: "second", Run: func(context.Context, *Env) Result { t.Error("must not run"); return Pass("") }},
 	}
-	outs := Execute(ctx, &Env{}, cs, nil)
+	outs := Execute(ctx, &Env{Workers: 1}, cs, nil) // one at a time: what is still queued is skipped
 	if outs[1].Result.Status != Skip {
 		t.Errorf("%+v", outs[1])
 	}
@@ -367,5 +373,28 @@ func TestASymbolicLinkInTheTreeIsReportedNotFollowed(t *testing.T) {
 	finds, err := ScanTree(root, nil, nil)
 	if err != nil || len(finds) != 1 || !strings.Contains(finds[0].What, "symbolic link") {
 		t.Fatalf("%v %v", finds, err)
+	}
+}
+
+func TestParallelRunKeepsTheChecksOrder(t *testing.T) {
+	var cs []Check
+	for i := 0; i < 12; i++ {
+		d := time.Duration(12-i) * time.Millisecond // later checks finish first
+		st := []Status{OK, Warn, Fail}[i%3]
+		cs = append(cs, Check{Name: fmt.Sprint(i), Run: func(context.Context, *Env) Result {
+			time.Sleep(d)
+			return Result{Status: st, Detail: fmt.Sprint(i)}
+		}})
+	}
+	var events int
+	par := Execute(context.Background(), &Env{Workers: 4}, cs, func(Event) { events++ })
+	ser := Execute(context.Background(), &Env{Workers: 1}, cs, nil)
+	for i := range cs {
+		if par[i].Check.Name != ser[i].Check.Name || par[i].Result != ser[i].Result {
+			t.Fatalf("outcome %d differs: %+v vs %+v", i, par[i], ser[i])
+		}
+	}
+	if events != 24 {
+		t.Errorf("every check reports start and done: %d events", events)
 	}
 }
