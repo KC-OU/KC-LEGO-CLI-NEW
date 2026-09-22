@@ -83,7 +83,7 @@ func settingsSyncAdminScreen() screenModel {
 		build: func(app *App) []ui.Field {
 			username, err := api.AdminUsername()
 			if err != nil {
-				username = "(not configured yet — set SYNC_ADMIN_PASS and run `wms sync` once, or set a password below)"
+				username = "(not set yet — enter one below)"
 			}
 			return []ui.Field{
 				{Label: "Current username", Value: username, Protected: true},

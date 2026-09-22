@@ -41,6 +41,7 @@ func newTestEnv(t *testing.T) (*App, *partdbtest.Fake) {
 	t.Setenv(config.ExportDir, filepath.Join(dir, "exports"))
 	t.Setenv(config.UserPrefsFile, filepath.Join(dir, "user-prefs.json"))
 	t.Setenv(config.AccessFile, filepath.Join(dir, "access.json"))
+	t.Setenv(config.CredentialsFile, filepath.Join(dir, "credentials.json")) // never the live sync login
 	t.Setenv(config.PublicURL, "")
 	t.Setenv(config.TUISplash, "0")
 	t.Setenv(config.RebrickableAPIKey, "")
