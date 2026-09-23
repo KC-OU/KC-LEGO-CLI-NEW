@@ -80,6 +80,7 @@ nav:
       - Backups: guides/backups.md
       - Telnet and the web terminal: guides/telnet-and-web.md
       - Security: guides/security.md
+      - Security audit: guides/security-audit.md
       - Access control: guides/access-control.md
       - "Shipping: preflight, deploy, publish": guides/shipping.md
   - Reference:

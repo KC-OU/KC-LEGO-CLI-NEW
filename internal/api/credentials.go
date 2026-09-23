@@ -78,7 +78,7 @@ func (s *credentialStore) set(username, password string) error {
 }
 
 func (s *credentialStore) writeLocked(c credentials) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil { // holds the sync dashboard's password hash
 		return err
 	}
 	data, err := json.MarshalIndent(c, "", "  ")

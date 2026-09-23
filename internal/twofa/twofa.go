@@ -124,7 +124,7 @@ func (s *store) load() (map[string]entry, error) {
 // It fails closed: if the lock cannot be taken, nothing is read or changed.
 func (s *store) lock() (unlock func(), err error) {
 	storeMu.Lock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil { // holds TOTP secrets: no listing by other local accounts
 		storeMu.Unlock()
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (s *store) lock() (unlock func(), err error) {
 // save writes to a temp file and renames it over the store, so a crash or a
 // reader in another process never sees a half-written file.
 func (s *store) save(entries map[string]entry) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil { // holds TOTP secrets: no listing by other local accounts
 		return err
 	}
 	data, err := json.MarshalIndent(entries, "", "  ")

@@ -157,7 +157,7 @@ func SetOverride(key, value string) error {
 		m = map[string]string{}
 	}
 	m[key] = value
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil { // holds API keys and tokens (settings.json)
 		return err
 	}
 	data, err := json.MarshalIndent(m, "", "  ")

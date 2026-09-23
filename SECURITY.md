@@ -20,6 +20,8 @@ Please report security problems privately through GitHub: **Security > Report a 
 
 `wms doctor` checks the parts of this that can drift (file permissions, the audit chain, plugin checksums, backup age, clock).
 
+For the record of what was actually checked and found, see the [security audit](docs/guides/security-audit.md).
+
 ## Supported versions
 
 Only the latest release receives fixes.
