@@ -100,8 +100,19 @@ func runDoctor(ctx context.Context) []check {
 		checkGateway(),
 	}
 	cs = append(cs, checkSecretFiles()...)
-	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins())
+	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins(), checkTmux())
 	return cs
+}
+
+// checkTmux is a warning, not a failure: without tmux the web terminal falls back to
+// today's one-process-per-connection behaviour (see internal/gateway/web.go
+// webCommand) — asks for 2FA on every reconnect instead of sharing a persistent
+// session, but still works.
+func checkTmux() check {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return warn("Web terminal session", "tmux is not installed", "install tmux so the web terminal keeps you signed in across reconnects; without it, every reconnect asks for 2FA again")
+	}
+	return ok("Web terminal session", "tmux found — the web terminal persists across reconnects")
 }
 
 func checkModernWMS(ctx context.Context) check {
