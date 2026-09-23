@@ -44,6 +44,7 @@ var formatKeys = map[string][2]string{
 	"bricklink-xml":   {"B", "BrickLink wanted list (XML upload)"},
 	"rebrickable-csv": {"R", "Rebrickable parts list (CSV import)"},
 	"sorting-html":    {"G", "Sorting sheet: parts by colour with pictures and tick boxes"},
+	"report":          {"P", "Printable report (clean, title-page form — for reading or printing)"},
 }
 
 func startExport(app *App, job *exportJob) {

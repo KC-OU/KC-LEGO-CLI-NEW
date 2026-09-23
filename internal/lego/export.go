@@ -32,6 +32,9 @@ type ExportRow struct {
 	PartDBID  int
 	BLColor   int // BrickLink colour number, 0 when unknown
 	Image     *Image
+	// SetNum is which set the row belongs to, in a multi-set report — the display
+	// title ("75192 Millennium Falcon"), not the bare number. "" outside reports.
+	SetNum string
 }
 
 // Image is a picture carried in an export: its source URL and, when the bytes were
@@ -380,7 +383,7 @@ func BuildCSV(d *ExportData) []byte {
 }
 
 // Formats are the names Encode accepts.
-var Formats = []string{"rebrickable-csv", "bricklink-xml", "csv", "sets-csv", "json", "xlsx", "html"}
+var Formats = []string{"rebrickable-csv", "bricklink-xml", "csv", "sets-csv", "json", "xlsx", "html", "report", "sorting-html"}
 
 // Encode writes d in format and returns the bytes and the file extension to use.
 func Encode(format string, d *ExportData) (body []byte, ext string, warns ExportWarnings, err error) {
@@ -406,6 +409,9 @@ func Encode(format string, d *ExportData) (body []byte, ext string, warns Export
 		return body, "xlsx", nil, err
 	case "html":
 		body, err = HTML(d)
+		return body, "html", nil, err
+	case "report":
+		body, err = ReportHTML(d)
 		return body, "html", nil, err
 	case "sorting-html":
 		body, err = SortingHTML(d)

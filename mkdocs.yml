@@ -68,6 +68,7 @@ nav:
       - Sets, missing parts and what to build: guides/sets-and-building.md
       - Set checks and stock checks: guides/set-checks.md
       - Missing parts, prices and orders: guides/missing-parts-and-orders.md
+      - Reports: guides/reports.md
       - Labels: guides/labels.md
       - BrickLink: guides/bricklink.md
       - History and restore: guides/history.md

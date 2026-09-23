@@ -213,6 +213,7 @@ var screenPerm = map[string]string{
 	scrOrders: "orders.view", scrOrderLines: "orders.view", scrOrderEdit: "orders.manage", scrLinePrice: "orders.manage",
 	scrLineReceive: "orders.manage", scrSpend: "orders.view", scrLabels: "labels.print", scrLabelsAsk: "labels.print",
 	scrSetInfo: "lego.edit", scrCheckAsk: "sets.check", scrNotify: "access.manage", scrNotifyRoute: "access.manage",
+	scrReports: "lego.view", scrReportsSet: "lego.view",
 }
 
 // mayOpen reports whether the user may open screen id (unlisted screens are

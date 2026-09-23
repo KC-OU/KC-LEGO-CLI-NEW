@@ -1,0 +1,255 @@
+package lego
+
+import (
+	"bytes"
+	"fmt"
+	"html/template"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Reports turn what already exists (ShoppingList, Stats, set checks) into something
+// meant to be read or printed — a title, totals, and sections — rather than a flat
+// table export. Every report also assembles an *ExportData so the existing xlsx/csv/
+// json writers (Encode) work on it unchanged; the HTML here is the "clean form" you
+// asked for specifically, closer to a real document than SpreadsheetCSV/HTML's table.
+
+// CheckSummary is one past check, without its lines (for history listings — the
+// per-set totals are already stored on set_checks, so this never re-reads
+// set_check_lines).
+type CheckSummary struct {
+	ID                                  int64
+	SetNum, Kind, CheckedBy             string
+	FinishedAt                          time.Time
+	Lines, Pieces, Have, Missing, Extra int
+}
+
+// CheckHistory lists finished checks, newest first: for one set (setNum != ""), or
+// across the whole collection.
+func (d *DB) CheckHistory(setNum string, limit int) ([]CheckSummary, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT id, set_num, kind, checked_by, finished_at, lines, pieces, have, missing, extra
+		FROM set_checks WHERE status = ?`
+	args := []any{StatusDone}
+	if setNum != "" {
+		q += ` AND set_num = ?`
+		args = append(args, setNum)
+	}
+	q += ` ORDER BY finished_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CheckSummary
+	for rows.Next() {
+		var s CheckSummary
+		var finished string
+		if err := rows.Scan(&s.ID, &s.SetNum, &s.Kind, &s.CheckedBy, &finished, &s.Lines, &s.Pieces, &s.Have, &s.Missing, &s.Extra); err != nil {
+			return nil, err
+		}
+		s.FinishedAt, _ = time.Parse(timeLayout, finished)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func setTitle(d *DB, setNum string) string {
+	if s, _ := d.CatalogSet(setNum); s != nil && s.Name != "" {
+		return setNum + " " + s.Name
+	}
+	if s, _ := d.GetSetByNum(strings.TrimSuffix(setNum, "-1")); s != nil && s.Name != "" {
+		return setNum + " " + s.Name
+	}
+	return setNum
+}
+
+// MissingPartsReport covers the given sets, or every incomplete set when sets is
+// empty. Rows carry SetNum so a multi-set report stays one document.
+func (d *DB) MissingPartsReport(sets []string) (*ExportData, error) {
+	if len(sets) == 0 {
+		inc, err := d.IncompleteSets()
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range inc {
+			sets = append(sets, s.SetNum)
+		}
+	}
+	data := &ExportData{Title: "Missing parts report", When: time.Now()}
+	totalMissing, totalOnOrder := 0, 0
+	for _, num := range sets {
+		lines, err := d.ShoppingList(num)
+		if err != nil {
+			continue // not checked, or nothing missing — not a report failure
+		}
+		title := setTitle(d, num)
+		setMissing, setOnOrder := 0, 0
+		for _, l := range lines {
+			data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: l.PartNum, Name: l.PartName, Category: l.Category,
+				ColorID: l.ColorID, ColorName: l.ColorName, Qty: l.Short, BLColor: l.BLColor})
+			setMissing += l.Short
+			setOnOrder += l.OnOrder
+		}
+		if len(lines) > 0 {
+			data.Facts = append(data.Facts, [2]string{title, fmt.Sprintf("%d line(s), %d part(s) missing, %d on order", len(lines), setMissing, setOnOrder)})
+		}
+		totalMissing += setMissing
+		totalOnOrder += setOnOrder
+	}
+	data.Facts = append([][2]string{{"Sets covered", fmt.Sprint(len(sets))}, {"Total missing", fmt.Sprint(totalMissing)}, {"Total on order", fmt.Sprint(totalOnOrder)}}, data.Facts...)
+	return data, nil
+}
+
+// CollectionReport is every set and every loose part you own, with a summary.
+func (d *DB) CollectionReport() (*ExportData, error) {
+	owned, err := d.ExportOwned()
+	if err != nil {
+		return nil, err
+	}
+	st, err := d.Stats()
+	if err != nil {
+		return nil, err
+	}
+	data := &ExportData{Title: "Collection report", When: time.Now(), Rows: owned.Rows, Sets: owned.Sets}
+	data.Facts = [][2]string{
+		{"Sets", fmt.Sprintf("%d title(s), %d cop(ies)", st.SetTitles, st.SetCopies)},
+		{"Pieces in sets", fmt.Sprint(st.SetPieces)},
+		{"Loose parts", fmt.Sprintf("%d line(s), %d piece(s)", st.PartLines, st.LoosePieces)},
+		{"Distinct parts", fmt.Sprint(st.DistinctParts)},
+		{"Below minimum", fmt.Sprint(st.LowStock)},
+	}
+	return data, nil
+}
+
+// SetPartsReport is one or several sets, everything in each side by side.
+func (d *DB) SetPartsReport(sets []string) (*ExportData, error) {
+	data := &ExportData{Title: "Set parts report", When: time.Now()}
+	for _, num := range sets {
+		items, err := d.CatalogSetInventory(num)
+		if err != nil || len(items) == 0 {
+			continue
+		}
+		title := setTitle(d, num)
+		pieces := 0
+		for _, it := range items {
+			data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: it.PartNum, Name: it.PartName, ColorID: it.ColorID, ColorName: it.ColorName, Qty: it.Qty, BLColor: it.BLColor})
+			pieces += it.Qty
+		}
+		data.Facts = append(data.Facts, [2]string{title, fmt.Sprintf("%d line(s), %d piece(s)", len(items), pieces)})
+	}
+	return data, nil
+}
+
+// ---- report HTML (the "clean form") ----
+
+func reportPieces(rows []ExportRow) int {
+	n := 0
+	for _, r := range rows {
+		n += r.Qty
+	}
+	return n
+}
+
+// bySet groups rows by SetNum, in first-seen order — the report is read set by set.
+func bySet(rows []ExportRow) (order []string, groups map[string][]ExportRow) {
+	groups = map[string][]ExportRow{}
+	for _, r := range rows {
+		k := r.SetNum
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], r)
+	}
+	return order, groups
+}
+
+var reportTmpl = template.Must(template.New("report").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}}</title>
+<style>
+ body{font:14px/1.45 system-ui,sans-serif;margin:0;color:#111}
+ .page{max-width:900px;margin:0 auto;padding:2rem}
+ .title{text-align:center;padding:3rem 0 2rem;border-bottom:4px solid #222;margin-bottom:2rem}
+ .title h1{margin:0 0 .3rem;font-size:28px} .title .meta{color:#666}
+ table.facts{width:100%;border-collapse:collapse;margin-bottom:2rem}
+ table.facts td{padding:.35rem .5rem;border-bottom:1px solid #eee} table.facts td:first-child{font-weight:600;width:40%}
+ h2{margin:2rem 0 .5rem;padding-bottom:.25rem;border-bottom:2px solid #333;font-size:18px}
+ table.rows{border-collapse:collapse;width:100%;margin-bottom:1rem}
+ table.rows th,table.rows td{border-bottom:1px solid #ddd;padding:.3rem .5rem;text-align:left;font-size:13px}
+ table.rows th{background:#f2f2f2} td.n,th.n{text-align:right}
+ .footer{color:#999;font-size:11px;text-align:center;margin-top:3rem;padding-top:1rem;border-top:1px solid #eee}
+ @media print{.page{max-width:none} h2{break-after:avoid} tr{break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="title"><h1>{{.Title}}</h1><div class="meta">Generated {{.Date}}</div></div>
+{{if .Facts}}<table class="facts">{{range .Facts}}<tr><td>{{index . 0}}</td><td>{{index . 1}}</td></tr>{{end}}</table>{{end}}
+{{range .Groups}}<h2>{{.Title}}</h2><table class="rows"><tr><th>Part</th><th>Colour</th><th>Name</th><th class="n">Qty</th></tr>
+{{range .Rows}}<tr><td>{{.PartNum}}</td><td>{{.ColorName}}</td><td>{{.Name}}</td><td class="n">{{.Qty}}</td></tr>{{end}}
+</table>{{end}}
+<div class="footer">{{.Pieces}} piece(s) across {{.Lines}} line(s) · KC-PARTS</div>
+</div></body></html>`))
+
+// ReportHTML renders a report's rows as the clean, title-page-style document (grouped
+// by set when the rows carry more than one).
+func ReportHTML(d *ExportData) ([]byte, error) {
+	order, groups := bySet(d.Rows)
+	sort.Strings(order)
+	type group struct {
+		Title string
+		Rows  []ExportRow
+	}
+	var gs []group
+	for _, k := range order {
+		title := k
+		if title == "" {
+			title = "Loose parts"
+		}
+		gs = append(gs, group{Title: title, Rows: groups[k]})
+	}
+	if len(order) == 0 && len(d.Rows) > 0 {
+		gs = append(gs, group{Title: d.Title, Rows: d.Rows})
+	}
+	var b bytes.Buffer
+	err := reportTmpl.Execute(&b, struct {
+		Title, Date   string
+		Facts         [][2]string
+		Groups        []group
+		Pieces, Lines int
+	}{d.Title, d.When.Format("2 January 2006, 15:04"), d.Facts, gs, reportPieces(d.Rows), len(d.Rows)})
+	return b.Bytes(), err
+}
+
+// ---- check history HTML ----
+
+var historyTmpl = template.Must(template.New("history").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}}</title>
+<style>
+ body{font:14px/1.45 system-ui,sans-serif;margin:0;color:#111}
+ .page{max-width:900px;margin:0 auto;padding:2rem}
+ .title{text-align:center;padding:3rem 0 2rem;border-bottom:4px solid #222;margin-bottom:2rem}
+ .title h1{margin:0 0 .3rem;font-size:28px} .title .meta{color:#666}
+ table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #ddd;padding:.3rem .5rem;text-align:left;font-size:13px}
+ th{background:#f2f2f2} td.n,th.n{text-align:right}
+ .complete{color:#0a7d2c;font-weight:600} .incomplete{color:#b02a2a;font-weight:600}
+ @media print{.page{max-width:none} tr{break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="title"><h1>{{.Title}}</h1><div class="meta">Generated {{.Date}} · {{len .Checks}} check(s)</div></div>
+<table><tr><th>Date</th><th>Set</th><th>Kind</th><th>By</th><th class="n">Pieces</th><th class="n">Have</th><th class="n">Missing</th><th class="n">Extra</th><th>Result</th></tr>
+{{range .Checks}}<tr><td>{{.FinishedAt.Format "2 Jan 2006 15:04"}}</td><td>{{.SetNum}}</td><td>{{.Kind}}</td><td>{{.CheckedBy}}</td>
+<td class="n">{{.Pieces}}</td><td class="n">{{.Have}}</td><td class="n">{{.Missing}}</td><td class="n">{{.Extra}}</td>
+<td>{{if eq .Missing 0}}<span class="complete">COMPLETE</span>{{else}}<span class="incomplete">{{.Missing}} missing</span>{{end}}</td></tr>
+{{end}}</table>
+</div></body></html>`))
+
+// CheckHistoryHTML renders a history listing as a clean, printable page.
+func CheckHistoryHTML(title string, checks []CheckSummary) ([]byte, error) {
+	var b bytes.Buffer
+	err := historyTmpl.Execute(&b, struct {
+		Title, Date string
+		Checks      []CheckSummary
+	}{title, time.Now().Format("2 January 2006, 15:04"), checks})
+	return b.Bytes(), err
+}

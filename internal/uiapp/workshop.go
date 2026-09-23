@@ -33,6 +33,8 @@ const (
 	scrSpend        = "spend"
 	scrSetInfo      = "set_info"
 	scrLabelsAsk    = "labels_ask"
+	scrReports      = "reports"
+	scrReportsSet   = "reports_set"
 	workshopBanner  = "workshop_banner"
 	defaultCurrency = "GBP"
 )
@@ -62,6 +64,8 @@ func workshopScreens() map[string]screenModel {
 		scrSpend:       spendScreen(),
 		scrSetInfo:     setInfoScreen(),
 		scrLabelsAsk:   labelsAskScreen(),
+		scrReports:     reportsHubScreen(),
+		scrReportsSet:  reportsSetAskScreen(),
 	}
 }
 
@@ -84,6 +88,7 @@ func workshopHubScreen() screenModel {
 				{Key: "4", Label: "Parts orders", Go: func(app *App) { app.goTo(scrOrders) }, Perm: "orders.view"},
 				{Key: "5", Label: "Spend report", Go: func(app *App) { app.goTo(scrSpend) }, Perm: "orders.view"},
 				{Key: "6", Label: "Print labels", Go: func(app *App) { app.goTo(scrLabelsAsk) }, Perm: "labels.print"},
+				{Key: "7", Label: "Reports: missing parts, collection, set parts, stock sheets", Go: func(app *App) { app.goTo(scrReports) }, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
