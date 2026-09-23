@@ -13,7 +13,7 @@ import (
 
 // writeReport renders data as the clean printable report (default) or, with an
 // explicit --format, whatever lego.Encode supports (csv/xlsx/json/plain html/...).
-func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, force bool) error {
+func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, force bool, discord discordFlags) error {
 	var body []byte
 	var err error
 	if format == "" {
@@ -25,6 +25,9 @@ func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, forc
 		return usageError("%v", err)
 	}
 	if outPath == "" {
+		if discord.send {
+			return usageError("--discord needs -o <file>: there's nothing saved to send otherwise")
+		}
 		_, _ = os.Stdout.Write(body)
 		return nil
 	}
@@ -33,6 +36,9 @@ func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, forc
 		return err
 	}
 	say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d row(s))", abs, len(data.Rows))))
+	if err := sendToDiscord(t, discord, abs, data.Title); err != nil {
+		return err
+	}
 	return emit(map[string]any{"file": abs, "rows": len(data.Rows), "facts": data.Facts})
 }
 
@@ -45,6 +51,7 @@ func newLegoReportCmd() *cobra.Command {
 func newLegoReportMissingCmd() *cobra.Command {
 	var format, outPath string
 	var force bool
+	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:     "missing [set...]",
 		Short:   "What's still missing, for the given sets or every incomplete set",
@@ -62,18 +69,20 @@ func newLegoReportMissingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force)
+			return writeReport(t, data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	discord.register(cmd.Flags())
 	return cmd
 }
 
 func newLegoReportCollectionCmd() *cobra.Command {
 	var format, outPath string
 	var force bool
+	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:     "collection",
 		Short:   "Every set and loose part you own, with a summary",
@@ -91,18 +100,20 @@ func newLegoReportCollectionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force)
+			return writeReport(t, data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	discord.register(cmd.Flags())
 	return cmd
 }
 
 func newLegoReportSetCmd() *cobra.Command {
 	var format, outPath string
 	var force bool
+	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:     "set <set...>",
 		Short:   "One or more sets' full parts lists, side by side",
@@ -120,12 +131,13 @@ func newLegoReportSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force)
+			return writeReport(t, data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	discord.register(cmd.Flags())
 	return cmd
 }
 
@@ -193,6 +205,7 @@ func newLegoReportHistoryCmd() *cobra.Command {
 func newLegoStockSheetCmd() *cobra.Command {
 	var outPath string
 	var force bool
+	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:     "stocksheet <set...>",
 		Short:   "A blank printable checklist for counting a set by hand",
@@ -226,11 +239,15 @@ func newLegoStockSheetCmd() *cobra.Command {
 					return err
 				}
 				say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d line(s))", abs, len(lines))))
+				if err := sendToDiscord(t, discord, abs, "stock sheet for "+title); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "output file (default: <set>-stocksheet.html; only with one set)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	discord.register(cmd.Flags())
 	return cmd
 }

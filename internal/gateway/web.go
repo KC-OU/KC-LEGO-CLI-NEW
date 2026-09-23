@@ -83,6 +83,9 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 	dl := downloadHandler(exports.Dir, auditDownload)
 	mux.Handle("/dl/", dl)
 	mux.Handle("/DL/", dl) // QR codes carry the link upper case (see exports.URL)
+	share := shareHandler(exports.Dir, auditShare)
+	mux.Handle("/share/", share)
+	mux.Handle("/SHARE/", share)
 	mux.Handle("/", proxy)
 
 	srv := &http.Server{

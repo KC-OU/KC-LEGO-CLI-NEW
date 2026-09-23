@@ -107,12 +107,13 @@ type App struct {
 	stack   []string
 	cur     string
 
-	busy       string // label shown, spinning, on the message line while a background tea.Cmd runs; "" when idle
-	busyFrame  int
-	message    string
-	messageErr bool
-	undo       []undoEntry
-	quitting   bool
+	busy          string // label shown, spinning, on the message line while a background tea.Cmd runs; "" when idle
+	busyFrame     int
+	discordAsking bool // the export result screen is showing its "pick an expiry" sub-prompt (see discord.go)
+	message       string
+	messageErr    bool
+	undo          []undoEntry
+	quitting      bool
 
 	// classic layout bookkeeping, set by View for touch-mode click mapping.
 	activeTab string // hub option key whose tab is highlighted in the tab bar
@@ -335,6 +336,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if done, ok := msg.(pricesFetchedMsg); ok {
 		a.pricesFetched(done)
+	}
+	if done, ok := msg.(discordSentMsg); ok {
+		a.discordSent(done)
 	}
 	if a.quitting {
 		return a, tea.Quit

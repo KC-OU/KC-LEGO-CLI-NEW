@@ -104,6 +104,39 @@ func TestSetPartsReportMultipleSets(t *testing.T) {
 	}
 }
 
+func TestWishlistHTMLShowsSetTitleAndPartLabel(t *testing.T) {
+	d := buildDB(t)
+	if err := d.AddWatch(Watch{ItemType: "SET", ItemNo: "1-1", ColorID: -1, MaxPrice: 120}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddWatch(Watch{ItemType: "PART", ItemNo: "3001", ColorID: 4, ColorName: "Red", MaxPrice: 0.05}); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := d.ListWatches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := WishlistHTML(d, "My wishlist", ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(html)
+	if !strings.Contains(s, "Fire Station") { // the set's catalog title, not just "1-1"
+		t.Errorf("missing set title:\n%s", s)
+	}
+	if !strings.Contains(s, "3001") || !strings.Contains(s, "Red") {
+		t.Errorf("missing part label:\n%s", s)
+	}
+}
+
+func TestWishlistHTMLEmpty(t *testing.T) {
+	d := buildDB(t)
+	html, err := WishlistHTML(d, "My wishlist", nil)
+	if err != nil || !strings.Contains(string(html), "Nothing on the list") {
+		t.Fatalf("html: %v\n%s", err, html)
+	}
+}
+
 func TestCheckHistoryNewestFirstAndFiltersByStatus(t *testing.T) {
 	d := buildDB(t)
 	checkedFireStation(t, d, 3)

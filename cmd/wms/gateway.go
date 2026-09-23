@@ -70,6 +70,9 @@ func newGatewayServeCmd() *cobra.Command {
 			if hours, err := strconv.Atoi(strings.TrimSpace(config.Get(config.CatalogAutoRefreshHours))); err == nil && hours > 0 {
 				go autoRefreshCatalog(ctx, time.Duration(max(hours, 24))*time.Hour)
 			}
+			if hours, err := strconv.Atoi(strings.TrimSpace(config.Get(config.RetirementAutoRefreshHours))); err == nil && hours > 0 {
+				go retirementAutoRefresh(ctx, time.Duration(hours)*time.Hour)
+			}
 
 			g, gctx := errgroup.WithContext(ctx)
 			host := config.Get(config.GatewayListenHost)

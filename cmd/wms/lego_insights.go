@@ -1119,6 +1119,7 @@ func newLegoExportCmd() *cobra.Command {
 	var format, outPath, set string
 	var copies int
 	var missing, force, withImages bool
+	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:   "export --format <rebrickable-csv|bricklink-xml|csv|sets-csv|json|xlsx|html> [-o file]",
 		Short: "Write your collection (or one set's missing parts) for another tool",
@@ -1169,6 +1170,9 @@ func newLegoExportCmd() *cobra.Command {
 				return usageError("%v", err)
 			}
 			if outPath == "" {
+				if discord.send {
+					return usageError("--discord needs -o <file>: there's nothing saved to send otherwise")
+				}
 				_, _ = os.Stdout.Write(body)
 				return nil
 			}
@@ -1180,6 +1184,13 @@ func newLegoExportCmd() *cobra.Command {
 			for _, w := range warns {
 				say(ui.Warn(t, w))
 			}
+			what := "your collection"
+			if set != "" && missing {
+				what = "missing parts for " + set
+			}
+			if err := sendToDiscord(t, discord, abs, what); err != nil {
+				return err
+			}
 			return emit(map[string]any{"file": abs, "format": format, "part_lines": len(data.Rows), "sets": len(data.Sets), "warnings": warns})
 		},
 	}
@@ -1188,6 +1199,7 @@ func newLegoExportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&set, "set", "", "with --missing: the set whose missing parts to export")
 	cmd.Flags().BoolVar(&missing, "missing", false, "export what --set still needs instead of what you own")
 	cmd.Flags().IntVar(&copies, "copies", 1, "copies of the set")
+	discord.register(cmd.Flags())
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
 	cmd.Flags().BoolVar(&withImages, "with-images", false, "add picture links to each part (json, xlsx, html); cached pictures are embedded")
 	_ = cmd.MarkFlagRequired("format")

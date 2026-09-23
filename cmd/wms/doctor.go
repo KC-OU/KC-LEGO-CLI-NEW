@@ -15,6 +15,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/backup"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
@@ -100,7 +101,7 @@ func runDoctor(ctx context.Context) []check {
 		checkGateway(),
 	}
 	cs = append(cs, checkSecretFiles()...)
-	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins(), checkTmux(), checkMetrics())
+	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins(), checkTmux(), checkMetrics(), checkRetirements(), checkDiscordBot())
 	return cs
 }
 
@@ -128,6 +129,36 @@ func checkMetrics() check {
 	}
 	c.Close()
 	return ok("Metrics", "listening on "+port+" (/metrics)")
+}
+
+// checkRetirements is informational only: never-imported and stale are both
+// fine to ignore (the sheet is a nice-to-have, not load-bearing) — the point
+// is just to say so, not to fail preflight/deploy over a third-party document.
+func checkRetirements() check {
+	db, err := openLego()
+	if err != nil {
+		return ok("Retirement data", "skipped (LEGO database unavailable)")
+	}
+	defer db.Close()
+	age := db.RetirementDataAge()
+	if age.IsZero() {
+		return ok("Retirement data", "not imported yet (optional: wms lego retirement refresh)")
+	}
+	return ok("Retirement data", fmt.Sprintf("last imported %s", age.Format("2006-01-02")))
+}
+
+// checkDiscordBot only runs when a token or user ID is set at all; either alone (a
+// half-finished setup) is worth a warning, neither is the normal off state.
+func checkDiscordBot() check {
+	bot := notify.DiscordBotFromConfig()
+	switch {
+	case bot.Enabled():
+		return ok("Discord bot", "configured (WMS_DISCORD_BOT_TOKEN and _USER_ID both set)")
+	case bot.Token == "" && bot.UserID == "":
+		return ok("Discord bot", "off (set WMS_DISCORD_BOT_TOKEN and WMS_DISCORD_BOT_USER_ID to enable --discord)")
+	default:
+		return warn("Discord bot", "only one of WMS_DISCORD_BOT_TOKEN / WMS_DISCORD_BOT_USER_ID is set", "both are needed — see docs/guides/discord-notifications.md")
+	}
 }
 
 func checkModernWMS(ctx context.Context) check {

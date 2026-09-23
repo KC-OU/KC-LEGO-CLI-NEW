@@ -35,6 +35,7 @@ const (
 	scrLabelsAsk    = "labels_ask"
 	scrReports      = "reports"
 	scrReportsSet   = "reports_set"
+	scrRetiring     = "retiring"
 	workshopBanner  = "workshop_banner"
 	defaultCurrency = "GBP"
 )
@@ -66,6 +67,7 @@ func workshopScreens() map[string]screenModel {
 		scrLabelsAsk:   labelsAskScreen(),
 		scrReports:     reportsHubScreen(),
 		scrReportsSet:  reportsSetAskScreen(),
+		scrRetiring:    &selectList{panelID: "RETIRE", title: "Retiring Soon", rows: retiringRows, hint: "Sets retiring within 6 months, from the retirement sheet (wms lego retirement refresh)"},
 	}
 }
 
@@ -89,6 +91,7 @@ func workshopHubScreen() screenModel {
 				{Key: "5", Label: "Spend report", Go: func(app *App) { app.goTo(scrSpend) }, Perm: "orders.view"},
 				{Key: "6", Label: "Print labels", Go: func(app *App) { app.goTo(scrLabelsAsk) }, Perm: "labels.print"},
 				{Key: "7", Label: "Reports: missing parts, collection, set parts, stock sheets", Go: func(app *App) { app.goTo(scrReports) }, Perm: "lego.view"},
+				{Key: "8", Label: "Retiring soon (owned & watched sets)", Go: func(app *App) { app.goTo(scrRetiring) }, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},

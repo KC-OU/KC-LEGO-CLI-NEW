@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"strings"
+	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
@@ -10,6 +11,30 @@ import (
 // Reports reuse the same export screen (format picker, saved file, QR download link)
 // as every other export in this app — a "report" format renders the clean, printable
 // form (internal/lego.ReportHTML) instead of the flat table the other formats give.
+
+func retiringRows(app *App) ([]string, [][]string, []string) {
+	list, err := app.legoDB.RetiringSoon(180 * 24 * time.Hour)
+	if err != nil {
+		app.setMsg(err.Error(), true)
+		return nil, nil, nil
+	}
+	var rows [][]string
+	var keys []string
+	for _, s := range list {
+		track := ""
+		switch {
+		case s.Owned && s.Watching:
+			track = "owned, watching"
+		case s.Owned:
+			track = "owned"
+		case s.Watching:
+			track = "watching"
+		}
+		rows = append(rows, []string{s.SetNum, s.Name, s.Theme, s.RetiresAt.Format("2 Jan 2006"), track})
+		keys = append(keys, s.SetNum)
+	}
+	return []string{"Set", "Name", "Theme", "Retires", "Tracked"}, rows, keys
+}
 
 func reportsHubScreen() screenModel {
 	return &menuScreen{

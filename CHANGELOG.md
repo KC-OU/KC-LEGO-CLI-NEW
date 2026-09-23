@@ -14,6 +14,18 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   of freezing the screen; `wms lego value --refresh` shows one on the CLI too. Benchmarks added for `CanBuild`, the xlsx
   export and the sorting sheet, to catch a future regression.
 - Security audit published: [docs/guides/security-audit.md](docs/guides/security-audit.md).
+- **Share links**: a read-only, multi-use page for someone without the CLI — your BrickLink watch list
+  (`wms lego watch`) read as a wishlist, or your full collection — viewable until it expires, not consumed on
+  first view like a download link. `wms lego share wishlist|collection`. See
+  [docs/guides/share-links.md](docs/guides/share-links.md).
+- **Discord export notifications**: any export can also be DMed to Discord as a real bot message — the QR code as
+  an actual image attachment, plus the link, with its own expiry chosen at send time (not tied to the site-wide
+  download-link default). `--discord`/`--discord-expires` on every export command; **D** on the TUI's export result
+  screen. See [docs/guides/discord-notifications.md](docs/guides/discord-notifications.md).
+- **Retirement dates**: reads a community-maintained spreadsheet (Rebrickable has no such field) and flags what's
+  retiring soon among your owned sets and BrickLink price watches, or just browses everything. Fail-soft by design —
+  a manual CSV import is always available if the live sheet is ever unreachable. `wms lego retirement
+  refresh|import|list`; Set Workshop → **8 Retiring soon** in the TUI.
 
 ### Fixed
 - **Web terminal**: switching tabs or reconnecting no longer asks for 2FA again or loses your place — the session now

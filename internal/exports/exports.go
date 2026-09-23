@@ -10,6 +10,7 @@
 package exports
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -17,11 +18,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/boombuler/barcode"
+	"github.com/boombuler/barcode/qr"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
@@ -70,9 +75,10 @@ func Save(dir, user, kind, num, ext string, data []byte) (string, error) {
 }
 
 type link struct {
-	File    string    `json:"file"`
-	User    string    `json:"user"`
-	Expires time.Time `json:"expires"`
+	File     string    `json:"file"`
+	User     string    `json:"user"`
+	Expires  time.Time `json:"expires"`
+	MultiUse bool      `json:"multi_use"` // a share link (see NewShareLink/Open): viewable until it expires, not consumed on first view
 }
 
 func linkPath(dir, token string) string {
@@ -80,8 +86,30 @@ func linkPath(dir, token string) string {
 	return filepath.Join(dir, linkDir, hex.EncodeToString(sum[:])+".json")
 }
 
-// NewLink makes a single-use token for file (which must be in dir).
+// NewLink makes a single-use token for file (which must be in dir), expiring after LinkTTL.
 func NewLink(dir, file, user string) (string, error) {
+	return NewLinkWithTTL(dir, file, user, LinkTTL())
+}
+
+// NewLinkWithTTL is NewLink with a caller-chosen expiry instead of the site-wide default —
+// for a link handed to one delivery (e.g. a Discord DM) where "might be busy, don't make me
+// redo this" calls for longer, or shorter, than LinkTTL.
+func NewLinkWithTTL(dir, file, user string, ttl time.Duration) (string, error) {
+	return newLink(dir, file, user, ttl, false)
+}
+
+// NewShareLink makes a multi-use token for file: viewable as many times as you like until
+// it expires, never consumed on first view — for a page meant to be looked at (a shared
+// wishlist or collection), not downloaded once (see NewLink). Served at /share/<token>
+// (inline, in a browser), not /dl/<token> (a single-use attachment download).
+func NewShareLink(dir, file, user string, ttl time.Duration) (string, error) {
+	return newLink(dir, file, user, ttl, true)
+}
+
+func newLink(dir, file, user string, ttl time.Duration, multiUse bool) (string, error) {
+	if ttl > MaxLinkTTL {
+		ttl = MaxLinkTTL // a token has no other revocation mechanism once handed out
+	}
 	var raw [20]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
@@ -89,7 +117,7 @@ func NewLink(dir, file, user string) (string, error) {
 	// Upper-case base32 (160 bits): a QR code holds it in its compact alphanumeric
 	// mode, which keeps the code small enough for an 80x25 telnet window.
 	token := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw[:])
-	b, err := json.Marshal(link{File: filepath.Base(file), User: user, Expires: time.Now().Add(LinkTTL())})
+	b, err := json.Marshal(link{File: filepath.Base(file), User: user, Expires: time.Now().Add(ttl), MultiUse: multiUse})
 	if err != nil {
 		return "", err
 	}
@@ -111,6 +139,16 @@ func URL(token string) string {
 		return ""
 	}
 	return strings.ToUpper(base) + "/DL/" + token
+}
+
+// ShareURL is URL's counterpart for a multi-use share-link token (see NewShareLink):
+// the same host, but the /share/ route that views a page instead of downloading it once.
+func ShareURL(token string) string {
+	base := strings.TrimRight(strings.TrimSpace(config.Get(config.PublicURL)), "/")
+	if base == "" {
+		return ""
+	}
+	return strings.ToUpper(base) + "/SHARE/" + token
 }
 
 var tokenRE = regexp.MustCompile(`^[A-Z2-7]{32}$`)
@@ -149,33 +187,84 @@ func Claim(dir, token string) (file, user string, err error) {
 	return full, l.User, nil
 }
 
+// Open reads a share-link token (see NewShareLink) without consuming it — viewable
+// again and again until it expires, unlike Claim's single-use download. Returns
+// ErrNoLink for a single-use (non-share) token too, so /share/ can't be used to
+// bypass a download link's one-time consumption.
+func Open(dir, token string) (file, user string, err error) {
+	token = strings.ToUpper(token)
+	if !tokenRE.MatchString(token) {
+		return "", "", ErrNoLink
+	}
+	b, err := os.ReadFile(linkPath(dir, token))
+	if err != nil {
+		return "", "", ErrNoLink
+	}
+	var l link
+	if json.Unmarshal(b, &l) != nil || !l.MultiUse || time.Now().After(l.Expires) {
+		return "", "", ErrNoLink
+	}
+	if l.File == "" || l.File != filepath.Base(l.File) || strings.HasPrefix(l.File, ".") {
+		return "", "", ErrNoLink
+	}
+	full := filepath.Join(dir, l.File)
+	if fi, err := os.Lstat(full); err != nil || !fi.Mode().IsRegular() {
+		return "", "", ErrNoLink
+	}
+	return full, l.User, nil
+}
+
 // Cleanup deletes exports older than MaxAge and expired links; it returns how many
 // files went.
 func Cleanup(dir string) int {
 	n := 0
 	now := time.Now()
-	maxAge, linkTTL := MaxAge(), LinkTTL()
-	for _, sub := range []string{dir, filepath.Join(dir, linkDir)} {
-		entries, err := os.ReadDir(sub)
-		if err != nil {
-			continue
-		}
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		maxAge := MaxAge()
 		for _, e := range entries {
 			fi, err := e.Info()
 			if err != nil || !fi.Mode().IsRegular() {
 				continue
 			}
-			age := maxAge
-			if sub != dir {
-				age = linkTTL
-			}
-			if now.Sub(fi.ModTime()) > age && os.Remove(filepath.Join(sub, e.Name())) == nil {
+			if now.Sub(fi.ModTime()) > maxAge && os.Remove(filepath.Join(dir, e.Name())) == nil {
 				n++
 			}
 		}
 	}
+	// A link's own Expires (set at creation — see NewLinkWithTTL/NewShareLink) decides when
+	// it goes, not a blanket file-age cutoff: a custom, longer-than-default TTL (a Discord
+	// send set for 24h, a share link for a week) must survive exactly that long, not just
+	// the site-wide LinkTTL default. Only a record too corrupt to even read its own expiry
+	// falls back to age, so garbage from a partial write doesn't linger forever.
+	linkSub := filepath.Join(dir, linkDir)
+	linkEntries, err := os.ReadDir(linkSub)
+	if err != nil {
+		return n
+	}
+	for _, e := range linkEntries {
+		fi, err := e.Info()
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		p := filepath.Join(linkSub, e.Name())
+		expired := now.Sub(fi.ModTime()) > MaxLinkTTL
+		if b, err := os.ReadFile(p); err == nil {
+			var l link
+			if json.Unmarshal(b, &l) == nil {
+				expired = now.After(l.Expires)
+			}
+		}
+		if expired && os.Remove(p) == nil {
+			n++
+		}
+	}
 	return n
 }
+
+// MaxLinkTTL bounds a custom expiry (NewLinkWithTTL/NewShareLink) and is the fallback
+// cleanup age for a link record too corrupt to read its own Expires.
+const MaxLinkTTL = 7 * 24 * time.Hour
 
 // Describe is a one-line summary for messages: the file name and its size.
 func Describe(path string) string {
@@ -194,4 +283,23 @@ func humanSize(n int64) string {
 		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d bytes", n)
+}
+
+// QRPNG renders text (a download link) as a scannable PNG QR code, side pixels
+// square — for a delivery that can carry a real image (a Discord DM), unlike
+// the terminal's own half-block QR rendering.
+func QRPNG(text string, side int) ([]byte, error) {
+	code, err := qr.Encode(text, qr.M, qr.Auto)
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := barcode.Scale(code, side, side)
+	if err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, scaled); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }

@@ -186,6 +186,12 @@ func ensureSchema(db *sql.DB) error {
 			bl_id TEXT NOT NULL, bl_color INTEGER NOT NULL, boid TEXT NOT NULL DEFAULT '', avg REAL NOT NULL DEFAULT 0, low REAL NOT NULL DEFAULT 0,
 			currency TEXT NOT NULL DEFAULT '', missing INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL,
 			PRIMARY KEY (bl_id, bl_color))`,
+		// A community-sourced retirement-date table (see retirement.go), fully replaced on every
+		// import/refresh — the source sheet is the source of truth, there is nothing to merge.
+		`CREATE TABLE IF NOT EXISTS retirements (
+			set_num TEXT PRIMARY KEY, theme TEXT NOT NULL DEFAULT '', subtheme TEXT NOT NULL DEFAULT '',
+			set_name TEXT NOT NULL DEFAULT '', retirement_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

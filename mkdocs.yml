@@ -78,8 +78,11 @@ nav:
       - Export and import: guides/export-import.md
       - Alerts: guides/alerts.md
       - Notifications: guides/notifications.md
+      - Discord notifications for exports: guides/discord-notifications.md
+      - Share links: guides/share-links.md
       - Backups: guides/backups.md
       - Metrics (Prometheus): guides/metrics.md
+      - Retirement dates: guides/retirement-dates.md
       - Telnet and the web terminal: guides/telnet-and-web.md
       - Security: guides/security.md
       - Security audit: guides/security-audit.md

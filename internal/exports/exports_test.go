@@ -71,6 +71,92 @@ func TestLinkRefusals(t *testing.T) {
 	}
 }
 
+// TestShareLinkIsMultiUseAndOutlivesDefaultLinkTTL guards the bug a custom, longer-than-
+// default TTL exposed: Cleanup used to sweep .links by file age against the site-wide
+// LinkTTL default (15 min), so a share link (or a Discord --discord-expires) set longer
+// than that got deleted early, well before its own chosen expiry.
+func TestShareLinkIsMultiUseAndOutlivesDefaultLinkTTL(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	if LinkTTL() != 15*time.Minute {
+		t.Fatal("test assumes the 15-minute default")
+	}
+	dir := t.TempDir()
+	path, err := Save(dir, "kc", "collection", "", "html", []byte("<html></html>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := NewShareLink(dir, path, "kc", 24*time.Hour) // far longer than the 15-min default
+	if err != nil {
+		t.Fatal(err)
+	}
+	// backdate the link record past the default LinkTTL, as if it had sat for 20 minutes —
+	// the bug would have swept it here; the fix must not, since its own expiry is 24h out.
+	p := linkPath(dir, tok)
+	old := time.Now().Add(-20 * time.Minute)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if n := Cleanup(dir); n != 0 {
+		t.Fatalf("cleanup removed %d record(s); the share link should have survived", n)
+	}
+	// multi-use: opened twice, both succeed, neither consumes it
+	for i := 0; i < 2; i++ {
+		file, user, err := Open(dir, tok)
+		if err != nil || file != path || user != "kc" {
+			t.Fatalf("open #%d = %q %q %v", i, file, user, err)
+		}
+	}
+	// a single-use link is refused by Open — /share/ can't replay a /dl/ token
+	dlTok, err := NewLink(dir, path, "kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Open(dir, dlTok); !errors.Is(err, ErrNoLink) {
+		t.Fatalf("a single-use token should be refused by Open, got %v", err)
+	}
+}
+
+func TestShareLinkExpires(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	dir := t.TempDir()
+	path, err := Save(dir, "kc", "collection", "", "html", []byte("<html></html>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := NewShareLink(dir, path, "kc", time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if _, _, err := Open(dir, tok); !errors.Is(err, ErrNoLink) {
+		t.Fatalf("expired share link should be refused, got %v", err)
+	}
+}
+
+func TestNewShareLinkClampsToMaxLinkTTL(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	dir := t.TempDir()
+	path, err := Save(dir, "kc", "collection", "", "html", []byte("<html></html>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := NewShareLink(dir, path, "kc", 365*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(linkPath(dir, tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var l link
+	if json.Unmarshal(b, &l) != nil {
+		t.Fatal("bad link record")
+	}
+	if l.Expires.After(time.Now().Add(MaxLinkTTL + time.Minute)) {
+		t.Fatalf("expiry %v was not clamped to MaxLinkTTL", l.Expires)
+	}
+}
+
 func TestCleanup(t *testing.T) {
 	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
 	dir := t.TempDir()

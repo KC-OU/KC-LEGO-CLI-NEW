@@ -12,6 +12,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -51,7 +52,7 @@ func startExport(app *App, job *exportJob) {
 	if !app.require("lego.export", "EXPORT "+job.Kind) || !app.require("exports.create", "EXPORT "+job.Kind) {
 		return
 	}
-	app.exportJob, app.exportRes = job, nil
+	app.exportJob, app.exportRes, app.discordAsking = job, nil, false
 	app.goTo(scrExport)
 }
 
@@ -73,7 +74,14 @@ func (s *exportScreen) Body(app *App) string {
 	}
 	var b strings.Builder
 	if r := app.exportRes; r != nil {
-		return exportResultBody(app, r)
+		body := exportResultBody(app, r)
+		switch {
+		case app.discordAsking:
+			body += "\n\n" + discordAskBody(app)
+		case notify.DiscordBotFromConfig().Enabled() && exports.URL("x") != "":
+			body += "\n\n" + t.Muted.Render("D  send this to Discord (with a QR code)")
+		}
+		return body
 	}
 	b.WriteString(t.Strong.Render("Export "+job.What) + "\n\n")
 	for _, f := range job.Formats {
@@ -135,7 +143,20 @@ func qrCode(s string) string {
 
 func (s *exportScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	job := app.exportJob
-	if job == nil || app.exportRes != nil || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+	if job == nil {
+		return
+	}
+	if app.discordAsking {
+		handleDiscordAskKey(app, msg)
+		return
+	}
+	if app.exportRes != nil {
+		if isKey(msg, 'd') && notify.DiscordBotFromConfig().Enabled() && exports.URL("x") != "" {
+			app.discordAsking = true
+		}
+		return
+	}
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
 		return
 	}
 	key := strings.ToUpper(string(msg.Runes))

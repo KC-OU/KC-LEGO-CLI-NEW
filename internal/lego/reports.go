@@ -253,3 +253,55 @@ func CheckHistoryHTML(title string, checks []CheckSummary) ([]byte, error) {
 	}{title, time.Now().Format("2 January 2006, 15:04"), checks})
 	return b.Bytes(), err
 }
+
+// ---- wishlist HTML (a read-only page for someone without the CLI) ----
+
+// wishItem is one watch, with a set's watch given its catalog title — for
+// someone else reading this (family before a birthday), a bare set number
+// alone means nothing.
+type wishItem struct {
+	Watch
+	Title string // "75192 Millennium Falcon" for a set watch; "" for a part watch
+}
+
+var wishlistTmpl = template.Must(template.New("wishlist").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}}</title>
+<style>
+ body{font:15px/1.5 system-ui,sans-serif;margin:0;color:#111;background:#fafafa}
+ .page{max-width:700px;margin:0 auto;padding:2.5rem 1.5rem}
+ .title{text-align:center;padding-bottom:1.5rem;margin-bottom:2rem;border-bottom:3px solid #222}
+ .title h1{margin:0 0 .3rem;font-size:26px} .title .meta{color:#666;font-size:14px}
+ ul{list-style:none;padding:0;margin:0} li{background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:1rem 1.2rem;margin-bottom:.8rem}
+ .name{font-weight:600;font-size:17px} .sub{color:#666;font-size:13px;margin-top:.2rem}
+ .price{float:right;color:#0a7d2c;font-weight:600}
+ .empty{text-align:center;color:#888;padding:3rem 0}
+ @media print{body{background:#fff} li{break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="title"><h1>{{.Title}}</h1><div class="meta">{{.Date}}</div></div>
+{{if .Items}}<ul>
+{{range .Items}}<li><span class="price">{{if .LastPrice}}{{printf "%.2f" .LastPrice}}{{end}}</span>
+<div class="name">{{if .Title}}{{.Title}}{{else}}{{.ItemNo}}{{if .ColorName}} — {{.ColorName}}{{end}}{{end}}</div>
+<div class="sub">{{.ItemType}} · wants it at {{printf "%.2f" .MaxPrice}} or less{{if .Cond}} ({{if eq .Cond "N"}}new{{else}}used{{end}}){{end}}</div>
+</li>{{end}}
+</ul>{{else}}<div class="empty">Nothing on the list right now.</div>{{end}}
+</div></body></html>`))
+
+// WishlistHTML renders watches as a plain-English page for someone without
+// the CLI — the watch list ("wms lego watch") read as a wishlist, since
+// that's what it already is: things wanted, at a price.
+func WishlistHTML(d *DB, title string, watches []Watch) ([]byte, error) {
+	items := make([]wishItem, len(watches))
+	for i, w := range watches {
+		it := wishItem{Watch: w}
+		if w.ItemType == "SET" {
+			it.Title = setTitle(d, w.ItemNo)
+		}
+		items[i] = it
+	}
+	var b bytes.Buffer
+	err := wishlistTmpl.Execute(&b, struct {
+		Title, Date string
+		Items       []wishItem
+	}{title, time.Now().Format("2 January 2006"), items})
+	return b.Bytes(), err
+}
