@@ -186,6 +186,12 @@ func TestDocScreensRender(t *testing.T) {
 	app.goTo(scrLegoHistory)
 	shot("history")
 	home()
+	app.goTo(scrWorkshop)
+	shot("workshop")
+	home()
+	app.goTo(scrReports)
+	shot("reports")
+	home()
 	app.openPalette()
 	app.paletteInput = "fal"
 	shot("palette")
@@ -194,8 +200,8 @@ func TestDocScreensRender(t *testing.T) {
 	shot("help")
 
 	files, _ := filepath.Glob(filepath.Join(dirs[0], "*.html"))
-	if len(files) < 14 {
-		t.Errorf("expected 14 screens, wrote %d", len(files))
+	if len(files) < 16 {
+		t.Errorf("expected 16 screens, wrote %d", len(files))
 	}
 	for _, f := range files {
 		b, _ := os.ReadFile(f)

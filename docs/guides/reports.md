@@ -1,5 +1,7 @@
 # Reports
 
+--8<-- "docs/assets/screens/reports.html"
+
 Where exports give you the raw table, reports give you something meant to be read or printed: a title page, a summary,
 and a clean layout — plus a blank checklist for counting a set by hand.
 

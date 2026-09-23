@@ -79,6 +79,7 @@ nav:
       - Alerts: guides/alerts.md
       - Notifications: guides/notifications.md
       - Backups: guides/backups.md
+      - Metrics (Prometheus): guides/metrics.md
       - Telnet and the web terminal: guides/telnet-and-web.md
       - Security: guides/security.md
       - Security audit: guides/security-audit.md

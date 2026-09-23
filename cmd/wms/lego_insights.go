@@ -870,7 +870,11 @@ func newLegoValueCmd() *cobra.Command {
 				if !c.Enabled() {
 					return bricklink.ErrNotConfigured
 				}
-				fetched, unknown, refreshErr = db.RefreshPrices(ctx, blFetcher{c}, cond, refresh)
+				refreshErr = withSpinner(fmt.Sprintf("fetching up to %d price(s)", refresh), func() error {
+					var err error
+					fetched, unknown, err = db.RefreshPrices(ctx, blFetcher{c}, cond, refresh)
+					return err
+				})
 				say(ui.Fact(t, "Refreshed", fmt.Sprintf("%d price(s) fetched, %d item(s) BrickLink has no sales for", fetched, unknown)))
 				if refreshErr != nil {
 					say(ui.Warn(t, "Stopped early: "+refreshErr.Error()))

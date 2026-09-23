@@ -1,5 +1,11 @@
 # KC-LEGO-CLI-NEW (`wms-go`)
 
+[![CI](https://github.com/KC-OU/KC-LEGO-CLI-NEW/actions/workflows/ci.yml/badge.svg)](https://github.com/KC-OU/KC-LEGO-CLI-NEW/actions/workflows/ci.yml)
+[![Docs](https://github.com/KC-OU/KC-LEGO-CLI-NEW/actions/workflows/docs.yml/badge.svg)](https://kc-ou.github.io/KC-LEGO-CLI-NEW/)
+[![Latest release](https://img.shields.io/github/v/release/KC-OU/KC-LEGO-CLI-NEW)](https://github.com/KC-OU/KC-LEGO-CLI-NEW/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/KC-OU/KC-LEGO-CLI-NEW)](go.mod)
+[![License](https://img.shields.io/github/license/KC-OU/KC-LEGO-CLI-NEW)](LICENSE)
+
 A LEGO collection manager for the terminal, built to keep working when the internet doesn't — plus tools for
 [ModernWMS](https://github.com/modernwms) and [Part-DB](https://github.com/Part-DB/Part-DB-server) inventories.
 Successor to the original bash `KC-LEGO-CLI`.
@@ -11,9 +17,12 @@ Successor to the original bash `KC-LEGO-CLI`.
 - **Live where it helps.** Rebrickable and the BrickLink API (by number, price guide, where-used) fill gaps and add prices.
 - **What can I build?** Sets your loose parts cover, missing-parts lists that count alternates and moulds, BrickLink wanted lists.
 - **Pictures in the terminal** (Unicode half-blocks, or plain ASCII), **detail pages**, a **Ctrl-K palette**, **history and restore**.
-- **Works over telnet.** A telnet + web-terminal gateway serves the same TUI to scanners, tablets and old terminals.
+- **Works over telnet.** A telnet + web-terminal gateway serves the same TUI to scanners, tablets and old terminals, with a
+  persistent session so switching tabs or reconnecting doesn't ask for 2FA again.
+- **Printable reports.** Missing parts, your full collection, a set's parts list, stock-check history, and a blank
+  stock-check sheet to count against by hand — `wms lego report`, `wms lego stocksheet`.
 - **Careful by default.** Single-use 2FA with lockout, a hash-chained audit log, encrypted backups, sandboxed plugins,
-  `wms doctor`, and `--json` / `--dry-run` / exit codes for scripts.
+  `wms doctor`, `/metrics` for Prometheus, and `--json` / `--dry-run` / exit codes for scripts.
 
 ## Install
 

@@ -43,4 +43,20 @@ wms-go users 2fa unlock <user>       # after a lockout
 ```
 
 Codes are single-use (a code that just signed you in is refused if replayed; that's not counted as a guess). Five wrong codes lock the account for 5 minutes,
-doubling each time up to an hour. Signing back in from the same address within `TWOFA_GRACE_MINUTES` (default 30) skips the prompt; the web terminal never gets that.
+doubling each time up to an hour. Signing back in from the same address within `TWOFA_GRACE_MINUTES` (default 30) skips the prompt on telnet; the web
+terminal doesn't get an address-based grace window (see below for why), but it doesn't need one either — a session it already verified stays signed in.
+
+## The web terminal is one persistent, shared session
+
+Every telnet connection is its own process, with its own address, so a fresh connection can be trusted with the grace window above. A browser tab
+talking to ttyd has no such address to check — nothing about the connection proves "this is the same person who already passed 2FA" — so the web
+terminal deliberately never grants the grace window (an empty/unknown origin is refused, on purpose).
+
+What it does instead: `wms-gateway` runs the web terminal's `wms tui` process inside a `tmux` session (`wms-web`) that outlives any one
+connection. Opening a new tab, the PWA resuming after being backgrounded, or a dropped mobile connection all **attach to that same running
+process** — wherever you left it, already signed in — instead of spawning a fresh one that has to ask again. Signing out (**Q** at the hub) still
+returns that process to the sign-on screen, so the next person to open the web terminal gets a real prompt.
+
+The trade-off: it's **one shared screen**, not one per device. Every tab or device that opens the web terminal is looking at (and driving) the
+same session — the right model for one person using several devices, not for several people sharing a login. `wms doctor` reports whether `tmux`
+is installed; without it, the web terminal falls back to today's per-connection behaviour (a fresh sign-in and 2FA prompt every time).

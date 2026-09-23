@@ -36,6 +36,7 @@ const (
 	GatewayPort             = "GATEWAY_PORT"
 	GatewayListenHost       = "GATEWAY_LISTEN_HOST"
 	TTYDPort                = "TTYD_PORT"
+	MetricsPort             = "WMS_METRICS_PORT"
 	PartDBURL               = "PARTDB_URL"
 	ModernWMSURL            = "MODERNWMS_URL"
 	LegoDBPath              = "LEGO_DB_PATH"
@@ -87,6 +88,7 @@ func Defaults() map[string]string {
 		GatewayPort:             "7681",
 		GatewayListenHost:       "127.0.0.1", // loopback: reach it through the HTTPS tunnel; 0.0.0.0 exposes raw telnet
 		TTYDPort:                "7682",
+		MetricsPort:             "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
 		CredentialsFile:         "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:       "/root/docker-server/partdb-sync/config/link_overrides.json",
 		TwoFAFile:               "/root/docker-server/wms/2fa.json",

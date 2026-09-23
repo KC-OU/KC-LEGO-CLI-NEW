@@ -3,6 +3,8 @@ package notify
 import (
 	"context"
 	"time"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
 )
 
 // Dispatch sends an event's alert to wherever it is routed. Events are named
@@ -12,8 +14,16 @@ func Dispatch(event, title, body string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for _, send := range routes(event) {
-		_ = send(ctx, Message{Title: title, Body: body, Tag: tagFor(event)})
+		recordDelivery(send(ctx, Message{Title: title, Body: body, Tag: tagFor(event)}))
 	}
+}
+
+func recordDelivery(err error) {
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	metrics.NotifyDeliveries.WithLabelValues(outcome).Inc()
 }
 
 // Events are the alerts that can be routed.
@@ -58,7 +68,9 @@ func eventForTag(tag string) string {
 func Routed(ctx context.Context, m Message) error {
 	var first error
 	for _, send := range routes(eventForTag(m.Tag)) {
-		if err := send(ctx, m); err != nil && first == nil {
+		err := send(ctx, m)
+		recordDelivery(err)
+		if err != nil && first == nil {
 			first = err
 		}
 	}

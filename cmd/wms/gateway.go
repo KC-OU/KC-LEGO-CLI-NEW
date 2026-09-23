@@ -16,6 +16,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 )
 
@@ -74,6 +75,9 @@ func newGatewayServeCmd() *cobra.Command {
 			host := config.Get(config.GatewayListenHost)
 			g.Go(func() error { return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath) })
 			g.Go(func() error { return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath) })
+			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
+				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })
+			}
 			return g.Wait()
 		},
 	}

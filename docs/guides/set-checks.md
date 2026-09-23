@@ -3,6 +3,8 @@
 When you add a set, go through its parts so you know it is complete — and so a stock check or audit later has something
 accurate to compare with.
 
+--8<-- "docs/assets/screens/workshop.html"
+
 ## The parts check
 
 Add a set (*LEGO → 4 Add / Update a Set*) and answer **yes** to *Check the parts now?* — or open it any time: *LEGO → 8 Set

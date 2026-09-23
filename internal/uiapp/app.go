@@ -107,6 +107,8 @@ type App struct {
 	stack   []string
 	cur     string
 
+	busy       string // label shown, spinning, on the message line while a background tea.Cmd runs; "" when idle
+	busyFrame  int
 	message    string
 	messageErr bool
 	undo       []undoEntry
@@ -213,6 +215,37 @@ func idleTick() tea.Cmd {
 	return tea.Tick(15*time.Second, func(time.Time) tea.Msg { return idleTickMsg{} })
 }
 
+// busy is a label shown, spinning, on the message line while a slow network
+// operation (a BrickLink/BrickOwl price fetch, say) runs in the background —
+// so the screen stays responsive instead of freezing for the duration.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+type spinnerTickMsg struct{}
+
+func spinnerTick() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+}
+
+// startBusy shows label on the message line while work runs on bubbletea's
+// own goroutine; work's returned tea.Msg reaches Update() like any other
+// message, so its handler is where the result gets applied and busy cleared.
+func (a *App) startBusy(label string, work tea.Cmd) {
+	a.busy = label
+	a.busyFrame = 0
+	a.pendingCmd = tea.Batch(work, spinnerTick())
+}
+
+func (a *App) stopBusy() { a.busy = "" }
+
+// displayMessage is what the message line shows: the spinner while busy,
+// otherwise the normal status/error message.
+func (a *App) displayMessage() (string, bool) {
+	if a.busy != "" {
+		return spinnerFrames[a.busyFrame%len(spinnerFrames)] + " " + a.busy, false
+	}
+	return a.message, a.messageErr
+}
+
 // checkIdle locks a signed-in session that has seen no key or tap for the idle
 // limit, and closes a gateway session that has sat at sign-on too long.
 func (a *App) checkIdle() {
@@ -246,6 +279,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 		return a, idleTick()
+	}
+	if _, ok := msg.(spinnerTickMsg); ok {
+		a.busyFrame++
+		if a.busy != "" {
+			return a, spinnerTick()
+		}
+		return a, nil
 	}
 	switch msg.(type) {
 	case tea.KeyMsg, tea.MouseMsg:
@@ -292,6 +332,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if done, ok := msg.(toolDoneMsg); ok {
 		a.toolFinished(done)
+	}
+	if done, ok := msg.(pricesFetchedMsg); ok {
+		a.pricesFetched(done)
 	}
 	if a.quitting {
 		return a, tea.Quit
@@ -347,8 +390,9 @@ func (a *App) View() string {
 		badge = ui.RoleBadge(a.theme, role, canWrite)
 		extra = "Source: " + a.session.Source
 	}
+	msg, msgErr := a.displayMessage()
 	return ui.Frame(a.theme, scr.PanelID(), scr.Title(), user, role, extra, badge,
-		scr.Body(a), a.message, a.messageErr, scr.FKeys(), ui.DefaultMnemonics, "")
+		scr.Body(a), msg, msgErr, scr.FKeys(), ui.DefaultMnemonics, "")
 }
 
 // viewClassic renders the old Python TUI's layout (see ui.ClassicFrame): the
@@ -385,8 +429,9 @@ func (a *App) viewClassic(scr screenModel) string {
 		prompt = a.theme.Muted.Render("Press R to refresh, Q / ESC to go back")
 	}
 
+	msg, msgErr := a.displayMessage()
 	out, row := ui.ClassicFrame(a.theme, scr.PanelID(), scr.Title(), user, role, extra, badge,
-		tabs, a.activeTab, scr.FKeys(), scr.Body(a), a.message, a.messageErr, repeatLegend, prompt)
+		tabs, a.activeTab, scr.FKeys(), scr.Body(a), msg, msgErr, repeatLegend, prompt)
 	a.bodyRow = row
 	return out
 }

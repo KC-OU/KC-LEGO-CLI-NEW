@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
 )
 
 // RunTelnetServer listens on every port in listenPorts, dropping each
@@ -115,9 +117,11 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath strin
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	release, why := th.Admit(host)
 	if release == nil {
+		metrics.TelnetThrottled.Inc()
 		_, _ = conn.Write([]byte(why + "\r\n"))
 		return
 	}
+	metrics.TelnetConnections.Inc()
 	defer release()
 
 	if _, err := conn.Write(negotiationPreamble); err != nil {

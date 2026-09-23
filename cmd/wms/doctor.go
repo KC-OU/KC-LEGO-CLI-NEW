@@ -100,7 +100,7 @@ func runDoctor(ctx context.Context) []check {
 		checkGateway(),
 	}
 	cs = append(cs, checkSecretFiles()...)
-	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins(), checkTmux())
+	cs = append(cs, checkAudit(), checkBackups(config.Get(config.ModernWMSBackupDir), time.Now()), checkLegoBackup(time.Now()), checkPlugins(), checkTmux(), checkMetrics())
 	return cs
 }
 
@@ -113,6 +113,21 @@ func checkTmux() check {
 		return warn("Web terminal session", "tmux is not installed", "install tmux so the web terminal keeps you signed in across reconnects; without it, every reconnect asks for 2FA again")
 	}
 	return ok("Web terminal session", "tmux found — the web terminal persists across reconnects")
+}
+
+// checkMetrics only runs when WMS_METRICS_PORT is set; unset is not a warning
+// (the feature is opt-in), a set port that isn't listening is.
+func checkMetrics() check {
+	port := strings.TrimSpace(config.Get(config.MetricsPort))
+	if port == "" {
+		return ok("Metrics", "off (set WMS_METRICS_PORT to enable /metrics for Prometheus)")
+	}
+	c, err := net.DialTimeout("tcp", "127.0.0.1:"+port, time.Second)
+	if err != nil {
+		return warn("Metrics", "WMS_METRICS_PORT="+port+" but nothing is listening", "restart wms-gateway.service to pick up the setting")
+	}
+	c.Close()
+	return ok("Metrics", "listening on "+port+" (/metrics)")
 }
 
 func checkModernWMS(ctx context.Context) check {

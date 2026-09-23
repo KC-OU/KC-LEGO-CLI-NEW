@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -37,6 +39,43 @@ func TestSessionsPerAddressAreCapped(t *testing.T) {
 	rel[0]()
 	if r, _ := th.Admit("203.0.113.9"); r == nil {
 		t.Fatal("a released slot can be used again")
+	}
+}
+
+// TestConcurrentAdmitNeverExceedsTheCap hammers one address from many
+// goroutines at once (real telnet connections each run Admit/release on
+// their own goroutine — see acceptLoop/handleTelnetSession) and checks the
+// session cap holds exactly, not just under the sequential access
+// TestSessionsPerAddressAreCapped exercises. Run with -race, this also
+// catches any unprotected access to Throttle's internal map.
+func TestConcurrentAdmitNeverExceedsTheCap(t *testing.T) {
+	th := NewThrottle()
+	const addr = "203.0.113.50"
+	const attempts = 200
+
+	var admitted atomic.Int32
+	var wg sync.WaitGroup
+	release := make(chan func(), attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if r, _ := th.Admit(addr); r != nil {
+				admitted.Add(1)
+				release <- r
+			}
+		}()
+	}
+	wg.Wait()
+	close(release)
+	if got := admitted.Load(); got != int32(th.MaxSessions) {
+		t.Fatalf("admitted %d concurrent session(s), want exactly MaxSessions=%d", got, th.MaxSessions)
+	}
+	for r := range release {
+		r() // every admitted session must release cleanly, exactly once
+	}
+	if r, _ := th.Admit(addr); r == nil {
+		t.Fatal("after every session released, the address should be admitted again")
 	}
 }
 

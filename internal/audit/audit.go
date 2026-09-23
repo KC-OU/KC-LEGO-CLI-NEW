@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
 )
 
 type Logger struct {
@@ -95,6 +96,7 @@ func isHex(s string) bool {
 // Log appends one chained line. Concurrent writers (every telnet and web
 // session is its own process) are serialised with flock so the chain never forks.
 func (l *Logger) Log(user, role, action, status, details string) error {
+	metrics.AuditEvents.WithLabelValues(action, status).Inc()
 	f, err := os.OpenFile(l.Path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err

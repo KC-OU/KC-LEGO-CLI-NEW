@@ -5,6 +5,21 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- **Reports**: printable "clean form" reports — missing parts (one set or every incomplete set), full collection, one or
+  more sets' full parts lists, and stock-check history — plus a blank printable stock-check sheet. `wms lego report
+  missing|collection|set|history`, `wms lego stocksheet`; Set Workshop → **7 Reports** in the TUI.
+- **Metrics**: an opt-in `/metrics` endpoint (`WMS_METRICS_PORT`) for Prometheus — sign-ins, 2FA outcomes, exports and
+  downloads (all via the audit log), telnet connections/throttling, and notification deliveries.
+- **Perceived speed**: the BrickLink/BrickOwl price fetch on Missing Parts runs in the background with a spinner instead
+  of freezing the screen; `wms lego value --refresh` shows one on the CLI too. Benchmarks added for `CanBuild`, the xlsx
+  export and the sorting sheet, to catch a future regression.
+- Security audit published: [docs/guides/security-audit.md](docs/guides/security-audit.md).
+
+### Fixed
+- **Web terminal**: switching tabs or reconnecting no longer asks for 2FA again or loses your place — the session now
+  persists in a `tmux` session across reconnects (still ends on explicit sign-out). See
+  [Telnet and the web terminal](docs/guides/telnet-and-web.md#the-web-terminal-is-one-persistent-shared-session).
+
 - **Set checks**: adding a set opens its whole parts list with every line marked have-all; mark what is **missing** (M) or
   **extra** (E), type counts, filter, undo, save for later. Finishing records who checked it, puts the set's parts into
   Part-DB in their own location (`LEGO / Sets / <num> <name>`, synced on to ModernWMS), turns extras into loose parts that

@@ -260,6 +260,22 @@ func (a *App) setMsgIfEmpty(m string) {
 	}
 }
 
+// pricesFetchedMsg reports a background BrickLink/BrickOwl price fetch (see
+// startBusy in app.go); handled in App.Update.
+type pricesFetchedMsg struct {
+	n    int
+	errs []error
+}
+
+func (a *App) pricesFetched(m pricesFetchedMsg) {
+	a.stopBusy()
+	msg := fmt.Sprintf("Fetched %d price(s).", m.n)
+	for _, e := range m.errs {
+		msg += " " + e.Error()
+	}
+	a.setMsg(msg, len(m.errs) > 0)
+}
+
 func setMissingKeys(app *App, key string, msg tea.KeyMsg) {
 	w := app.ws()
 	idx, _ := strconv.Atoi(key)
@@ -269,8 +285,6 @@ func setMissingKeys(app *App, key string, msg tea.KeyMsg) {
 		if !app.require("bricklink.price", "FETCH_PRICES") {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
 		var bl lego.PriceFetcher
 		if c := app.blClient(); c.Enabled() {
 			bl = priceAdapter{c}
@@ -280,12 +294,14 @@ func setMissingKeys(app *App, key string, msg tea.KeyMsg) {
 			app.setMsg("Neither BrickLink nor BrickOwl is set up (Admin → Settings: BrickLink API; BRICKOWL_API_KEY).", true)
 			return
 		}
-		n, errs := app.legoDB.FetchPrices(ctx, w.lines, bl, bo, strings.ToUpper(config.Get(config.BricklinkCondition)))
-		msg := fmt.Sprintf("Fetched %d price(s).", n)
-		for _, e := range errs {
-			msg += " " + e.Error()
-		}
-		app.setMsg(msg, len(errs) > 0)
+		cond := strings.ToUpper(config.Get(config.BricklinkCondition))
+		lines := w.lines // a private snapshot: the fetch runs on bubbletea's goroutine, the next render re-reads prices from the DB
+		app.startBusy(fmt.Sprintf("Fetching prices for %d line(s)…", len(lines)), func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			n, errs := app.legoDB.FetchPrices(ctx, lines, bl, bo, cond)
+			return pricesFetchedMsg{n: n, errs: errs}
+		})
 	case msg.Type == tea.KeyEnter && has:
 		w.line = idx
 		app.goTo(scrShopLinks)
