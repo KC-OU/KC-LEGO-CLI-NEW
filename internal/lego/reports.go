@@ -145,6 +145,107 @@ func (d *DB) SetPartsReport(sets []string) (*ExportData, error) {
 	return data, nil
 }
 
+// SetsListReport is every set you own — no loose parts (see CollectionReport for
+// sets and loose parts together). Its own SetsListHTML renders it: the generic
+// ReportHTML only ever shows ExportData.Rows (parts), never .Sets.
+func (d *DB) SetsListReport() (*ExportData, error) {
+	st, err := d.Stats()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT set_num, name, theme, year, qty, parts_qty, parted_out FROM sets ORDER BY set_num`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	data := &ExportData{Title: "List of sets", When: time.Now()}
+	for rows.Next() {
+		var s Set
+		var partedOut int
+		if err := rows.Scan(&s.SetNum, &s.Name, &s.Theme, &s.Year, &s.Qty, &s.PartsQty, &partedOut); err != nil {
+			return nil, err
+		}
+		s.PartedOut = partedOut != 0
+		data.Sets = append(data.Sets, s)
+	}
+	data.Facts = [][2]string{
+		{"Sets", fmt.Sprintf("%d title(s), %d cop(ies)", st.SetTitles, st.SetCopies)},
+		{"Pieces in sets", fmt.Sprint(st.SetPieces)},
+	}
+	return data, rows.Err()
+}
+
+// ExtraPartsReport is loose parts that came from a completed set check's overage
+// (part_origins — "2 spare in 10696"), grouped by which set they came from. sets
+// filters to those origin sets; empty means every set with recorded extras.
+func (d *DB) ExtraPartsReport(sets []string) (*ExportData, error) {
+	data := &ExportData{Title: "Extra parts report", When: time.Now()}
+	q := `SELECT po.part_num, po.color_id, o.name, o.category, o.color_name, po.origin_set, po.qty
+		FROM part_origins po JOIN owned_parts o ON o.part_num = po.part_num AND o.color_id = po.color_id
+		WHERE po.qty > 0`
+	var args []any
+	if len(sets) > 0 {
+		ph := make([]string, len(sets))
+		for i, s := range sets {
+			ph[i] = "?"
+			args = append(args, s)
+		}
+		q += ` AND po.origin_set IN (` + strings.Join(ph, ",") + `)`
+	}
+	rows, err := d.Query(q+` ORDER BY po.origin_set, po.part_num`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	titleFor := map[string]string{}
+	total := 0
+	for rows.Next() {
+		var partNum, name, category, colorName, originSet string
+		var colorID, qty int
+		if err := rows.Scan(&partNum, &colorID, &name, &category, &colorName, &originSet, &qty); err != nil {
+			return nil, err
+		}
+		title, ok := titleFor[originSet]
+		if !ok {
+			title = setTitle(d, originSet)
+			titleFor[originSet] = title
+		}
+		data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: partNum, Name: name, Category: category, ColorID: colorID, ColorName: colorName, Qty: qty})
+		total += qty
+	}
+	data.Facts = [][2]string{{"Extra line(s)", fmt.Sprint(len(data.Rows))}, {"Total extra pieces", fmt.Sprint(total)}}
+	return data, rows.Err()
+}
+
+// OrderListReport is every parts order (status "" = all, "open" = not yet received/
+// cancelled), most recent first, one group per order — reusing the generic report
+// template's existing by-SetNum grouping to group rows by order instead of by set.
+func (d *DB) OrderListReport(status string) (*ExportData, error) {
+	orders, err := d.ListOrders(status)
+	if err != nil {
+		return nil, err
+	}
+	data := &ExportData{Title: "Order list", When: time.Now()}
+	total := 0.0
+	for _, o := range orders {
+		supplier := o.Supplier
+		if supplier == "" {
+			supplier = "—"
+		}
+		label := fmt.Sprintf("Order #%d — %s (%s)", o.ID, supplier, o.Status)
+		for _, l := range o.Lines {
+			name := l.PartName
+			if l.UnitPrice > 0 {
+				name = fmt.Sprintf("%s — %.2f each", name, l.UnitPrice)
+			}
+			data.Rows = append(data.Rows, ExportRow{SetNum: label, PartNum: l.PartNum, Name: name, ColorID: l.ColorID, ColorName: l.ColorName, Qty: l.Qty})
+		}
+		total += o.Total()
+	}
+	data.Facts = [][2]string{{"Orders", fmt.Sprint(len(orders))}, {"Total spent", fmt.Sprintf("%.2f", total)}}
+	return data, nil
+}
+
 // ---- report HTML (the "clean form") ----
 
 func reportPieces(rows []ExportRow) int {
@@ -303,5 +404,40 @@ func WishlistHTML(d *DB, title string, watches []Watch) ([]byte, error) {
 		Title, Date string
 		Items       []wishItem
 	}{title, time.Now().Format("2 January 2006"), items})
+	return b.Bytes(), err
+}
+
+// ---- sets list HTML (a clean form for ExportData.Sets, which ReportHTML never renders) ----
+
+var setsListTmpl = template.Must(template.New("setslist").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}}</title>
+<style>
+ body{font:14px/1.45 system-ui,sans-serif;margin:0;color:#111}
+ .page{max-width:900px;margin:0 auto;padding:2rem}
+ .title{text-align:center;padding:3rem 0 2rem;border-bottom:4px solid #222;margin-bottom:2rem}
+ .title h1{margin:0 0 .3rem;font-size:28px} .title .meta{color:#666}
+ table.facts{width:100%;border-collapse:collapse;margin-bottom:2rem}
+ table.facts td{padding:.35rem .5rem;border-bottom:1px solid #eee} table.facts td:first-child{font-weight:600;width:40%}
+ table.rows{border-collapse:collapse;width:100%}
+ table.rows th,table.rows td{border-bottom:1px solid #ddd;padding:.35rem .5rem;text-align:left;font-size:13px}
+ table.rows th{background:#f2f2f2} td.n,th.n{text-align:right}
+ .parted{color:#999}
+ @media print{.page{max-width:none} tr{break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="title"><h1>{{.Title}}</h1><div class="meta">Generated {{.Date}} · {{len .Sets}} set(s)</div></div>
+{{if .Facts}}<table class="facts">{{range .Facts}}<tr><td>{{index . 0}}</td><td>{{index . 1}}</td></tr>{{end}}</table>{{end}}
+<table class="rows"><tr><th>Set</th><th>Name</th><th>Theme</th><th class="n">Year</th><th class="n">Copies</th><th class="n">Pieces</th><th>Status</th></tr>
+{{range .Sets}}<tr{{if .PartedOut}} class="parted"{{end}}><td>{{.SetNum}}</td><td>{{.Name}}</td><td>{{.Theme}}</td><td class="n">{{.Year}}</td><td class="n">{{.Qty}}</td><td class="n">{{.PartsQty}}</td><td>{{if .PartedOut}}parted out{{else}}kept{{end}}</td></tr>
+{{end}}</table>
+</div></body></html>`))
+
+// SetsListHTML renders a SetsListReport's sets as a clean, printable page.
+func SetsListHTML(d *ExportData) ([]byte, error) {
+	var b bytes.Buffer
+	err := setsListTmpl.Execute(&b, struct {
+		Title, Date string
+		Facts       [][2]string
+		Sets        []Set
+	}{d.Title, d.When.Format("2 January 2006, 15:04"), d.Facts, d.Sets})
 	return b.Bytes(), err
 }

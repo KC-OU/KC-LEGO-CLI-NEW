@@ -14,6 +14,10 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   of freezing the screen; `wms lego value --refresh` shows one on the CLI too. Benchmarks added for `CanBuild`, the xlsx
   export and the sorting sheet, to catch a future regression.
 - Security audit published: [docs/guides/security-audit.md](docs/guides/security-audit.md).
+- **Reports restructured**: six reports (Parts Stock-take, Set Parts Lists, List of Sets, Missing Parts, Extra Parts,
+  Order List) replacing the earlier four-report menu — Extra Parts and Order List are new, reading `part_origins`
+  and the existing orders data respectively. `wms lego report stocktake|setparts|setlist|missing|extra|orders`;
+  Set Workshop → 7 Reports offers all six.
 - **Share links**: a read-only, multi-use page for someone without the CLI — your BrickLink watch list
   (`wms lego watch`) read as a wishlist, or your full collection — viewable until it expires, not consumed on
   first view like a download link. `wms lego share wishlist|collection`. See

@@ -13,9 +13,13 @@ import (
 	"testing"
 )
 
-func TestDiscordBotDMOpensChannelThenPostsWithAttachment(t *testing.T) {
+func TestDiscordBotDMOpensChannelThenPostsEmbedWithAttachment(t *testing.T) {
 	var gotAuth, gotRecipient string
-	var gotContent string
+	var gotEmbed struct {
+		Title, URL, Description string
+		Color                   int
+		Image                   struct{ URL string } `json:"image"`
+	}
 	var gotFileBytes []byte
 	var gotFileName string
 
@@ -48,10 +52,25 @@ func TestDiscordBotDMOpensChannelThenPostsWithAttachment(t *testing.T) {
 				case "payload_json":
 					b, _ := io.ReadAll(part)
 					var payload struct {
-						Content string `json:"content"`
+						Embeds []struct {
+							Title       string `json:"title"`
+							URL         string `json:"url"`
+							Description string `json:"description"`
+							Color       int    `json:"color"`
+							Image       struct {
+								URL string `json:"url"`
+							} `json:"image"`
+						} `json:"embeds"`
 					}
-					_ = json.Unmarshal(b, &payload)
-					gotContent = payload.Content
+					if err := json.Unmarshal(b, &payload); err != nil {
+						t.Fatal(err)
+					}
+					if len(payload.Embeds) != 1 {
+						t.Fatalf("embeds = %+v", payload.Embeds)
+					}
+					e := payload.Embeds[0]
+					gotEmbed.Title, gotEmbed.URL, gotEmbed.Description, gotEmbed.Color = e.Title, e.URL, e.Description, e.Color
+					gotEmbed.Image.URL = e.Image.URL
 				case "files[0]":
 					gotFileName = part.FileName()
 					gotFileBytes, _ = io.ReadAll(part)
@@ -66,8 +85,11 @@ func TestDiscordBotDMOpensChannelThenPostsWithAttachment(t *testing.T) {
 	defer srv.Close()
 
 	b := &DiscordBot{Token: "tok", UserID: "999", BaseURL: srv.URL}
-	err := b.DM(context.Background(), "missing parts for 75192, expires 14:30", []byte("fake-png-bytes"), "qr.png")
-	if err != nil {
+	card := DMCard{
+		Title: "Missing parts for 75192", URL: "https://example.com/DL/TOKEN",
+		Description: "kieran · expires 14:30", Image: []byte("fake-png-bytes"), ImageName: "qr.png",
+	}
+	if err := b.DM(context.Background(), card); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "Bot tok" {
@@ -76,8 +98,15 @@ func TestDiscordBotDMOpensChannelThenPostsWithAttachment(t *testing.T) {
 	if gotRecipient != "999" {
 		t.Errorf("recipient_id = %q, want 999", gotRecipient)
 	}
-	if gotContent != "missing parts for 75192, expires 14:30" {
-		t.Errorf("content = %q", gotContent)
+	if gotEmbed.Title != card.Title || gotEmbed.URL != card.URL || gotEmbed.Description != card.Description {
+		t.Errorf("embed = %+v", gotEmbed)
+	}
+	if gotEmbed.Image.URL != "attachment://qr.png" {
+		t.Errorf("embed image url = %q, want attachment://qr.png", gotEmbed.Image.URL)
+	}
+	// the long link must never appear as visible message text, only behind the embed's title link
+	if strings.Contains(gotEmbed.Description, "https://") {
+		t.Errorf("description should not contain the raw URL: %q", gotEmbed.Description)
 	}
 	if gotFileName != "qr.png" || string(gotFileBytes) != "fake-png-bytes" {
 		t.Errorf("attachment = %q %q", gotFileName, gotFileBytes)
@@ -110,7 +139,7 @@ func TestDiscordBotDMWithoutImage(t *testing.T) {
 	}))
 	defer srv.Close()
 	b := &DiscordBot{Token: "tok", UserID: "999", BaseURL: srv.URL}
-	if err := b.DM(context.Background(), "text only", nil, ""); err != nil {
+	if err := b.DM(context.Background(), DMCard{Title: "text only", URL: "https://example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	if sawFile {
@@ -123,7 +152,7 @@ func TestDiscordBotNotConfigured(t *testing.T) {
 	if b.Enabled() {
 		t.Error("an empty bot should not be Enabled")
 	}
-	if err := b.DM(context.Background(), "x", nil, ""); err == nil {
+	if err := b.DM(context.Background(), DMCard{Title: "x"}); err == nil {
 		t.Error("DM on an unconfigured bot should error, not silently do nothing")
 	}
 }
@@ -135,7 +164,7 @@ func TestDiscordBotAPIErrorSurfacesStatusAndBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	b := &DiscordBot{Token: "tok", UserID: "999", BaseURL: srv.URL}
-	err := b.DM(context.Background(), "x", nil, "")
+	err := b.DM(context.Background(), DMCard{Title: "x"})
 	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "Missing Access") {
 		t.Fatalf("expected an error mentioning 403 and the body, got %v", err)
 	}

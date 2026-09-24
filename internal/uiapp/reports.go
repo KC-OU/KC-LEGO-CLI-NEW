@@ -42,9 +42,12 @@ func reportsHubScreen() screenModel {
 		title:   "Reports",
 		options: func(app *App) []menuOption {
 			return []menuOption{
-				{Key: "1", Label: "Missing parts — every incomplete set", Go: func(app *App) { startExport(app, missingReportJob()) }, Perm: "lego.view"},
-				{Key: "2", Label: "Full collection: every set and loose part", Go: func(app *App) { startExport(app, collectionReportJob()) }, Perm: "lego.view"},
-				{Key: "3", Label: "Full parts list for one or more sets", Go: func(app *App) { app.goTo(scrReportsSet) }, Perm: "lego.view"},
+				{Key: "1", Label: "Parts Stock-take: a blank checklist for a set", Go: func(app *App) { app.goTo(scrReportsStocktake) }, Perm: "lego.view"},
+				{Key: "2", Label: "Set (ID) Parts Lists: full parts list for one or more sets", Go: func(app *App) { app.goTo(scrReportsSet) }, Perm: "lego.view"},
+				{Key: "3", Label: "List of Sets on Collection", Go: func(app *App) { startExport(app, setListReportJob()) }, Perm: "lego.view"},
+				{Key: "4", Label: "Missing Parts — every incomplete set", Go: func(app *App) { startExport(app, missingReportJob()) }, Perm: "lego.view"},
+				{Key: "5", Label: "Extra Parts: spares from completed checks", Go: func(app *App) { startExport(app, extraPartsReportJob()) }, Perm: "lego.view"},
+				{Key: "6", Label: "Order List", Go: func(app *App) { startExport(app, orderListReportJob()) }, Perm: "orders.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -54,7 +57,7 @@ func reportsHubScreen() screenModel {
 func reportsSetAskScreen() screenModel {
 	return &formScreen{
 		panelID: "REPSET",
-		title:   "Parts List for a Set",
+		title:   "Set (ID) Parts Lists",
 		build: func(app *App) []ui.Field {
 			return []ui.Field{{Label: "Set number(s), space-separated (e.g. 75192 10230)"}}
 		},
@@ -72,6 +75,27 @@ func reportsSetAskScreen() screenModel {
 	}
 }
 
+func reportsStocktakeAskScreen() screenModel {
+	return &formScreen{
+		panelID: "REPSTK",
+		title:   "Parts Stock-take",
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Set number (e.g. 75192)"}}
+		},
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("A blank checklist — part, colour, name, expected qty, an empty box — to print and count against by hand.")
+		},
+		submit: func(app *App, values []string) {
+			set := strings.TrimSpace(values[0])
+			if set == "" {
+				app.setMsg("Enter a set number.", true)
+				return
+			}
+			startExport(app, stocktakeReportJob(set))
+		},
+	}
+}
+
 func missingReportJob() *exportJob {
 	return &exportJob{What: "missing parts across every incomplete set", Kind: "missing-report",
 		Formats: []string{"report", "html", "xlsx", "csv", "json"},
@@ -80,11 +104,27 @@ func missingReportJob() *exportJob {
 		}}
 }
 
-func collectionReportJob() *exportJob {
-	return &exportJob{What: "your full collection", Kind: "collection-report",
+func setListReportJob() *exportJob {
+	return &exportJob{What: "list of sets", Kind: "set-list-report",
+		Formats: []string{"report", "sets-csv", "xlsx", "json"},
+		Build: func(app *App) (*lego.ExportData, error) {
+			return app.legoDB.SetsListReport()
+		}}
+}
+
+func extraPartsReportJob() *exportJob {
+	return &exportJob{What: "extra parts from completed checks", Kind: "extra-parts-report",
 		Formats: []string{"report", "html", "xlsx", "csv", "json"},
 		Build: func(app *App) (*lego.ExportData, error) {
-			return app.legoDB.CollectionReport()
+			return app.legoDB.ExtraPartsReport(nil)
+		}}
+}
+
+func orderListReportJob() *exportJob {
+	return &exportJob{What: "order list", Kind: "order-list-report",
+		Formats: []string{"report", "html", "xlsx", "csv", "json"},
+		Build: func(app *App) (*lego.ExportData, error) {
+			return app.legoDB.OrderListReport("")
 		}}
 }
 
@@ -93,5 +133,18 @@ func setPartsReportJob(sets []string) *exportJob {
 		Formats: []string{"report", "html", "xlsx", "csv", "json"},
 		Build: func(app *App) (*lego.ExportData, error) {
 			return app.legoDB.SetPartsReport(sets)
+		}}
+}
+
+func stocktakeReportJob(set string) *exportJob {
+	return &exportJob{What: "stock-take checklist for " + set, Kind: "stocktake", Num: set,
+		Formats: []string{"checklist"},
+		RawBuild: func(app *App) ([]byte, string, error) {
+			title, lines, err := app.legoDB.StockSheet(app.ctx(), app.rebrick, set)
+			if err != nil {
+				return nil, "", err
+			}
+			body, err := lego.StockSheetHTML(title, lines)
+			return body, "html", err
 		}}
 }

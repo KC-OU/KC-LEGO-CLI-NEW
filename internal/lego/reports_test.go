@@ -137,6 +137,105 @@ func TestWishlistHTMLEmpty(t *testing.T) {
 	}
 }
 
+// checkedFireStationWithExtra finishes a check that records extra (spare) 3001 reds,
+// so part_origins has something for ExtraPartsReport to find.
+func checkedFireStationWithExtra(t *testing.T, d *DB, extraRed int) {
+	t.Helper()
+	c, err := d.NewCheck(context.Background(), nil, "1-1", CheckIntake, "alex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.Lines {
+		if c.Lines[i].PartNum == "3001" {
+			c.Lines[i].Extra = extraRed
+		}
+	}
+	if _, err := d.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetsListReportListsSetsNotLooseParts(t *testing.T) {
+	d := buildDB(t)
+	if err := d.UpsertSet(Set{SetNum: "1-1", Name: "Fire Station", Theme: "City", Year: 2020, Qty: 1, PartsQty: 100}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := d.SetsListReport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 0 {
+		t.Errorf("a sets list should carry no part rows: %+v", data.Rows)
+	}
+	if len(data.Sets) == 0 {
+		t.Fatal("expected sets from the buildDB fixture")
+	}
+	found := false
+	for _, s := range data.Sets {
+		if s.SetNum == "1-1" && s.Name == "Fire Station" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Fire Station missing from %+v", data.Sets)
+	}
+	html, err := SetsListHTML(data)
+	if err != nil || !strings.Contains(string(html), "Fire Station") {
+		t.Fatalf("html: %v\n%s", err, html)
+	}
+}
+
+func TestExtraPartsReportGroupsByOriginSet(t *testing.T) {
+	d := buildDB(t)
+	checkedFireStationWithExtra(t, d, 4) // 4 spare red 3001, from 1-1
+	data, err := d.ExtraPartsReport(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 1 || data.Rows[0].PartNum != "3001" || data.Rows[0].Qty != 4 {
+		t.Fatalf("rows = %+v", data.Rows)
+	}
+	if !strings.Contains(data.Rows[0].SetNum, "Fire Station") {
+		t.Errorf("row should carry the origin set's title, got %q", data.Rows[0].SetNum)
+	}
+	// filtered to a different set: nothing matches
+	filtered, err := d.ExtraPartsReport([]string{"2-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Rows) != 0 {
+		t.Errorf("filtering to an unrelated set should find nothing: %+v", filtered.Rows)
+	}
+}
+
+func TestOrderListReportGroupsByOrderWithTotals(t *testing.T) {
+	d := buildDB(t)
+	o := &Order{Supplier: "BrickOwl", Status: "ordered", Currency: "GBP", Shipping: 2.5}
+	if err := d.SaveOrder(o); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddOrderLine(o.ID, OrderLine{PartNum: "3001", ColorName: "Red", PartName: "Brick 2x4", Qty: 10, UnitPrice: 0.10}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := d.OrderListReport("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 1 || data.Rows[0].PartNum != "3001" || data.Rows[0].Qty != 10 {
+		t.Fatalf("rows = %+v", data.Rows)
+	}
+	if !strings.Contains(data.Rows[0].SetNum, "BrickOwl") {
+		t.Errorf("row should be grouped under the order label, got %q", data.Rows[0].SetNum)
+	}
+	joined := ""
+	for _, f := range data.Facts {
+		joined += f[0] + ":" + f[1] + "\n"
+	}
+	if !strings.Contains(joined, "Total spent:3.50") { // 10*0.10 + 2.50 shipping
+		t.Errorf("facts should total spend:\n%s", joined)
+	}
+}
+
 func TestCheckHistoryNewestFirstAndFiltersByStatus(t *testing.T) {
 	d := buildDB(t)
 	checkedFireStation(t, d, 3)

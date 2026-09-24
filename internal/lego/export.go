@@ -411,7 +411,11 @@ func Encode(format string, d *ExportData) (body []byte, ext string, warns Export
 		body, err = HTML(d)
 		return body, "html", nil, err
 	case "report":
-		body, err = ReportHTML(d)
+		if len(d.Rows) == 0 && len(d.Sets) > 0 {
+			body, err = SetsListHTML(d) // ReportHTML only ever renders .Rows (parts); a sets-only report needs its own form
+		} else {
+			body, err = ReportHTML(d)
+		}
 		return body, "html", nil, err
 	case "sorting-html":
 		body, err = SortingHTML(d)

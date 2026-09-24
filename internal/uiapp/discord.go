@@ -3,6 +3,7 @@ package uiapp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,13 @@ var discordExpiryChoices = []struct {
 	{"2", "2 hours", 2 * time.Hour},
 	{"3", "8 hours", 8 * time.Hour},
 	{"4", "24 hours", 24 * time.Hour},
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func discordAskBody(app *App) string {
@@ -79,14 +87,19 @@ func sendExportToDiscord(app *App, ttl time.Duration) {
 	}
 	link := exports.URL(token)
 	png, _ := exports.QRPNG(link, 512)
-	what := ""
-	if app.exportJob != nil {
-		what = app.exportJob.What
+	what := "Export ready"
+	if app.exportJob != nil && app.exportJob.What != "" {
+		what = capitalize(app.exportJob.What)
 	}
-	text := fmt.Sprintf("%s — %s, expires %s\n%s", app.userName(), what, time.Now().Add(ttl).Format("15:04"), link)
+	card := notify.DMCard{
+		Title:       what,
+		URL:         link,
+		Description: fmt.Sprintf("%s · expires %s", app.userName(), time.Now().Add(ttl).Format("15:04")),
+		Image:       png, ImageName: "qr.png",
+	}
 	app.startBusy("Sending to Discord…", func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		return discordSentMsg{err: bot.DM(ctx, text, png, "qr.png")}
+		return discordSentMsg{err: bot.DM(ctx, card)}
 	})
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -11,6 +12,13 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
 
 // discordFlags is the --discord/--discord-expires pair shared by every export-producing
 // command (report, stocksheet, export) — see internal/uiapp/discord.go for the TUI's
@@ -45,10 +53,15 @@ func sendToDiscord(t ui.Theme, f discordFlags, abs, what string) error {
 	}
 	link := exports.URL(token)
 	png, _ := exports.QRPNG(link, 512)
-	text := fmt.Sprintf("%s — %s, expires %s\n%s", cliActor(), what, time.Now().Add(f.expires).Format("15:04"), link)
+	card := notify.DMCard{
+		Title:       capitalize(what),
+		URL:         link,
+		Description: fmt.Sprintf("%s · expires %s", cliActor(), time.Now().Add(f.expires).Format("15:04")),
+		Image:       png, ImageName: "qr.png",
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := withSpinner("sending to Discord", func() error { return bot.DM(ctx, text, png, "qr.png") }); err != nil {
+	if err := withSpinner("sending to Discord", func() error { return bot.DM(ctx, card) }); err != nil {
 		return err
 	}
 	say(ui.Status(t, true, "Sent to Discord (expires "+time.Now().Add(f.expires).Format("15:04")+")"))

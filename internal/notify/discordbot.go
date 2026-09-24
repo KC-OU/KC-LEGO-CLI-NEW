@@ -80,9 +80,23 @@ func (b *DiscordBot) dmChannel(ctx context.Context) (string, error) {
 	return out.ID, nil
 }
 
-// DM sends text as a direct message, with an optional image (png bytes,
-// imageName e.g. "qr.png"; pass nil/"" for a text-only message).
-func (b *DiscordBot) DM(ctx context.Context, text string, image []byte, imageName string) error {
+// DMCard is a compact Discord embed: a clickable title (the link itself
+// never appears as visible text — Discord's plain message content can't
+// hyperlink, but an embed's title can), a short description line, and the
+// QR code as the embed's image, all in one small card instead of a title
+// line + a wall of raw URL + a separate image.
+type DMCard struct {
+	Title       string // clickable — links to URL
+	URL         string
+	Description string // e.g. "root · expires 11:13"
+	Image       []byte // PNG; "" ImageName below skips the image
+	ImageName   string
+}
+
+const discordBlurple = 0x5865F2
+
+// DM sends card as a direct message.
+func (b *DiscordBot) DM(ctx context.Context, card DMCard) error {
 	if !b.Enabled() {
 		return fmt.Errorf("the Discord bot is not configured (WMS_DISCORD_BOT_TOKEN, WMS_DISCORD_BOT_USER_ID)")
 	}
@@ -90,18 +104,27 @@ func (b *DiscordBot) DM(ctx context.Context, text string, image []byte, imageNam
 	if err != nil {
 		return fmt.Errorf("opening a DM: %w", err)
 	}
+	embed := map[string]any{
+		"title":       card.Title,
+		"url":         card.URL,
+		"description": card.Description,
+		"color":       discordBlurple,
+	}
+	if len(card.Image) > 0 {
+		embed["image"] = map[string]string{"url": "attachment://" + card.ImageName}
+	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
-	payload, _ := json.Marshal(map[string]any{"content": text})
+	payload, _ := json.Marshal(map[string]any{"embeds": []any{embed}})
 	if err := w.WriteField("payload_json", string(payload)); err != nil {
 		return err
 	}
-	if len(image) > 0 {
-		fw, err := w.CreateFormFile("files[0]", imageName)
+	if len(card.Image) > 0 {
+		fw, err := w.CreateFormFile("files[0]", card.ImageName)
 		if err != nil {
 			return err
 		}
-		if _, err := fw.Write(image); err != nil {
+		if _, err := fw.Write(card.Image); err != nil {
 			return err
 		}
 	}

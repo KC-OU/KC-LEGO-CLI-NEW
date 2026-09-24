@@ -14,13 +14,10 @@ import (
 // writeReport renders data as the clean printable report (default) or, with an
 // explicit --format, whatever lego.Encode supports (csv/xlsx/json/plain html/...).
 func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, force bool, discord discordFlags) error {
-	var body []byte
-	var err error
 	if format == "" {
-		body, err = lego.ReportHTML(data)
-	} else {
-		body, _, _, err = lego.Encode(format, data)
+		format = "report"
 	}
+	body, _, _, err := lego.Encode(format, data)
 	if err != nil {
 		return usageError("%v", err)
 	}
@@ -35,16 +32,21 @@ func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, forc
 	if err != nil {
 		return err
 	}
-	say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d row(s))", abs, len(data.Rows))))
+	n, unit := len(data.Rows), "row(s)"
+	if n == 0 && len(data.Sets) > 0 {
+		n, unit = len(data.Sets), "set(s)"
+	}
+	say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d %s)", abs, n, unit)))
 	if err := sendToDiscord(t, discord, abs, data.Title); err != nil {
 		return err
 	}
-	return emit(map[string]any{"file": abs, "rows": len(data.Rows), "facts": data.Facts})
+	return emit(map[string]any{"file": abs, "rows": len(data.Rows), "sets": len(data.Sets), "facts": data.Facts})
 }
 
 func newLegoReportCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "report", Short: "Printable reports: missing parts, your collection, a set's parts, or check history"}
-	cmd.AddCommand(newLegoReportMissingCmd(), newLegoReportCollectionCmd(), newLegoReportSetCmd(), newLegoReportHistoryCmd())
+	cmd := &cobra.Command{Use: "report", Short: "Printable reports: stock-take, parts lists, missing/extra parts, sets, orders, check history"}
+	cmd.AddCommand(newLegoReportStocktakeCmd(), newLegoReportSetPartsCmd(), newLegoReportSetListCmd(),
+		newLegoReportMissingCmd(), newLegoReportExtraCmd(), newLegoReportOrdersCmd(), newLegoReportHistoryCmd())
 	return cmd
 }
 
@@ -54,7 +56,7 @@ func newLegoReportMissingCmd() *cobra.Command {
 	var discord discordFlags
 	cmd := &cobra.Command{
 		Use:     "missing [set...]",
-		Short:   "What's still missing, for the given sets or every incomplete set",
+		Short:   "Missing Parts: what's still missing, for the given sets or every incomplete set",
 		Example: "  wms lego report missing -o missing.html\n  wms lego report missing 75192 -o falcon-missing.pdf --format csv",
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -79,14 +81,17 @@ func newLegoReportMissingCmd() *cobra.Command {
 	return cmd
 }
 
-func newLegoReportCollectionCmd() *cobra.Command {
+// newLegoReportSetListCmd is "List of Sets on Collection": sets only, no loose parts
+// (for sets + loose parts together, `wms lego export` already covers that). It has its
+// own SetsListHTML by default, since the generic ReportHTML only ever renders parts rows.
+func newLegoReportSetListCmd() *cobra.Command {
 	var format, outPath string
 	var force bool
 	var discord discordFlags
 	cmd := &cobra.Command{
-		Use:     "collection",
-		Short:   "Every set and loose part you own, with a summary",
-		Example: "  wms lego report collection -o collection.html",
+		Use:     "setlist",
+		Short:   "List of Sets on Collection: every set you own, no loose parts",
+		Example: "  wms lego report setlist -o sets.html",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -96,28 +101,29 @@ func newLegoReportCollectionCmd() *cobra.Command {
 				return err
 			}
 			defer db.Close()
-			data, err := db.CollectionReport()
+			data, err := db.SetsListReport()
 			if err != nil {
 				return err
 			}
 			return writeReport(t, data, format, outPath, force, discord)
 		},
 	}
-	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
+	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also sets-csv/xlsx/json — plain csv is empty, it's parts-only)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
 	discord.register(cmd.Flags())
 	return cmd
 }
 
-func newLegoReportSetCmd() *cobra.Command {
+// newLegoReportSetPartsCmd is "Set (ID) Parts Lists".
+func newLegoReportSetPartsCmd() *cobra.Command {
 	var format, outPath string
 	var force bool
 	var discord discordFlags
 	cmd := &cobra.Command{
-		Use:     "set <set...>",
-		Short:   "One or more sets' full parts lists, side by side",
-		Example: "  wms lego report set 75192 -o falcon.html\n  wms lego report set 75192 10230 -o both.html",
+		Use:     "setparts <set...>",
+		Short:   "Set (ID) Parts Lists: one or more sets' full parts lists, side by side",
+		Example: "  wms lego report setparts 75192 -o falcon.html\n  wms lego report setparts 75192 10230 -o both.html",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -202,14 +208,84 @@ func newLegoReportHistoryCmd() *cobra.Command {
 	return cmd
 }
 
-func newLegoStockSheetCmd() *cobra.Command {
+// newLegoReportExtraCmd is "Extra Parts": spares from completed checks.
+func newLegoReportExtraCmd() *cobra.Command {
+	var format, outPath string
+	var force bool
+	var discord discordFlags
+	cmd := &cobra.Command{
+		Use:     "extra [set...]",
+		Short:   "Extra Parts: spares left over from completed set checks",
+		Example: "  wms lego report extra -o extras.html\n  wms lego report extra 75192 -o falcon-extras.html",
+		Args:    cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			data, err := db.ExtraPartsReport(args)
+			if err != nil {
+				return err
+			}
+			return writeReport(t, data, format, outPath, force, discord)
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
+	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	discord.register(cmd.Flags())
+	return cmd
+}
+
+// newLegoReportOrdersCmd is "Order List".
+func newLegoReportOrdersCmd() *cobra.Command {
+	var format, outPath string
+	var force, openOnly bool
+	var discord discordFlags
+	cmd := &cobra.Command{
+		Use:     "orders",
+		Short:   "Order List: every parts order, most recent first",
+		Example: "  wms lego report orders -o orders.html\n  wms lego report orders --open -o open-orders.html",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			status := ""
+			if openOnly {
+				status = "open"
+			}
+			data, err := db.OrderListReport(status)
+			if err != nil {
+				return err
+			}
+			return writeReport(t, data, format, outPath, force, discord)
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
+	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
+	cmd.Flags().BoolVar(&openOnly, "open", false, "only orders not yet received or cancelled")
+	discord.register(cmd.Flags())
+	return cmd
+}
+
+// newLegoReportStocktakeCmd is "Parts Stock-take": a blank printable checklist.
+func newLegoReportStocktakeCmd() *cobra.Command {
 	var outPath string
 	var force bool
 	var discord discordFlags
 	cmd := &cobra.Command{
-		Use:     "stocksheet <set...>",
-		Short:   "A blank printable checklist for counting a set by hand",
-		Example: "  wms lego stocksheet 75192 -o falcon-checklist.html",
+		Use:     "stocktake <set...>",
+		Short:   "Parts Stock-take: a blank printable checklist for counting a set by hand",
+		Example: "  wms lego report stocktake 75192 -o falcon-checklist.html",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true

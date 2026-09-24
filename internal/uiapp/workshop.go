@@ -20,24 +20,25 @@ import (
 // (supplier, invoice, tracking, shipping) through to received, and the spend report.
 
 const (
-	scrWorkshop     = "workshop"
-	scrCheckAsk     = "check_ask"
-	scrCompletion   = "completion"
-	scrSetMissing   = "set_missing"
-	scrShopLinks    = "shop_links"
-	scrOrders       = "orders"
-	scrOrderEdit    = "order_edit"
-	scrOrderLines   = "order_lines"
-	scrLinePrice    = "order_line_price"
-	scrLineReceive  = "order_line_receive"
-	scrSpend        = "spend"
-	scrSetInfo      = "set_info"
-	scrLabelsAsk    = "labels_ask"
-	scrReports      = "reports"
-	scrReportsSet   = "reports_set"
-	scrRetiring     = "retiring"
-	workshopBanner  = "workshop_banner"
-	defaultCurrency = "GBP"
+	scrWorkshop         = "workshop"
+	scrCheckAsk         = "check_ask"
+	scrCompletion       = "completion"
+	scrSetMissing       = "set_missing"
+	scrShopLinks        = "shop_links"
+	scrOrders           = "orders"
+	scrOrderEdit        = "order_edit"
+	scrOrderLines       = "order_lines"
+	scrLinePrice        = "order_line_price"
+	scrLineReceive      = "order_line_receive"
+	scrSpend            = "spend"
+	scrSetInfo          = "set_info"
+	scrLabelsAsk        = "labels_ask"
+	scrReports          = "reports"
+	scrReportsSet       = "reports_set"
+	scrRetiring         = "retiring"
+	scrReportsStocktake = "reports_stocktake"
+	workshopBanner      = "workshop_banner"
+	defaultCurrency     = "GBP"
 )
 
 type workshopState struct {
@@ -52,22 +53,23 @@ type workshopState struct {
 
 func workshopScreens() map[string]screenModel {
 	return map[string]screenModel{
-		scrWorkshop:    workshopHubScreen(),
-		scrCheckAsk:    checkAskScreen(),
-		scrCompletion:  &selectList{panelID: "SETCMP", title: "Set Completion", rows: completionRows, keys: completionKeys, hint: "↑/↓ choose  Enter missing parts  K check again  L label  I location"},
-		scrSetMissing:  &selectList{panelID: "SETMIS", title: "Missing Parts & Prices", rows: setMissingRows, keys: setMissingKeys, hint: "P fetch prices  Enter shop links  T take spare  O order all  W shopping list  L label"},
-		scrShopLinks:   &shopLinksScreen{},
-		scrOrders:      &selectList{panelID: "ORDERS", title: "Parts Orders", rows: orderRows, keys: orderKeys, hint: "Enter lines  N new  E edit  O ordered  S shipped  R received  C cancel"},
-		scrOrderEdit:   orderEditScreen(),
-		scrOrderLines:  &selectList{panelID: "ORDLIN", title: "Order Lines", rows: orderLineRows, keys: orderLineKeys, hint: "P unit price  R receive  E edit order"},
-		scrLinePrice:   linePriceScreen(),
-		scrLineReceive: lineReceiveScreen(),
-		scrSpend:       spendScreen(),
-		scrSetInfo:     setInfoScreen(),
-		scrLabelsAsk:   labelsAskScreen(),
-		scrReports:     reportsHubScreen(),
-		scrReportsSet:  reportsSetAskScreen(),
-		scrRetiring:    &selectList{panelID: "RETIRE", title: "Retiring Soon", rows: retiringRows, hint: "Sets retiring within 6 months, from the retirement sheet (wms lego retirement refresh)"},
+		scrWorkshop:         workshopHubScreen(),
+		scrCheckAsk:         checkAskScreen(),
+		scrCompletion:       &selectList{panelID: "SETCMP", title: "Set Completion", rows: completionRows, keys: completionKeys, hint: "↑/↓ choose  Enter missing parts  K check again  L label  I location"},
+		scrSetMissing:       &selectList{panelID: "SETMIS", title: "Missing Parts & Prices", rows: setMissingRows, keys: setMissingKeys, hint: "P fetch prices  Enter shop links  T take spare  O order all  W shopping list  L label"},
+		scrShopLinks:        &shopLinksScreen{},
+		scrOrders:           &selectList{panelID: "ORDERS", title: "Parts Orders", rows: orderRows, keys: orderKeys, hint: "Enter lines  N new  E edit  O ordered  S shipped  R received  C cancel"},
+		scrOrderEdit:        orderEditScreen(),
+		scrOrderLines:       &selectList{panelID: "ORDLIN", title: "Order Lines", rows: orderLineRows, keys: orderLineKeys, hint: "P unit price  R receive  E edit order"},
+		scrLinePrice:        linePriceScreen(),
+		scrLineReceive:      lineReceiveScreen(),
+		scrSpend:            spendScreen(),
+		scrSetInfo:          setInfoScreen(),
+		scrLabelsAsk:        labelsAskScreen(),
+		scrReports:          reportsHubScreen(),
+		scrReportsSet:       reportsSetAskScreen(),
+		scrReportsStocktake: reportsStocktakeAskScreen(),
+		scrRetiring:         &selectList{panelID: "RETIRE", title: "Retiring Soon", rows: retiringRows, hint: "Sets retiring within 6 months, from the retirement sheet (wms lego retirement refresh)"},
 	}
 }
 
@@ -90,7 +92,7 @@ func workshopHubScreen() screenModel {
 				{Key: "4", Label: "Parts orders", Go: func(app *App) { app.goTo(scrOrders) }, Perm: "orders.view"},
 				{Key: "5", Label: "Spend report", Go: func(app *App) { app.goTo(scrSpend) }, Perm: "orders.view"},
 				{Key: "6", Label: "Print labels", Go: func(app *App) { app.goTo(scrLabelsAsk) }, Perm: "labels.print"},
-				{Key: "7", Label: "Reports: missing parts, collection, set parts, stock sheets", Go: func(app *App) { app.goTo(scrReports) }, Perm: "lego.view"},
+				{Key: "7", Label: "Reports: stock-take, parts lists, missing/extra parts, sets, orders", Go: func(app *App) { app.goTo(scrReports) }, Perm: "lego.view"},
 				{Key: "8", Label: "Retiring soon (owned & watched sets)", Go: func(app *App) { app.goTo(scrRetiring) }, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}

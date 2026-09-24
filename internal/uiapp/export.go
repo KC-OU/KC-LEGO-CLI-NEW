@@ -29,6 +29,10 @@ type exportJob struct {
 	Num     string
 	Formats []string // lego.Encode names, in the order offered
 	Build   func(app *App) (*lego.ExportData, error)
+	// RawBuild, when set, bypasses Build+lego.Encode entirely — for a job whose data
+	// doesn't fit ExportData (the stock-take checklist's StockSheetLine, say). Formats
+	// must then be exactly one key (e.g. "checklist"), just for the screen's key/label.
+	RawBuild func(app *App) (body []byte, ext string, err error)
 }
 
 type exportResult struct {
@@ -46,6 +50,8 @@ var formatKeys = map[string][2]string{
 	"rebrickable-csv": {"R", "Rebrickable parts list (CSV import)"},
 	"sorting-html":    {"G", "Sorting sheet: parts by colour with pictures and tick boxes"},
 	"report":          {"P", "Printable report (clean, title-page form — for reading or printing)"},
+	"sets-csv":        {"L", "Sets CSV — sets only (plain csv is parts-only, and empty for a sets-only report)"},
+	"checklist":       {"K", "Printable checklist (blank, to print and count)"},
 }
 
 func startExport(app *App, job *exportJob) {
@@ -169,15 +175,27 @@ func (s *exportScreen) HandleKey(app *App, msg tea.KeyMsg) {
 }
 
 func runExport(app *App, job *exportJob, format string) {
-	data, err := job.Build(app)
-	if err != nil {
-		app.setMsg("Export failed: "+err.Error(), true)
-		return
-	}
-	body, ext, warns, err := lego.Encode(format, data)
-	if err != nil {
-		app.setMsg("Export failed: "+err.Error(), true)
-		return
+	var body []byte
+	var ext string
+	var warns lego.ExportWarnings
+	if job.RawBuild != nil {
+		var err error
+		body, ext, err = job.RawBuild(app)
+		if err != nil {
+			app.setMsg("Export failed: "+err.Error(), true)
+			return
+		}
+	} else {
+		data, err := job.Build(app)
+		if err != nil {
+			app.setMsg("Export failed: "+err.Error(), true)
+			return
+		}
+		body, ext, warns, err = lego.Encode(format, data)
+		if err != nil {
+			app.setMsg("Export failed: "+err.Error(), true)
+			return
+		}
 	}
 	user, role, owner := app.userName(), "", app.userKey()
 	if app.session != nil {
