@@ -14,6 +14,9 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   of freezing the screen; `wms lego value --refresh` shows one on the CLI too. Benchmarks added for `CanBuild`, the xlsx
   export and the sorting sheet, to catch a future regression.
 - Security audit published: [docs/guides/security-audit.md](docs/guides/security-audit.md).
+- **Report archive**: every report generated (CLI or TUI) also gets a 90-day-retained copy, separate from the
+  normal 7-day export lifecycle — "the QR/link expired, can I still get that report" now has an answer.
+  `wms lego report archive list|get`; Set Workshop → 7 Reports → 7 Archive.
 - **Reports restructured**: six reports (Parts Stock-take, Set Parts Lists, List of Sets, Missing Parts, Extra Parts,
   Order List) replacing the earlier four-report menu — Extra Parts and Order List are new, reading `part_origins`
   and the existing orders data respectively. `wms lego report stocktake|setparts|setlist|missing|extra|orders`;

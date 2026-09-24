@@ -69,6 +69,7 @@ nav:
       - Set checks and stock checks: guides/set-checks.md
       - Missing parts, prices and orders: guides/missing-parts-and-orders.md
       - Reports: guides/reports.md
+      - Report archive: guides/report-archive.md
       - Labels: guides/labels.md
       - BrickLink: guides/bricklink.md
       - History and restore: guides/history.md

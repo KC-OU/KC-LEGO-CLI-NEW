@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mdp/qrterminal/v3"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
@@ -33,6 +35,10 @@ type exportJob struct {
 	// doesn't fit ExportData (the stock-take checklist's StockSheetLine, say). Formats
 	// must then be exactly one key (e.g. "checklist"), just for the screen's key/label.
 	RawBuild func(app *App) (body []byte, ext string, err error)
+	// Archive, when true, also saves a permanent-ish copy (see internal/lego.ArchiveReport)
+	// — set on the Reports hub's jobs specifically (a "the QR expired, can I still get that
+	// report" answer), not on every export (owned parts, missing parts, etc.).
+	Archive bool
 }
 
 type exportResult struct {
@@ -213,6 +219,11 @@ func runExport(app *App, job *exportJob, format string) {
 		if tok, err := exports.NewLink(dir, path, owner); err == nil {
 			res.URL = exports.URL(tok)
 		}
+	}
+	if job.Archive {
+		archiveDir := config.Get(config.ArchiveDir)
+		_, _ = app.legoDB.ArchiveReport(archiveDir, job.Kind, job.What, owner, ext, body)
+		_, _ = app.legoDB.CleanupArchive(archiveDir, 90*24*time.Hour)
 	}
 	app.exportRes = res
 	app.audit.Log(user, role, "EXPORT", "SUCCESS", fmt.Sprintf("%s %s as %s", job.Kind, job.Num, format))

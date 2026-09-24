@@ -87,7 +87,7 @@ func TestDiscordBotDMOpensChannelThenPostsEmbedWithAttachment(t *testing.T) {
 	b := &DiscordBot{Token: "tok", UserID: "999", BaseURL: srv.URL}
 	card := DMCard{
 		Title: "Missing parts for 75192", URL: "https://example.com/DL/TOKEN",
-		Description: "kieran · expires 14:30", Image: []byte("fake-png-bytes"), ImageName: "qr.png",
+		Description: "kc · expires 14:30", Image: []byte("fake-png-bytes"), ImageName: "qr.png",
 	}
 	if err := b.DM(context.Background(), card); err != nil {
 		t.Fatal(err)

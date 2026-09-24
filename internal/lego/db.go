@@ -192,6 +192,12 @@ func ensureSchema(db *sql.DB) error {
 			set_num TEXT PRIMARY KEY, theme TEXT NOT NULL DEFAULT '', subtheme TEXT NOT NULL DEFAULT '',
 			set_name TEXT NOT NULL DEFAULT '', retirement_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL)`,
+		// A permanent-ish copy of every generated report (see archive.go) — separate from
+		// WMS_EXPORT_DIR's own short-lived files, so an expired QR/link never means "and it's gone".
+		`CREATE TABLE IF NOT EXISTS report_archive (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+			file TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_report_archive_creator ON report_archive(created_by, id)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

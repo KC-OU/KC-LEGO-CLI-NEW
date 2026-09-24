@@ -76,6 +76,7 @@ const (
 	BricklinkDailyBudget       = "BRICKLINK_DAILY_BUDGET"
 	DiscordBotToken            = "WMS_DISCORD_BOT_TOKEN"
 	DiscordBotUserID           = "WMS_DISCORD_BOT_USER_ID"
+	ArchiveDir                 = "WMS_ARCHIVE_DIR"
 )
 
 func Defaults() map[string]string {
@@ -130,6 +131,7 @@ func Defaults() map[string]string {
 		BricklinkDailyBudget:       "4500",
 		DiscordBotToken:            "", // from Discord's Developer Portal (discord.com/developers/applications): create an app, add a Bot, copy its token
 		DiscordBotUserID:           "", // the recipient's Discord user ID (Discord: enable Developer Mode, right-click your name, Copy User ID)
+		ArchiveDir:                 "/root/docker-server/wms/archive",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's

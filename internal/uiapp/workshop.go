@@ -37,6 +37,7 @@ const (
 	scrReportsSet       = "reports_set"
 	scrRetiring         = "retiring"
 	scrReportsStocktake = "reports_stocktake"
+	scrReportsArchive   = "reports_archive"
 	workshopBanner      = "workshop_banner"
 	defaultCurrency     = "GBP"
 )
@@ -69,6 +70,7 @@ func workshopScreens() map[string]screenModel {
 		scrReports:          reportsHubScreen(),
 		scrReportsSet:       reportsSetAskScreen(),
 		scrReportsStocktake: reportsStocktakeAskScreen(),
+		scrReportsArchive:   &selectList{panelID: "REPARC", title: "Report Archive", rows: archiveRows, keys: archiveKeys, hint: "Enter: a fresh link for that report (kept 90 days from when it was made)"},
 		scrRetiring:         &selectList{panelID: "RETIRE", title: "Retiring Soon", rows: retiringRows, hint: "Sets retiring within 6 months, from the retirement sheet (wms lego retirement refresh)"},
 	}
 }

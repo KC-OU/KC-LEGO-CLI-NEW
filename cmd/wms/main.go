@@ -45,12 +45,14 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDocsGenCmd(root))
 	addOutputFlags(root)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return withCode(exitUsage, err) })
+	applyFuzzyGroupArgs(root)
 	return root
 }
 
 // execute runs one command line: a plugin if the first word names one (built-in commands
 // always win), otherwise the normal command tree.
 func execute(root *cobra.Command, args []string) error {
+	args = expandAlias(args)
 	if handled, err := dispatchPlugin(root, args); handled {
 		return err
 	}

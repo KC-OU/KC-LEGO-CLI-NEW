@@ -3,21 +3,28 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
 // writeReport renders data as the clean printable report (default) or, with an
 // explicit --format, whatever lego.Encode supports (csv/xlsx/json/plain html/...).
-func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, force bool, discord discordFlags) error {
+// Every report generated is also archived (see archiveReport) — best-effort, since
+// it wasn't explicitly requested the way --discord was, so a failure only warns.
+func writeReport(t ui.Theme, db *lego.DB, kind string, data *lego.ExportData, format, outPath string, force bool, discord discordFlags) error {
 	if format == "" {
 		format = "report"
 	}
-	body, _, _, err := lego.Encode(format, data)
+	body, ext, _, err := lego.Encode(format, data)
 	if err != nil {
 		return usageError("%v", err)
 	}
@@ -37,16 +44,132 @@ func writeReport(t ui.Theme, data *lego.ExportData, format, outPath string, forc
 		n, unit = len(data.Sets), "set(s)"
 	}
 	say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d %s)", abs, n, unit)))
+	archiveReport(t, db, kind, data.Title, ext, body)
 	if err := sendToDiscord(t, discord, abs, data.Title); err != nil {
 		return err
 	}
 	return emit(map[string]any{"file": abs, "rows": len(data.Rows), "sets": len(data.Sets), "facts": data.Facts})
 }
 
+// archiveReportMaxAge is how long an archived report survives — long compared to a
+// normal export's 7-day default, since the whole point is outliving that.
+const archiveReportMaxAge = 90 * 24 * time.Hour
+
+// archiveReport saves a permanent-ish copy for `wms lego report archive` — best-effort,
+// never fails the report itself — and opportunistically sweeps anything past
+// archiveReportMaxAge (there's no scheduler for this; piggybacking on normal use is
+// enough for something with a 90-day horizon).
+func archiveReport(t ui.Theme, db *lego.DB, kind, title, ext string, body []byte) {
+	dir := config.Get(config.ArchiveDir)
+	if _, err := db.ArchiveReport(dir, kind, title, cliActor(), ext, body); err != nil {
+		say(ui.Warn(t, "could not archive this report: "+err.Error()))
+	}
+	_, _ = db.CleanupArchive(dir, archiveReportMaxAge)
+}
+
 func newLegoReportCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "report", Short: "Printable reports: stock-take, parts lists, missing/extra parts, sets, orders, check history"}
 	cmd.AddCommand(newLegoReportStocktakeCmd(), newLegoReportSetPartsCmd(), newLegoReportSetListCmd(),
-		newLegoReportMissingCmd(), newLegoReportExtraCmd(), newLegoReportOrdersCmd(), newLegoReportHistoryCmd())
+		newLegoReportMissingCmd(), newLegoReportExtraCmd(), newLegoReportOrdersCmd(), newLegoReportHistoryCmd(),
+		newLegoReportArchiveCmd())
+	return cmd
+}
+
+// newLegoReportArchiveCmd browses reports every `report`/`stocktake` command already
+// saved a permanent-ish copy of (see archiveReport) — for "the QR/link expired, can I
+// still get that report" without having to regenerate it.
+func newLegoReportArchiveCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "archive", Short: "Browse and re-fetch previously generated reports"}
+	cmd.AddCommand(newLegoReportArchiveListCmd(), newLegoReportArchiveGetCmd())
+	return cmd
+}
+
+func newLegoReportArchiveListCmd() *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:     "list",
+		Short:   "List archived reports (yours, unless --all)",
+		Example: "  wms lego report archive list\n  wms lego report archive list --all",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			list, err := db.ListArchive(cliActor(), all)
+			if err != nil {
+				return err
+			}
+			rows := make([][]string, len(list))
+			for i, e := range list {
+				rows[i] = []string{strconv.FormatInt(e.ID, 10), e.Kind, e.Title, e.CreatedBy, e.CreatedAt.Format("2 Jan 2006 15:04")}
+			}
+			if len(rows) > 0 {
+				say(ui.RenderColumns(t, []string{"ID", "Kind", "Title", "By", "Created"}, rows, fmt.Sprintf("%d archived report(s)", len(list))))
+			} else {
+				say(ui.Warn(t, "Nothing archived yet — every report you generate is archived automatically."))
+			}
+			return emit(map[string]any{"archived": list})
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "everyone's archived reports, not just yours")
+	return cmd
+}
+
+func newLegoReportArchiveGetCmd() *cobra.Command {
+	var expires time.Duration
+	cmd := &cobra.Command{
+		Use:     "get <id>",
+		Short:   "Mint a fresh share link (and QR) for an archived report",
+		Example: "  wms lego report archive get 12",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return usageError("the id is the number in `wms lego report archive list`")
+			}
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			e, err := db.GetArchiveEntry(id)
+			if err != nil {
+				return withCode(exitNotFound, fmt.Errorf("no archived report %d", id))
+			}
+			if e.CreatedBy != cliActor() {
+				return withCode(exitAuth, fmt.Errorf("report %d belongs to %s, not you", id, e.CreatedBy))
+			}
+			if exports.URL("x") == "" {
+				return usageError("this needs WMS_PUBLIC_URL set, so the link it makes is reachable")
+			}
+			// /share/ only ever looks in WMS_EXPORT_DIR, not the archive directory — a short-lived
+			// copy there is what actually gets served; the archive entry itself is untouched.
+			body, err := os.ReadFile(filepath.Join(config.Get(config.ArchiveDir), e.File))
+			if err != nil {
+				return err
+			}
+			ext := strings.TrimPrefix(filepath.Ext(e.File), ".")
+			copyPath, err := exports.Save(exports.Dir(), cliActor(), e.Kind, "", ext, body)
+			if err != nil {
+				return err
+			}
+			token, err := exports.NewShareLink(exports.Dir(), copyPath, cliActor(), expires)
+			if err != nil {
+				return err
+			}
+			link := exports.ShareURL(token)
+			say(ui.Status(t, true, fmt.Sprintf("%s — %s, expires %s", e.Title, e.Kind, time.Now().Add(expires).Format("2 Jan 2006 15:04"))))
+			say(t.Accent.Render(link))
+			return emit(map[string]any{"id": e.ID, "title": e.Title, "url": link})
+		},
+	}
+	cmd.Flags().DurationVar(&expires, "expires", 24*time.Hour, "how long the link stays viewable")
 	return cmd
 }
 
@@ -71,7 +194,7 @@ func newLegoReportMissingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force, discord)
+			return writeReport(t, db, "missing-report", data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
@@ -105,7 +228,7 @@ func newLegoReportSetListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force, discord)
+			return writeReport(t, db, "setlist-report", data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also sets-csv/xlsx/json — plain csv is empty, it's parts-only)")
@@ -137,7 +260,7 @@ func newLegoReportSetPartsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force, discord)
+			return writeReport(t, db, "setparts-report", data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
@@ -182,6 +305,7 @@ func newLegoReportHistoryCmd() *cobra.Command {
 					return err
 				}
 				say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d check(s))", abs, len(hist))))
+				archiveReport(t, db, "history-report", "Check history", "html", body)
 				return emit(map[string]any{"file": abs, "checks": len(hist)})
 			}
 			rows := make([][]string, len(hist))
@@ -230,7 +354,7 @@ func newLegoReportExtraCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force, discord)
+			return writeReport(t, db, "extra-report", data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
@@ -266,7 +390,7 @@ func newLegoReportOrdersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeReport(t, data, format, outPath, force, discord)
+			return writeReport(t, db, "orders-report", data, format, outPath, force, discord)
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "", "output format (default: the printable report; also csv/xlsx/json/html/sorting-html)")
@@ -306,7 +430,7 @@ func newLegoReportStocktakeCmd() *cobra.Command {
 				}
 				out := outPath
 				if out == "" {
-					out = set + "-stocksheet.html"
+					out = set + "-stocktake.html"
 				} else if len(args) > 1 {
 					return usageError("-o only works with one set at a time; pass sets one by one, or omit -o to name files after the set")
 				}
@@ -315,7 +439,8 @@ func newLegoReportStocktakeCmd() *cobra.Command {
 					return err
 				}
 				say(ui.Status(t, true, fmt.Sprintf("Wrote %s (%d line(s))", abs, len(lines))))
-				if err := sendToDiscord(t, discord, abs, "stock sheet for "+title); err != nil {
+				archiveReport(t, db, "stocktake", title, "html", body)
+				if err := sendToDiscord(t, discord, abs, "stock-take checklist for "+title); err != nil {
 					return err
 				}
 			}

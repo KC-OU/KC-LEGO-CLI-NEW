@@ -129,13 +129,20 @@ func legacyCan(s *auth.Session, p string) bool {
 	return false // access and settings: admins only
 }
 
+// isAdmin is true only once login (and any 2FA) is done and the session carries the
+// admin flag — used where a check needs "an admin, specifically" rather than a named
+// permission (e.g. browsing everyone's archived reports, not just your own).
+func (a *App) isAdmin() bool {
+	return a.session != nil && a.session.Permissions != nil && a.session.Permissions.IsAdmin
+}
+
 // moduleAllowed replaces auth.IsModuleAllowed for the hub and its submenus.
 func (a *App) moduleAllowed(m string) bool {
 	if a.governed() {
 		return a.can(modulePerm[m])
 	}
 	if m == "access" {
-		return a.session != nil && a.session.Permissions != nil && a.session.Permissions.IsAdmin
+		return a.isAdmin()
 	}
 	return auth.IsModuleAllowed(a.session, m)
 }
@@ -213,7 +220,7 @@ var screenPerm = map[string]string{
 	scrOrders: "orders.view", scrOrderLines: "orders.view", scrOrderEdit: "orders.manage", scrLinePrice: "orders.manage",
 	scrLineReceive: "orders.manage", scrSpend: "orders.view", scrLabels: "labels.print", scrLabelsAsk: "labels.print",
 	scrSetInfo: "lego.edit", scrCheckAsk: "sets.check", scrNotify: "access.manage", scrNotifyRoute: "access.manage",
-	scrReports: "lego.view", scrReportsSet: "lego.view", scrRetiring: "lego.view", scrReportsStocktake: "lego.view",
+	scrReports: "lego.view", scrReportsSet: "lego.view", scrRetiring: "lego.view", scrReportsStocktake: "lego.view", scrReportsArchive: "lego.view",
 }
 
 // mayOpen reports whether the user may open screen id (unlisted screens are
