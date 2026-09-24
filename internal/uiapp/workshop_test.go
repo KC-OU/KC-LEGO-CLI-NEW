@@ -110,3 +110,54 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 		t.Fatal("label PDF lacks the status or checker")
 	}
 }
+
+func TestSetCheckOToggleKeepsStickersOffMissingByDefault(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	for _, q := range []string{
+		`INSERT INTO cat_categories (id, name) VALUES (58, 'Stickers')`,
+		`INSERT INTO cat_parts (part_num, name, part_cat_id) VALUES ('STK1', 'Sticker Sheet', 58)`,
+		`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1')`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10),(1,'STK1',0,1)`,
+	} {
+		if _, err := app.legoDB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckIntake)
+	if v := plain(app.View()); !strings.Contains(v, "optional") {
+		t.Fatalf("the sticker line should read optional by default:\n%s", v)
+	}
+	stkIdx := -1
+	for i, l := range app.checking.check.Lines {
+		if l.PartNum == "STK1" {
+			stkIdx = i
+			app.checking.check.Lines[i].Have = 0 // never counted: shouldn't affect completeness
+		}
+	}
+	if stkIdx < 0 {
+		t.Fatal("the sticker line is missing from the check")
+	}
+	if v := plain(app.View()); !strings.Contains(v, "COMPLETE") {
+		t.Fatalf("a set short only an optional line must still read complete:\n%s", v)
+	}
+	scr := app.screens[scrSetCheck].(*setCheckScreen)
+	for vi, idx := range scr.visible(app) {
+		if idx == stkIdx {
+			scr.sel = vi
+		}
+	}
+	typeKeys(app, "o")
+	if !strings.Contains(app.message, "required again") {
+		t.Fatalf("toggling off should say so: %q", app.message)
+	}
+	if v := plain(app.View()); !strings.Contains(v, "INCOMPLETE") {
+		t.Fatalf("once required again, the short sticker should count:\n%s", v)
+	}
+	if optional, _ := app.legoDB.IsOptional("STK1", "Stickers"); optional {
+		t.Error("the O toggle should persist SetOptional(false)")
+	}
+}

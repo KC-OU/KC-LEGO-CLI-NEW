@@ -14,6 +14,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
 )
 
 // writeReport renders data as the clean printable report (default) or, with an
@@ -397,6 +398,53 @@ func newLegoReportOrdersCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
 	cmd.Flags().BoolVar(&openOnly, "open", false, "only orders not yet received or cancelled")
+	discord.register(cmd.Flags())
+	return cmd
+}
+
+// newLegoHelpSheetCmd is a printable cheat sheet of every key the TUI's F1 help
+// already shows — same content (uiapp.CheatSheetSections), just on paper.
+func newLegoHelpSheetCmd() *cobra.Command {
+	var outPath string
+	var force bool
+	var discord discordFlags
+	cmd := &cobra.Command{
+		Use:     "help-sheet",
+		Short:   "Printable cheat sheet of the TUI/telnet key bindings",
+		Example: "  wms lego help-sheet -o keys.html",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			body, err := lego.CheatSheetHTML("Key cheat sheet", uiapp.CheatSheetSections())
+			if err != nil {
+				return err
+			}
+			if outPath == "" {
+				if discord.send {
+					return usageError("--discord needs -o <file>: there's nothing saved to send otherwise")
+				}
+				_, _ = os.Stdout.Write(body)
+				return nil
+			}
+			abs, err := writeExportFile(outPath, body, force)
+			if err != nil {
+				return err
+			}
+			say(ui.Status(t, true, "Wrote "+abs))
+			db, err := openLego()
+			if err == nil {
+				defer db.Close()
+				archiveReport(t, db, "help-sheet", "Key cheat sheet", "html", body)
+			}
+			if err := sendToDiscord(t, discord, abs, "key cheat sheet"); err != nil {
+				return err
+			}
+			return emit(map[string]any{"file": abs})
+		},
+	}
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write to this file (default: print it)")
+	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
 	discord.register(cmd.Flags())
 	return cmd
 }

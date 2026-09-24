@@ -175,6 +175,9 @@ func legoPartOwnedScreen() screenModel {
 				}
 				rows[i] = []string{p.PartNum, colour, p.Name, p.Category, qty, synced}
 			}
+			if len(owned) == 0 {
+				return rows, "no parts logged yet — add some from the LEGO menu, or check a set to find what's missing", nil
+			}
 			title := fmt.Sprintf("%d owned part(s) — / filter, X export", len(owned))
 			if pending := countUnsynced(owned); pending > 0 {
 				title += fmt.Sprintf(" — %d not in Part-DB yet, run `wms lego sync-parts`", pending)
@@ -390,7 +393,11 @@ func legoMissingAskScreen() screenModel {
 			return []ui.Field{{Label: "Set number (e.g. 75192)"}, {Label: "Copies to build (blank = 1)"}}
 		},
 		preamble: func(app *App) string {
-			return app.theme.Muted.Render("Compares the set's parts list with the loose parts you hold, matching part and colour.")
+			base := "Compares the set's parts list with the loose parts you hold, matching part and colour."
+			if st, err := app.legoDB.Stats(); err == nil && st.PartLines == 0 {
+				base += "\nYou don't have any loose parts logged yet, so this will show everything as missing — that's normal starting out."
+			}
+			return app.theme.Muted.Render(base)
 		},
 		submit: func(app *App, values []string) {
 			num := strings.TrimSpace(values[0])

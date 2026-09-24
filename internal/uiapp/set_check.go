@@ -176,6 +176,13 @@ func (s *setCheckScreen) Body(app *App) string {
 			ex = "E" + strconv.Itoa(l.Extra)
 		}
 		note := st.spares[i]
+		if l.Optional {
+			if note != "" {
+				note = "optional · " + note
+			} else {
+				note = "optional"
+			}
+		}
 		rows = append(rows, []string{mark, l.PartNum, orDash(l.ColorName), l.PartName, strconv.Itoa(l.Need), strconv.Itoa(l.Have), miss, ex, note})
 	}
 	title := fmt.Sprintf("%d of %d line(s)", len(vis), len(c.Lines))
@@ -194,7 +201,7 @@ func (s *setCheckScreen) Body(app *App) string {
 		foot = t.Accent.Render("SCANNER MODE — scan or type a part number + Enter adds one: "+s.scanBuf+"_") + t.Muted.Render("   Z/Esc leaves")
 	default:
 		foot = t.Muted.Render("H have all · M missing · E extra · 0-9 count · A all have · T take spare") + "\n" +
-			t.Muted.Render("U undo · / filter · Z scanner · S save for later · F finish · Esc leave")
+			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional")
 	}
 	if s.flash != "" {
 		foot = s.flash + "\n" + foot
@@ -286,6 +293,19 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 			st.set(i, func(l *lego.CheckLine) { l.Have = l.Need })
 		}
 		app.setMsg("Every line marked as have-all.", false)
+	case (r == 'o' || r == 'O') && cur >= 0:
+		l := st.check.Lines[cur]
+		next := !l.Optional
+		if err := app.legoDB.SetOptional(l.PartNum, next); err != nil {
+			app.setMsg(err.Error(), true)
+			return
+		}
+		st.set(cur, func(l *lego.CheckLine) { l.Optional = next })
+		word := "required again"
+		if next {
+			word = "optional \u2014 won't count toward missing or completion"
+		}
+		app.setMsg(fmt.Sprintf("%s marked %s.", l.PartNum, word), false)
 	case r == 'u' || r == 'U':
 		st.undoLast()
 	case r == '/':

@@ -119,3 +119,66 @@ func TestDraftResumesAndRecountStartsFromLastCheck(t *testing.T) {
 		t.Fatalf("recount = %+v", rc)
 	}
 }
+
+func TestStickersDefaultToOptionalAndDontCountAsMissing(t *testing.T) {
+	d := buildDB(t)
+	for _, q := range []string{
+		`INSERT INTO cat_categories (id, name) VALUES (58, 'Stickers')`,
+		`INSERT INTO cat_parts (part_num, name, part_cat_id) VALUES ('STK1', 'Sticker Sheet', 58)`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (11, 'STK1', 0, 1)`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("%v: %s", err, q)
+		}
+	}
+	c, err := d.NewCheck(context.Background(), nil, "1-1", CheckIntake, "kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sticker := -1
+	for i := range c.Lines {
+		if c.Lines[i].PartNum == "STK1" {
+			sticker = i
+			c.Lines[i].Have = 0 // never counted it: still shouldn't show as missing
+		}
+	}
+	if sticker < 0 || !c.Lines[sticker].Optional {
+		t.Fatalf("a Stickers-category part should default to optional: %+v", c.Lines)
+	}
+	if m := c.Lines[sticker].Missing(); m != 0 {
+		t.Errorf("an optional line must never report missing, got %d", m)
+	}
+	pieces, _, missing, _, missingLines := c.Totals()
+	if pieces != 100 || missing != 0 || missingLines != 0 {
+		t.Errorf("optional lines must be excluded from totals: pieces=%d missing=%d missingLines=%d", pieces, missing, missingLines)
+	}
+	if _, err := d.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+	if st := d.GetSetState("1-1"); st.MissingQty != 0 || st.Incomplete() {
+		t.Fatalf("a set short only an optional part must read complete: %+v", st)
+	}
+	if lines, err := d.ShoppingList("1-1"); err != nil || len(lines) != 0 {
+		t.Fatalf("the shopping list must not carry an optional line: %v %v", lines, err)
+	}
+
+	// SetOptional overrides the category default, either way.
+	if err := d.SetOptional("STK1", false); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := d.NewCheck(context.Background(), nil, "1-1", CheckRecount, "kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range rc.Lines {
+		if l.PartNum == "STK1" && l.Optional {
+			t.Error("SetOptional(false) should override the Stickers default")
+		}
+	}
+	if err := d.SetOptional("3001", true); err != nil {
+		t.Fatal(err)
+	}
+	if optional, err := d.IsOptional("3001", ""); err != nil || !optional {
+		t.Errorf("SetOptional(true) should work on any part, not just Stickers: optional=%v err=%v", optional, err)
+	}
+}

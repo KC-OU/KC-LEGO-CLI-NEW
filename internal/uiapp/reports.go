@@ -56,8 +56,15 @@ func reportsHubScreen() screenModel {
 				{Key: "5", Label: "Extra Parts: spares from completed checks", Go: func(app *App) { startExport(app, extraPartsReportJob()) }, Perm: "lego.view"},
 				{Key: "6", Label: "Order List", Go: func(app *App) { startExport(app, orderListReportJob()) }, Perm: "orders.view"},
 				{Key: "7", Label: "Archive: previously generated reports", Go: func(app *App) { app.goTo(scrReportsArchive) }, Perm: "lego.view"},
+				{Key: "8", Label: "Key cheat sheet: a printable page of every shortcut", Go: func(app *App) { startExport(app, cheatSheetJob()) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
+		},
+		intro: func(app *App) string {
+			if st, err := app.legoDB.Stats(); err == nil && st.SetTitles == 0 {
+				return app.theme.Muted.Render(" Nothing to report on yet — add a set or some parts first. ")
+			}
+			return ""
 		},
 	}
 }
@@ -206,6 +213,16 @@ func archiveKeys(app *App, key string, msg tea.KeyMsg) {
 	app.exportJob = &exportJob{What: e.Title, Kind: e.Kind}
 	app.exportRes = res
 	app.goTo(scrExport)
+}
+
+func cheatSheetJob() *exportJob {
+	return &exportJob{What: "key cheat sheet", Kind: "help-sheet",
+		Formats: []string{"cheatsheet"},
+		Archive: true,
+		RawBuild: func(app *App) ([]byte, string, error) {
+			body, err := lego.CheatSheetHTML("Key cheat sheet", CheatSheetSections())
+			return body, "html", err
+		}}
 }
 
 func stocktakeReportJob(set string) *exportJob {

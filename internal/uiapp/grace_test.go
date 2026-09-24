@@ -41,6 +41,7 @@ func graceApp(t *testing.T, origin string) (*App, *auth.Session, string) {
 	sess := &auth.Session{Source: "modernwms", Username: "graceuser", Role: "Picker",
 		Permissions: &wmsdb.Permissions{CanWrite: true, Menus: []string{"stockManagement"}}}
 	app.session, app.authed, app.cur = sess, false, scrLogin
+	_ = markTourSeen("graceuser") // this suite tests 2FA/grace, not onboarding
 	return app, sess, secret
 }
 

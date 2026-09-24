@@ -59,7 +59,7 @@ func workshopScreens() map[string]screenModel {
 		scrCompletion:       &selectList{panelID: "SETCMP", title: "Set Completion", rows: completionRows, keys: completionKeys, hint: "↑/↓ choose  Enter missing parts  K check again  L label  I location"},
 		scrSetMissing:       &selectList{panelID: "SETMIS", title: "Missing Parts & Prices", rows: setMissingRows, keys: setMissingKeys, hint: "P fetch prices  Enter shop links  T take spare  O order all  W shopping list  L label"},
 		scrShopLinks:        &shopLinksScreen{},
-		scrOrders:           &selectList{panelID: "ORDERS", title: "Parts Orders", rows: orderRows, keys: orderKeys, hint: "Enter lines  N new  E edit  O ordered  S shipped  R received  C cancel"},
+		scrOrders:           &selectList{panelID: "ORDERS", title: "Parts Orders", rows: orderRows, keys: orderKeys, hint: "Enter lines  N new  E edit  O ordered  S shipped  R received  C cancel", emptyHint: "N starts a new order once you know what you're buying and from where."},
 		scrOrderEdit:        orderEditScreen(),
 		scrOrderLines:       &selectList{panelID: "ORDLIN", title: "Order Lines", rows: orderLineRows, keys: orderLineKeys, hint: "P unit price  R receive  E edit order"},
 		scrLinePrice:        linePriceScreen(),
@@ -107,6 +107,9 @@ func workshopHubScreen() screenModel {
 func workshopNote(app *App) string {
 	inc, err := app.legoDB.IncompleteSets()
 	if err != nil || len(inc) == 0 {
+		if st, err := app.legoDB.Stats(); err == nil && st.SetTitles == 0 {
+			return app.theme.Muted.Render(" No sets yet — add one from the LEGO menu, then come back to check its parts. ")
+		}
 		return ""
 	}
 	missing, onOrder := 0, 0
@@ -387,7 +390,7 @@ func (s *shopLinksScreen) Body(app *App) string {
 	}
 	s.sel = min(s.sel, len(links)-1)
 	if !t.Mono && (app.height == 0 || app.height >= 36) {
-		b.WriteString("\n" + qrCode(links[s.sel][1]))
+		b.WriteString("\n" + QRCode(links[s.sel][1]))
 	} else {
 		b.WriteString("\n" + t.Muted.Render("↑/↓ choose a link (a taller window shows its QR code)."))
 	}

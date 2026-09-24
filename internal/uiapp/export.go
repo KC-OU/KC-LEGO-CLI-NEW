@@ -118,7 +118,7 @@ func exportResultBody(app *App, r *exportResult) string {
 		return strings.Join(lines, "\n")
 	}
 	lines = append(lines, "", t.Strong.Render(fmt.Sprintf("Download once, within %d minutes:", int(exports.LinkTTL().Minutes()))))
-	qr := qrCode(r.URL)
+	qr := QRCode(r.URL)
 	textW := t.W()
 	if !t.Mono && t.W() >= lipgloss.Width(qr)+42 {
 		textW = t.W() - lipgloss.Width(qr) - 2
@@ -145,9 +145,9 @@ func exportResultBody(app *App, r *exportResult) string {
 	return text + "\n\n" + t.Muted.Render("(make the window taller to see a QR code)")
 }
 
-// qrCode draws s as a QR code in half blocks (two modules per character row), with
+// QRCode draws s as a QR code in half blocks (two modules per character row), with
 // light modules as full blocks so it scans on a dark terminal.
-func qrCode(s string) string {
+func QRCode(s string) string {
 	var b bytes.Buffer
 	qrterminal.GenerateWithConfig(s, qrterminal.Config{Level: qrterminal.L, Writer: &b, HalfBlocks: true, QuietZone: 1})
 	return strings.TrimRight(b.String(), "\n")

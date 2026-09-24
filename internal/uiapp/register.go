@@ -88,6 +88,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrLegoDetailAsk:    legoDetailAskScreen(),
 		scrLegoDetail:       &detailScreen{},
 		scrLegoMissingAsk:   legoMissingAskScreen(),
+		scrTour:             tourScreen(),
 		scrLegoMissing:      legoMissingScreen(),
 		scrExport:           &exportScreen{},
 		scrSetCheck:         &setCheckScreen{},

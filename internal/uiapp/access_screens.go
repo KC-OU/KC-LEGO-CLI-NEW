@@ -119,6 +119,7 @@ func (app *App) saveAccess(what string, change func(p *access.Policy) error) boo
 type selectList struct {
 	base
 	panelID, title, hint string
+	emptyHint            string // shown instead of hint when there are no rows yet; "" keeps hint
 	rows                 func(app *App) (header []string, rows [][]string, keys []string)
 	keys                 func(app *App, key string, msg tea.KeyMsg)
 	sel                  int
@@ -144,10 +145,14 @@ func (s *selectList) Body(app *App) string {
 		marked[i] = append([]string{m}, r...)
 	}
 	title := fmt.Sprintf("%d %s", len(rows), strings.ToLower(s.title))
+	hint := s.hint
 	if len(rows) == 0 {
 		title = "none yet"
+		if s.emptyHint != "" {
+			hint = s.emptyHint
+		}
 	}
-	return ui.RenderColumns(t, append([]string{""}, header...), marked, title) + "\n" + t.Muted.Render(ansi.Truncate(s.hint, t.W(), "…"))
+	return ui.RenderColumns(t, append([]string{""}, header...), marked, title) + "\n" + t.Muted.Render(ansi.Truncate(hint, t.W(), "…"))
 }
 
 func (s *selectList) HandleKey(app *App, msg tea.KeyMsg) {
@@ -607,7 +612,8 @@ func accessUserEditScreen() screenModel {
 				next.ExemptCIDRs = nil
 			}
 			if u := app.pol().Users[e.User]; u != nil {
-				next.Perms = u.Perms // overrides are edited on the grid
+				next.Perms = u.Perms           // overrides are edited on the grid
+				next.BadgeToken = u.BadgeToken // badges are issued from `wms access user badge`, not this form
 			}
 			after, _ := json.Marshal(next)
 			if app.saveAccess("user "+e.User+": "+string(before)+" → "+string(after), func(p *access.Policy) error {

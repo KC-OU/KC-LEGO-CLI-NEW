@@ -16,6 +16,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
 )
 
 // `wms access`: the permission policy (groups, per-user permissions, 2FA
@@ -296,6 +297,11 @@ func newAccessUserCmd() *cobra.Command {
 			say(ui.Fact(t, "Groups", orDash(strings.Join(u.Groups, ", "))))
 			say(ui.Fact(t, "2FA", map[string]string{"": "default (required over telnet/web)", "required": "always required", "exempt": "exempt"}[u.TwoFA]+cidrNote(u)))
 			say(ui.Fact(t, "Channels", orDash(strings.Join(u.Channels, ", "))+" (none listed = all)"))
+			badge := "not set"
+			if u.BadgeToken != "" {
+				badge = "set (wms access user badge " + args[0] + " to see it)"
+			}
+			say(ui.Fact(t, "Badge", badge))
 			say(ui.Fact(t, "Expires", orDash(u.Expires)))
 			say(ui.Fact(t, "Timeouts", fmt.Sprintf("2FA remember %s, idle %s, max session %s",
 				intOr(u.GraceMin, " min", "global"), intOr(u.IdleMin, " min", "global"), intOr(u.MaxHours, " h", "global"))))
@@ -430,6 +436,59 @@ func newAccessUserCmd() *cobra.Command {
 			return edit(args[0], "note", func(u *access.User) error { u.Note = note; return nil })
 		},
 	}
+	var regenBadge, clearBadge, showBadgeQR bool
+	badgeCmd := &cobra.Command{
+		Use:     "badge <user>",
+		Short:   "Show or issue the user's barcode-badge sign-in token (never the literal username)",
+		Example: "  wms access user badge alex\n  wms access user badge alex --regenerate --qr\n  wms access user badge alex --clear",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t := ui.New()
+			if clearBadge {
+				if err := edit(args[0], "badge cleared", func(u *access.User) error { u.BadgeToken = ""; return nil }); err != nil {
+					return err
+				}
+				return emit(map[string]any{"user": args[0], "badge_token": ""})
+			}
+			p, err := access.Load()
+			if err != nil {
+				return err
+			}
+			key := userKey(p, args[0])
+			token := ""
+			if u := p.Users[key]; u != nil {
+				token = u.BadgeToken
+			}
+			if token == "" || regenBadge {
+				what := "badge issued"
+				if regenBadge && token != "" {
+					what = "badge regenerated"
+				}
+				if err := edit(args[0], what, func(u *access.User) error {
+					tok, err := access.NewBadgeToken()
+					if err != nil {
+						return err
+					}
+					u.BadgeToken, token = tok, tok
+					return nil
+				}); err != nil {
+					return err
+				}
+			} else {
+				say(ui.Fact(t, "User", key))
+			}
+			say(t.Accent.Render(token))
+			say(t.Muted.Render("Scan or type this into the Username field at sign-on instead of a name; the password is still required."))
+			if showBadgeQR {
+				say(uiapp.QRCode(token))
+			}
+			return emit(map[string]any{"user": key, "badge_token": token})
+		},
+	}
+	badgeCmd.Flags().BoolVar(&regenBadge, "regenerate", false, "issue a new token, replacing the old one (revokes the old badge)")
+	badgeCmd.Flags().BoolVar(&clearBadge, "clear", false, "remove the badge token (badge sign-in stops working for this user)")
+	badgeCmd.Flags().BoolVar(&showBadgeQR, "qr", false, "also show the token as a scannable QR code (many barcode scanners read QR too)")
+
 	remove := &cobra.Command{
 		Use: "remove <user>", Short: "Delete the user's entry (they go back to their ModernWMS role's access)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -448,7 +507,7 @@ func newAccessUserCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, remove)
+	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, badgeCmd, remove)
 	return cmd
 }
 

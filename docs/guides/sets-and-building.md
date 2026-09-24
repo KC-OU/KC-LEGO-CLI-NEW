@@ -18,6 +18,21 @@ It counts **equivalent parts** too: alternates and moulds (the same part under a
 names what covered a shortfall so you can check it. Change it with `--equivalents none|default|alt,mold,print` or `WMS_EQUIVALENTS`.
 Each piece you hold is used only once. Parts you hold in a *typed* colour can't be matched.
 
+### Optional parts (stickers)
+
+Sticker sheets default to **optional**: they never count toward a set's missing parts or completion, on the
+Missing Parts report or anywhere else, even before you've counted them. Any part can be marked optional or
+required, either way, from the parts check screen (**O**) or the CLI:
+
+```bash
+wms-go lego optional 78256          # shows the current state
+wms-go lego optional 78256 on       # mark it optional (won't count as missing)
+wms-go lego optional 78256 off      # mark it required again
+```
+
+A blank stock-take checklist still lists optional lines to count against by hand — marked *(optional)* — just
+without them in the printed total.
+
 ## What can I build?
 
 **LEGO → What Can I Build?** or `wms-go lego build`. Ranks sets by how much of each your loose parts cover, entirely offline.

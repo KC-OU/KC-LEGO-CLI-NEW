@@ -2,6 +2,7 @@ package lego
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -136,6 +137,37 @@ func (d *DB) queryOwned(q string, args ...any) ([]OwnedPart, error) {
 
 func (d *DB) SetSyncedPartID(ownedID int64, partDBID int) error {
 	_, err := d.Exec(`UPDATE owned_parts SET synced_part_id = ? WHERE id = ?`, partDBID, ownedID)
+	return err
+}
+
+// OptionalCategory is the catalog category that defaults to optional (see IsOptional)
+// without anyone having to mark a single sticker sheet by hand.
+const OptionalCategory = "Stickers"
+
+// IsOptional reports whether a part counts toward missing-parts/completion totals.
+// An explicit SetOptional call always wins; absent that, only Stickers default to
+// optional — so every sticker sheet, existing or new, is covered for free.
+func (d *DB) IsOptional(partNum, category string) (bool, error) {
+	var v int
+	err := d.QueryRow(`SELECT optional FROM part_optional WHERE part_num = ?`, partNum).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return category == OptionalCategory, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("looking up optional flag for %s: %w", partNum, err)
+	}
+	return v != 0, nil
+}
+
+// SetOptional records an explicit optional/required choice for a part number,
+// overriding the category default either way.
+func (d *DB) SetOptional(partNum string, optional bool) error {
+	v := 0
+	if optional {
+		v = 1
+	}
+	_, err := d.Exec(`INSERT INTO part_optional (part_num, optional) VALUES (?, ?)
+		ON CONFLICT(part_num) DO UPDATE SET optional = excluded.optional`, partNum, v)
 	return err
 }
 

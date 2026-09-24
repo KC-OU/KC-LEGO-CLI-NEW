@@ -55,6 +55,47 @@ func TestStockSheetFallsBackToCatalogWhenNeverChecked(t *testing.T) {
 	}
 }
 
+func TestStockSheetExcludesOptionalLinesFromTheTotalButStillListsThem(t *testing.T) {
+	d := buildDB(t)
+	for _, q := range []string{
+		`INSERT INTO cat_categories (id, name) VALUES (58, 'Stickers')`,
+		`INSERT INTO cat_parts (part_num, name, part_cat_id) VALUES ('STK1', 'Sticker Sheet', 58)`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (11, 'STK1', 0, 1)`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("%v: %s", err, q)
+		}
+	}
+	rb := &Client{}
+	title, lines, err := d.StockSheet(context.Background(), rb, "1-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range lines {
+		if l.PartNum == "STK1" {
+			found = true
+			if !l.Optional {
+				t.Error("the sticker line should be marked optional")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the sticker line should still be listed to count against by hand")
+	}
+	html, err := StockSheetHTML(title, lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(html)
+	if !strings.Contains(s, "100 piece(s) expected") {
+		t.Errorf("the printed total must exclude the optional line's piece, got:\n%s", s)
+	}
+	if !strings.Contains(s, "(optional)") {
+		t.Errorf("the sheet should mark the optional line, got:\n%s", s)
+	}
+}
+
 func TestStockSheetUnknownSetErrors(t *testing.T) {
 	d := buildDB(t)
 	if _, _, err := d.StockSheet(context.Background(), &Client{}, "99999-1"); err == nil {

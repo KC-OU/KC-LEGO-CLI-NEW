@@ -69,6 +69,24 @@ Global values (*Admin → Access Control → Security settings*, or `wms access 
 
 Every sign-in decision is audited: `LOGIN_2FA_EXEMPT`, `LOGIN_DENIED_EXPIRED`, `LOGIN_DENIED_CHANNEL`, `SESSION_MAX_AGE`.
 
+## Barcode badge sign-in
+
+A username can be swapped for a scanned barcode at the sign-on screen: scan (or type) the badge into the
+**Username / User ID** field, then the password normally — the badge only ever substitutes what you'd have typed
+as a username; the password (and 2FA, if enrolled) is still required exactly as before. It's an unguessable,
+revocable token, never the literal username, so a lost badge is fixed by reprinting, not by changing anything the
+person actually signs in with.
+
+```bash
+wms-go access user badge alex                          # shows the current token (issuing one if there isn't yet)
+wms-go access user badge alex --qr                      # also shows it as a scannable QR (many scanners read either)
+wms-go access user badge alex --regenerate               # a new token — the old badge stops working immediately
+wms-go access user badge alex --clear                    # badge sign-in stops working for this user
+```
+
+Print the token on a barcode (Code 128) however you already label things — a lost or shared badge is `--regenerate`,
+not a password reset.
+
 ## In the terminal
 
 *Admin → 4 Access Control*:

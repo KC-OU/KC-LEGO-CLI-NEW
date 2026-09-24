@@ -203,7 +203,7 @@ func (a *App) denySignOn(action, msg string) {
 // users (goTo), so a screen can't be reached by any path — menu, key, palette —
 // without it; the palette also hides what the user can't open.
 var screenPerm = map[string]string{
-	scrOverview: "", scrPartDBHub: "partdb.view", scrPartDBBrowse: "partdb.view", scrPartDBResults: "partdb.view",
+	scrOverview: "", scrTour: "", scrPartDBHub: "partdb.view", scrPartDBBrowse: "partdb.view", scrPartDBResults: "partdb.view",
 	scrPartDBLookup: "partdb.view", scrPartDBDetail: "partdb.view", scrPartDBCreate: "partdb.edit", scrPartDBAdjust: "stock.adjust",
 	scrScripts: "scripts.run", scrAuditLog: "audit.view", scrASN: "ops.asn", scrOpsHub: "ops.view", scrAdminHub: "",
 	scrInventory: "stock.view", scrInventoryResults: "stock.view",

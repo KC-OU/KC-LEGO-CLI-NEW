@@ -107,6 +107,14 @@ func doLoginSubmit(app *App, values []string) {
 		app.setMsg("Username is required.", true)
 		return
 	}
+	// A badge scan (or typed badge token) resolves to the real username before
+	// anything else runs — the password (and 2FA) below is still required exactly
+	// as normal; the badge only ever saves typing the name.
+	if p, err := access.Load(); err == nil {
+		if name, ok := p.FindByBadge(username); ok {
+			username = name
+		}
+	}
 
 	session, err := auth.AuthenticateUser(app.ctx(), app.wms, app.pdb, username, password)
 	if err != nil {
@@ -194,6 +202,10 @@ func continueSignOn(app *App, session *auth.Session) {
 func proceedPastAuth(app *App, session *auth.Session) {
 	if mustChangePassword(app, session) {
 		app.goTo(scrForcedChange)
+		return
+	}
+	if !hasSeenTour(session.Username) {
+		app.goTo(scrTour)
 		return
 	}
 	app.enterHub()

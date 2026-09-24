@@ -431,6 +431,43 @@ var setsListTmpl = template.Must(template.New("setslist").Parse(`<!doctype html>
 {{end}}</table>
 </div></body></html>`))
 
+// ---- cheat sheet HTML (a printable page from the same key/description pairs the
+// in-app F1 help shows — see uiapp.CheatSheetSections, the only place this content
+// is written down) ----
+
+// CheatSheetSection is one titled block of key/description pairs.
+type CheatSheetSection struct {
+	Title string
+	Keys  [][2]string
+}
+
+var cheatSheetTmpl = template.Must(template.New("cheatsheet").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{.Title}}</title>
+<style>
+ body{font:14px/1.45 system-ui,sans-serif;margin:0;color:#111}
+ .page{max-width:700px;margin:0 auto;padding:2rem}
+ .title{text-align:center;padding:2rem 0 1.5rem;border-bottom:4px solid #222;margin-bottom:1.5rem}
+ .title h1{margin:0 0 .3rem;font-size:26px} .title .meta{color:#666}
+ h2{margin:1.5rem 0 .4rem;padding-bottom:.2rem;border-bottom:2px solid #333;font-size:16px}
+ table{border-collapse:collapse;width:100%;margin-bottom:.5rem}
+ td{padding:.25rem .5rem;border-bottom:1px solid #eee;font-size:13px;vertical-align:top}
+ td:first-child{font-weight:600;white-space:nowrap;width:1%}
+ @media print{.page{max-width:none} h2{break-after:avoid} tr{break-inside:avoid}}
+</style></head><body><div class="page">
+<div class="title"><h1>{{.Title}}</h1><div class="meta">Generated {{.Date}}</div></div>
+{{range .Sections}}<h2>{{.Title}}</h2><table>{{range .Keys}}<tr><td>{{index . 0}}</td><td>{{index . 1}}</td></tr>{{end}}</table>{{end}}
+</div></body></html>`))
+
+// CheatSheetHTML renders the key/description sections as a printable page.
+func CheatSheetHTML(title string, sections []CheatSheetSection) ([]byte, error) {
+	var b bytes.Buffer
+	err := cheatSheetTmpl.Execute(&b, struct {
+		Title, Date string
+		Sections    []CheatSheetSection
+	}{title, time.Now().Format("2 January 2006"), sections})
+	return b.Bytes(), err
+}
+
 // SetsListHTML renders a SetsListReport's sets as a clean, printable page.
 func SetsListHTML(d *ExportData) ([]byte, error) {
 	var b bytes.Buffer

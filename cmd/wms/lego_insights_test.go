@@ -80,6 +80,26 @@ func TestLowStockRoundTripThroughTheCLI(t *testing.T) {
 	}
 }
 
+func TestOptionalTogglesAndReportsState(t *testing.T) {
+	db := legoEnv(t)
+	seedCatalog(t, db)
+	if stdout, code := run(t, "lego", "optional", "3001"); code != 0 || !strings.Contains(stdout, "currently required") {
+		t.Fatalf("default state: code=%d out=%q", code, stdout)
+	}
+	if stdout, code := run(t, "lego", "optional", "3001", "on"); code != 0 || !strings.Contains(stdout, "marked optional") {
+		t.Fatalf("on: code=%d out=%q", code, stdout)
+	}
+	if stdout, code := run(t, "lego", "optional", "3001"); code != 0 || !strings.Contains(stdout, "currently optional") {
+		t.Fatalf("after on: code=%d out=%q", code, stdout)
+	}
+	if stdout, code := run(t, "lego", "optional", "3001", "off"); code != 0 || !strings.Contains(stdout, "marked required") {
+		t.Fatalf("off: code=%d out=%q", code, stdout)
+	}
+	if _, code := run(t, "lego", "optional", "3001", "sideways"); code != exitUsage {
+		t.Errorf("a bad word must be a usage error, got %d", code)
+	}
+}
+
 func TestImportPartsPlansFirstThenWritesOnce(t *testing.T) {
 	db := legoEnv(t)
 	seedCatalog(t, db)

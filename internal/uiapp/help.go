@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -69,6 +70,19 @@ func (a *App) helpView() string {
 	}
 	b.WriteString("\n" + t.Muted.Render("Press any key to close."))
 	return ui.RenderPanel(t, t.Brand, "Keys", b.String())
+}
+
+// CheatSheetSections assembles the printable cheat sheet (`wms lego help-sheet`) from
+// the exact same key/description pairs the in-app F1 help renders in helpView — one
+// section per screen kind, plus the always-shown global keys — so there is nothing
+// new to keep in sync when a key changes.
+func CheatSheetSections() []lego.CheatSheetSection {
+	return []lego.CheatSheetSection{
+		{Title: "Everywhere", Keys: globalHelpKeys},
+		{Title: "On a menu screen (numbered options)", Keys: helpKeys(&menuScreen{})},
+		{Title: "On a list screen", Keys: helpKeys(&tableScreen{})},
+		{Title: "On a form screen", Keys: helpKeys(&formScreen{})},
+	}
 }
 
 func padRight(s string, n int) string {

@@ -169,6 +169,53 @@ func newLegoSetMinCmd() *cobra.Command {
 	return cmd
 }
 
+// newLegoOptionalCmd marks a part number as optional (or required again): it stops
+// (or resumes) counting toward missing-parts totals and completion, in every set
+// that uses it. Stickers default to optional already (see lego.IsOptional); this is
+// for overriding that default, in either direction, for any part.
+func newLegoOptionalCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "optional <part_num> [on|off]",
+		Short:             "Mark a part optional, so it never counts as missing (default: on for stickers)",
+		Example:           "  wms lego optional 78256\n  wms lego optional 78256 on\n  wms lego optional 78256 off",
+		Args:              cobra.RangeArgs(1, 2),
+		ValidArgsFunction: completePartNum,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			partNum := args[0]
+			word := map[bool]string{true: "optional", false: "required"}
+			if len(args) == 1 {
+				cat := ""
+				if cp, _ := db.CatalogPart(partNum); cp != nil {
+					cat = cp.Category
+				}
+				optional, err := db.IsOptional(partNum, cat)
+				if err != nil {
+					return err
+				}
+				say(fmt.Sprintf("%s is currently %s.", partNum, word[optional]))
+				return emit(map[string]any{"part": partNum, "optional": optional})
+			}
+			on := args[1] == "on"
+			if !on && args[1] != "off" {
+				return usageError("say `on` or `off`")
+			}
+			if err := db.SetOptional(partNum, on); err != nil {
+				return err
+			}
+			say(ui.Status(t, true, fmt.Sprintf("%s marked %s.", partNum, word[on])))
+			return emit(map[string]any{"part": partNum, "optional": on})
+		},
+	}
+	return cmd
+}
+
 func newLegoStatsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stats",

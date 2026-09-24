@@ -5,6 +5,16 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- **Barcode badge sign-in**: a username can be swapped for a scanned (or typed) badge token at sign-on — the
+  password (and 2FA) is still required exactly as before. An unguessable, revocable token, never the literal
+  username. `wms access user badge <user> [--regenerate|--clear|--qr]`.
+- **Optional parts**: sticker sheets default to optional and never count toward missing parts or completion,
+  anywhere (Missing Parts report, stock-take totals, a set's INCOMPLETE flag) — on or off, even before you've
+  counted them. Any part can be marked optional or required, either way: **O** on the parts check screen, or
+  `wms lego optional <part> [on|off]`.
+- **Self-serve promotion**: `bash scripts/promote-dev.sh` merges chosen commits from `dev` into `main` and
+  deploys them live, gated on a full `wms preflight deploy` (tests, vet, staticcheck, gosec) and a typed
+  `CONFIRM` — no separate conversation needed to ship what's already been tried on the test instance.
 - **Reports**: printable "clean form" reports — missing parts (one set or every incomplete set), full collection, one or
   more sets' full parts lists, and stock-check history — plus a blank printable stock-check sheet. `wms lego report
   missing|collection|set|history`, `wms lego stocksheet`; Set Workshop → **7 Reports** in the TUI.
@@ -33,6 +43,10 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   retiring soon among your owned sets and BrickLink price watches, or just browses everything. Fail-soft by design —
   a manual CSV import is always available if the live sheet is ever unreachable. `wms lego retirement
   refresh|import|list`; Set Workshop → **8 Retiring soon** in the TUI.
+- **Onboarding**: a first-run tour (three short screens) on an account's first sign-in, shown once and skippable
+  (Esc); empty-state hints on the screens most likely to be genuinely empty for a new account (Set Workshop, Missing
+  Parts, Orders, Owned Parts, Reports); and a printable key cheat sheet built from the same F1 help content —
+  `wms lego help-sheet`, Set Workshop → 7 Reports → 8 Key cheat sheet.
 
 ### Fixed
 - **Web terminal**: switching tabs or reconnecting no longer asks for 2FA again or loses your place — the session now

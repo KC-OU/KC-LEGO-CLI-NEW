@@ -22,6 +22,31 @@ const scrMyTheme = "my_theme"
 
 type userPref struct {
 	Theme string `json:"theme,omitempty"`
+	Tour  bool   `json:"tour,omitempty"` // has this user seen the first-run tour (see tour.go)?
+}
+
+func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }
+
+// markTourSeen sets the tour flag without disturbing the user's theme choice — a
+// read-modify-write, not a replace, unlike savePref's "the whole pref is the theme".
+func markTourSeen(user string) error {
+	path := config.Get(config.UserPrefsFile)
+	m := loadPrefs()
+	p := m[user]
+	p.Tour = true
+	m[user] = p
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func loadPrefs() map[string]userPref {

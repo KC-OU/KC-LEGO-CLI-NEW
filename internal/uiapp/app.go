@@ -67,6 +67,7 @@ const (
 	scrLegoDetail          = "lego_detail"
 	scrLegoMissingAsk      = "lego_missing_ask"
 	scrLegoMissing         = "lego_missing"
+	scrTour                = "tour"
 )
 
 type undoEntry struct {
@@ -101,6 +102,7 @@ type App struct {
 	paletteInput  string
 	paletteSel    int
 	helpOpen      bool             // the F1 / ? key cheat sheet is showing (see help.go)
+	tourPage      int              // which first-run tour page is showing (see tour.go)
 	now           func() time.Time // the clock for idle checks; tests replace it
 
 	screens map[string]screenModel

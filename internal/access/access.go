@@ -10,6 +10,8 @@
 package access
 
 import (
+	"crypto/rand"
+	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,6 +102,38 @@ type User struct {
 	IdleMin     *int              `json:"idle_minutes,omitempty"`
 	MaxHours    *int              `json:"max_session_hours,omitempty"`
 	Note        string            `json:"note,omitempty"`
+	// BadgeToken is an unguessable string printed on a barcode badge — never the
+	// literal username, so a lost badge is revoked by reprinting, not by changing
+	// a real credential. See NewBadgeToken and Policy.FindByBadge.
+	BadgeToken string `json:"badge_token,omitempty"`
+}
+
+// NewBadgeToken generates a random opaque badge token: the same 160-bit base32
+// shape as internal/exports' share-link tokens, so nothing about it can be
+// guessed from the username it belongs to.
+func NewBadgeToken() (string, error) {
+	var raw [20]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw[:]), nil
+}
+
+// FindByBadge resolves a scanned badge token to the username it belongs to — never
+// the "source:username" key, since a badge only ever substitutes the username
+// field, so this hands back exactly what the login form already accepts there.
+func (p *Policy) FindByBadge(token string) (username string, ok bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	for key, u := range p.Users {
+		if u.BadgeToken != "" && u.BadgeToken == token {
+			_, name, _ := strings.Cut(key, ":")
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // Settings are the global timings; nil means "use the config key" (the env/settings value).

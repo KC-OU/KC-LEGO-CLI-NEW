@@ -119,7 +119,7 @@ func newPreflightCmd() *cobra.Command {
 				// changed every run would defeat Go's test cache.
 				Trap: preflightTrap(home),
 			}
-			for _, s := range []string{"deploy.sh", "publish.sh"} {
+			for _, s := range []string{"deploy.sh", "publish.sh", "promote-dev.sh"} {
 				if p := filepath.Join(repo, "scripts", s); fileExists(p) {
 					e.Scripts = append(e.Scripts, p)
 				}

@@ -26,6 +26,7 @@ func signOn(app *App, user, ip string) {
 	app.resetSession()
 	app.requireTwoFA, app.transport, app.remoteAddr = true, "telnet", ip
 	app.session = &auth.Session{Source: "partdb", Username: user, Role: "PartDB User", Permissions: &wmsdb.Permissions{CanWrite: true, Menus: []string{"*"}}}
+	_ = markTourSeen(user) // this suite tests access control, not onboarding
 	continueSignOn(app, app.session)
 }
 

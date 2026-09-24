@@ -29,10 +29,16 @@ type CheckLine struct {
 	ColorName, BLID             string
 	BLColor                     int
 	Need, Have, Extra           int
+	Optional                    bool // doesn't count toward missing/completion totals — see DB.IsOptional
 }
 
-// Missing is how many of the line the set is short.
-func (l CheckLine) Missing() int { return max(0, l.Need-l.Have) }
+// Missing is how many of the line the set is short — always 0 for an optional line.
+func (l CheckLine) Missing() int {
+	if l.Optional {
+		return 0
+	}
+	return max(0, l.Need-l.Have)
+}
 
 type SetCheck struct {
 	ID                   int64
@@ -46,10 +52,13 @@ type SetCheck struct {
 // Totals are the check's piece counts.
 func (c *SetCheck) Totals() (pieces, have, missing, extra, missingLines int) {
 	for _, l := range c.Lines {
+		extra += l.Extra
+		if l.Optional { // stickers etc. don't count toward completion — see DB.IsOptional
+			continue
+		}
 		pieces += l.Need
 		have += min(l.Have, l.Need)
 		missing += l.Missing()
-		extra += l.Extra
 		if l.Missing() > 0 {
 			missingLines++
 		}
@@ -101,8 +110,9 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 			continue
 		}
 		seen[[2]any{it.PartNum, it.ColorID}] = len(c.Lines)
+		optional, _ := d.IsOptional(it.PartNum, cat)
 		c.Lines = append(c.Lines, CheckLine{PartNum: it.PartNum, PartName: it.PartName, Category: cat, ColorID: it.ColorID,
-			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n})
+			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n, Optional: optional})
 	}
 	sort.SliceStable(c.Lines, func(i, j int) bool {
 		if c.Lines[i].ColorName != c.Lines[j].ColorName {
@@ -146,6 +156,7 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 		if err := rows.Scan(&l.PartNum, &l.PartName, &l.Category, &l.ColorID, &l.ColorName, &l.BLID, &l.BLColor, &l.Need, &l.Have, &l.Extra); err != nil {
 			return nil, err
 		}
+		l.Optional, _ = d.IsOptional(l.PartNum, l.Category) // recomputed fresh, in case it changed since this line was saved
 		c.Lines = append(c.Lines, l)
 	}
 	return c, rows.Err()

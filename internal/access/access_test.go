@@ -150,3 +150,36 @@ func TestConcurrentUpdates(t *testing.T) {
 		t.Errorf("lost updates: %d users", len(p.Users))
 	}
 }
+
+func TestBadgeTokenResolvesToTheRealUsernameNotTheKey(t *testing.T) {
+	tok1, err := NewBadgeToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok2, _ := NewBadgeToken()
+	if tok1 == "" || tok1 == tok2 {
+		t.Fatalf("tokens must be non-empty and unique: %q %q", tok1, tok2)
+	}
+	if strings.Contains(strings.ToLower(tok1), "alex") {
+		t.Error("a badge token must not embed the username")
+	}
+	p := &Policy{Users: map[string]*User{
+		Key("partdb", "alex"):   {BadgeToken: tok1},
+		Key("modernwms", "sam"): {BadgeToken: tok2},
+	}}
+	if name, ok := p.FindByBadge(tok1); !ok || name != "alex" {
+		t.Errorf("FindByBadge(tok1) = %q, %v", name, ok)
+	}
+	if name, ok := p.FindByBadge(tok2); !ok || name != "sam" {
+		t.Errorf("FindByBadge(tok2) = %q, %v", name, ok)
+	}
+	if _, ok := p.FindByBadge("not-a-real-token"); ok {
+		t.Error("an unknown token must not resolve to anyone")
+	}
+	if _, ok := p.FindByBadge(""); ok {
+		t.Error("an empty token must not resolve to anyone")
+	}
+	if _, ok := p.FindByBadge("alex"); ok {
+		t.Error("the plain username itself must not work as a badge")
+	}
+}

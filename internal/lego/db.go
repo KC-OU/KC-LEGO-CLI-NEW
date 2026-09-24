@@ -198,6 +198,11 @@ func ensureSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
 			file TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_report_archive_creator ON report_archive(created_by, id)`,
+		// An explicit override of whether a part counts toward missing/completion totals
+		// (see IsOptional): a part with no row here defaults to optional only if its
+		// category is Stickers, so every sticker is covered with nothing to migrate, and
+		// toggling any part (sticker or not) here overrides that default either way.
+		`CREATE TABLE IF NOT EXISTS part_optional (part_num TEXT PRIMARY KEY, optional INTEGER NOT NULL)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

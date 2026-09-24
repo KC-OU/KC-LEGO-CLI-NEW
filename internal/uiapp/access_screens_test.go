@@ -97,6 +97,25 @@ func TestAdminCannotLockThemselvesOut(t *testing.T) {
 	}
 }
 
+// Editing a user through the form rebuilds the User record from the fields it
+// shows — which does not include the badge token (that's issued from `wms access
+// user badge`, not typed into a form) — so a save must not silently wipe it.
+func TestEditingAUserPreservesTheirBadgeToken(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:exportbot"] = &access.User{Groups: []string{"exporter"}, BadgeToken: "BADGE123XYZ"}
+	})
+	app.loadPolicy()
+	app.accessEdit = &accessEdit{User: "partdb:exportbot"}
+	app.goTo(scrAccessUserEdit)
+	app.screens[scrAccessUserEdit].(*formScreen).submit(app, []string{"exporter", "default", "", "all", "", "", "", "", "renamed note"})
+	p, _ := access.Load()
+	u := p.Users["partdb:exportbot"]
+	if u == nil || u.BadgeToken != "BADGE123XYZ" {
+		t.Fatalf("saving the edit form must keep the badge token: %+v (%s)", u, app.message)
+	}
+}
+
 func TestAccessScreensFit(t *testing.T) {
 	app := adminApp(t)
 	for _, id := range []string{scrAccessHub, scrAccessGroups, scrAccessUsers, scrAccessSettings, scrAccessGrid} {

@@ -89,6 +89,7 @@ nav:
       - Security audit: guides/security-audit.md
       - Access control: guides/access-control.md
       - "Shipping: preflight, deploy, publish": guides/shipping.md
+      - Test instance: guides/test-instance.md
   - Reference:
       - Settings: reference/config.md
       - Command reference: reference/cli/index.md
