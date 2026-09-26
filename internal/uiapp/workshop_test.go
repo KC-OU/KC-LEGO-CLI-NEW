@@ -38,14 +38,14 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	if !strings.Contains(v, "Parts check: 75192-1") || !strings.Contains(v, "16 pieces") || !strings.Contains(v, "COMPLETE") {
 		t.Fatalf("check screen:\n%s", v)
 	}
-	// Lines are sorted by colour: Blue 3001 x6, then Red 3001 x10.
+	// Lines are colour ordered (red, blue, then alphabetical): Red 3001 x10, then Blue 3001 x6.
 	typeKeys(app, "m")
 	typeKeys(app, "2")
-	key(app, tea.KeyEnter) // 2 blue missing
+	key(app, tea.KeyEnter) // 2 red missing
 	key(app, tea.KeyDown)
 	typeKeys(app, "e")
 	typeKeys(app, "3")
-	key(app, tea.KeyEnter) // 3 red extra
+	key(app, tea.KeyEnter) // 3 blue extra
 	if v = plain(app.View()); !strings.Contains(v, "INCOMPLETE — 2 missing") || !strings.Contains(v, "3 extra") {
 		t.Fatalf("after marking:\n%s", v)
 	}
@@ -53,12 +53,12 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	typeKeys(app, "z")
 	typeKeys(app, "3001")
 	key(app, tea.KeyEnter)
-	if v = plain(app.View()); !strings.Contains(v, "3001 Blue — 5 of 6") {
+	if v = plain(app.View()); !strings.Contains(v, "3001 Red — 9 of 10") {
 		t.Fatalf("scanner should add one to the first short line:\n%s", v)
 	}
 	key(app, tea.KeyEsc)
 	typeKeys(app, "u") // undo the scan
-	typeKeys(app, "f")
+	pressAndDrain(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	if app.cur == scrSetCheck || !strings.Contains(app.message, "INCOMPLETE, 2 missing") || !strings.Contains(app.message, "Part-DB: 2 line(s)") {
 		t.Fatalf("finish: cur=%q msg=%q", app.cur, app.message)
 	}
@@ -66,7 +66,7 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	if st.MissingQty != 2 || st.LastCheck.CheckedBy != "admin" || st.PDBLocationID == 0 {
 		t.Fatalf("state = %+v", st)
 	}
-	if p, _ := app.legoDB.GetOwnedPart("3001", 4, ""); p == nil || p.Qty != 3 {
+	if p, _ := app.legoDB.GetOwnedPart("3001", 1, ""); p == nil || p.Qty != 3 {
 		t.Fatalf("extras should be loose parts: %+v", p)
 	}
 	var lots int
@@ -74,11 +74,22 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	if lots != 2 {
 		t.Fatalf("Part-DB lots in the set's location = %d", lots)
 	}
+	if len(app.popups) != 1 || !strings.Contains(app.popups[0].Body, "75192-1 is missing 2 part(s)") {
+		t.Fatalf("finishing short should queue an on-screen popup: %+v", app.popups)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}) // any key but Q: must not dismiss it
+	if len(app.popups) != 1 {
+		t.Fatal("only Q should dismiss the popup")
+	}
+	typeKeys(app, "q") // dismiss it
+	if len(app.popups) != 0 {
+		t.Fatal("Q should dismiss the popup")
+	}
 
 	// Missing parts → order → received → complete.
 	app.ws().set = "75192-1"
 	app.goTo(scrSetMissing)
-	if v = plain(app.View()); !strings.Contains(v, "3001") || !strings.Contains(v, "Blue") {
+	if v = plain(app.View()); !strings.Contains(v, "3001") || !strings.Contains(v, "Red") {
 		t.Fatalf("missing list:\n%s", v)
 	}
 	typeKeys(app, "o")
@@ -92,6 +103,7 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	id := app.ws().orderID
 	setOrderStatus(app, id, "shipped")
 	setOrderStatus(app, id, "received")
+	drainPending(app)
 	if !strings.Contains(app.message, "Set 75192-1 is now COMPLETE") {
 		t.Fatalf("receive: %q", app.message)
 	}

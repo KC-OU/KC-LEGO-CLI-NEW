@@ -151,7 +151,12 @@ type Policy struct {
 	Groups   map[string]*Group `json:"groups"`
 	Users    map[string]*User  `json:"users"`
 	Settings Settings          `json:"settings"`
-	Seeded   bool              `json:"seeded"` // the starter groups were written once; deleting one keeps it deleted
+	Seeded   bool              `json:"seeded"` // legacy: true once seed() has ever run; kept for old files, see SeededGroups
+	// SeededGroups is which starter groups have ever been offered — so a starter
+	// added to the code later (like "checker") still reaches an install that was
+	// already seeded, without resurrecting one you deliberately deleted (which
+	// stays in here even though it's gone from Groups).
+	SeededGroups []string `json:"seeded_groups,omitempty"`
 }
 
 // Key is how a user is stored: "source:username" (lower case), like the 2FA store.
@@ -283,13 +288,17 @@ func grant(perms ...string) map[string]string {
 	return m
 }
 
-// seed adds the starter groups the first time; after that, groups you edit or
-// delete stay as you left them.
+// originalStarterGroups is exactly what seed() offered before SeededGroups
+// existed — used once, below, to migrate an already-seeded file (which only has
+// the old bare Seeded flag) without wrongly marking a starter added since then
+// (like "checker") as already offered.
+var originalStarterGroups = []string{"admin", "operator", "viewer", "builder", "exporter", "stock-clerk"}
+
+// seed adds each starter group the first time it exists in the code, whichever
+// install first sees it; after that, one you edit or delete stays as you left
+// it, and a later addition to this list still reaches your file once, without
+// resurrecting one you deleted.
 func seed(p *Policy) {
-	if p.Seeded {
-		return
-	}
-	p.Seeded = true
 	starters := map[string]*Group{
 		"admin": {Description: "everything", Perms: grant(All()...)},
 		"operator": {Description: "day-to-day stock, parts and LEGO work", Perms: grant(
@@ -304,12 +313,38 @@ func seed(p *Policy) {
 		"stock-clerk": {Description: "stock checks, Part-DB view, LEGO part/set search and export", Restricted: true, Perms: grant(
 			"lego.view", "lego.search", "lego.export", "exports.create", "exports.download", "partdb.view", "stock.view", "stock.check",
 			"sets.stocktake", "orders.view", "labels.print")},
+		"checker": {Description: "checks new sets' parts, orders and missing-parts exports, records delivered parts", Restricted: true, Perms: grant(
+			"lego.view", "lego.search", "lego.export", "sets.check", "orders.view", "orders.manage",
+			"exports.create", "exports.download", "stock.check", "stock.adjust", "partdb.view")},
+	}
+	already := map[string]bool{}
+	for _, n := range p.SeededGroups {
+		already[n] = true
+	}
+	if p.Seeded && len(p.SeededGroups) == 0 {
+		// An install from before SeededGroups existed: everything the old code
+		// ever offered counts as already seeded (so it isn't resurrected here),
+		// but nothing added to `starters` since then does yet.
+		for _, n := range originalStarterGroups {
+			already[n] = true
+		}
 	}
 	for name, g := range starters {
+		if already[name] {
+			continue
+		}
 		if _, ok := p.Groups[name]; !ok {
 			p.Groups[name] = g
 		}
+		already[name] = true
 	}
+	p.Seeded = true
+	names := make([]string, 0, len(already))
+	for n := range already {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	p.SeededGroups = names
 }
 
 // ---- evaluation ----

@@ -103,7 +103,7 @@ func TestRefreshStopsAtTheFirstErrorAndKeepsWhatItGot(t *testing.T) {
 	if !errors.Is(err, errBudgetTest) || got+unk != 1 || len(f.calls) != 2 {
 		t.Fatalf("fetched=%d unknown=%d err=%v calls=%v", got, unk, err, f.calls)
 	}
-	if p, _ := d.getPrice("PART", "9999", 0, "U"); p == nil {
+	if p, _ := d.getPrice("PART", "3001", 5, "U"); p == nil {
 		t.Errorf("what was learned before the error is kept")
 	}
 	if p, _ := d.getPrice("PART", "3023", 7, "U"); p != nil {

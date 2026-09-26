@@ -30,6 +30,11 @@ Passwords are still checked by ModernWMS and Part-DB; this decides what a signed
 - A user **with no entry** keeps their ModernWMS role's access, exactly as before. Nothing changes until you add someone.
 - What you can't use is **hidden**. A key pressed anyway says `ACCESS DENIED — needs the lego.edit permission (not granted)` and is written
   to the audit log (`DENIED_PERMISSION`).
+- **A user is keyed `source:username`** (e.g. `partdb:checker`, `modernwms:checker`) — and **if the same username exists in both
+  ModernWMS and Part-DB, signing in with it always resolves to the ModernWMS account** (`wms-go's` auth tries ModernWMS first).
+  Set the policy entry on **that** one (`--source modernwms`, the default), or the exemption/permissions you set on the Part-DB
+  entry will simply never be read — `wms users list` shows both sources at once, so you can check which one you actually have
+  before setting up a policy entry for it.
 
 ## Starter groups
 
@@ -41,8 +46,13 @@ Passwords are still checked by ModernWMS and Part-DB; this decides what a signed
 | `builder` | LEGO only: browse, missing parts, what to build | yes |
 | `exporter` | LEGO view plus exports and downloads | yes |
 | `stock-clerk` | stock checks, Part-DB view, LEGO part/set search and export | yes |
+| `checker` | checks new sets' parts, orders and missing-parts exports, records delivered parts | yes |
 
 Edit any of them (or make your own) in *Admin → Access Control → Groups*, or with `wms access groups set`.
+
+A group added to this list later (like `checker`) still reaches an install that already had a policy file — it's added once, the
+next time anything writes to the policy, same as a brand-new install. A starter group you've deliberately deleted is never
+brought back by this, whichever install it's on.
 
 ## 2FA, sign-in limits and timeouts
 

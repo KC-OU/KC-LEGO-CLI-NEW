@@ -244,7 +244,6 @@ func (s *detailScreen) HandleKey(app *App, msg tea.KeyMsg) {
 			return
 		}
 		fetchDetailPrice(app)
-		s.OnEnter(app)
 	case "x":
 		startExport(app, detailExportJob(app.detail, s.page))
 	case "k":
@@ -262,7 +261,9 @@ func (s *detailScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	}
 }
 
-// fetchDetailPrice asks BrickLink for this item's price (one call, cached a day) and stores it.
+// fetchDetailPrice asks BrickLink for this item's price (one call, cached a day) and
+// stores it — off the key-handling path via startBusy, so a slow BrickLink call can't
+// freeze the screen; detailPriceFetched refreshes the page once the price is stored.
 func fetchDetailPrice(app *App) {
 	c := app.blClient()
 	if !c.Enabled() {
@@ -279,20 +280,36 @@ func fetchDetailPrice(app *App) {
 	} else if req.ColorID >= 0 {
 		blColor, _ = app.legoDB.BLColorFor(req.ColorID)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	cond := strings.ToUpper(config.Get(config.BricklinkCondition))
-	avg, cur, found, err := (priceAdapter{c}).AvgPrice(ctx, string(typ), no, blColor, cond)
-	if err != nil {
-		app.setMsg(blMessage(err, req.Kind, req.Num), true)
+	app.startBusy("Fetching BrickLink price…", func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		avg, cur, found, err := (priceAdapter{c}).AvgPrice(ctx, string(typ), no, blColor, cond)
+		if err != nil {
+			return detailPriceFetchedMsg{err: blMessage(err, req.Kind, req.Num)}
+		}
+		_ = app.legoDB.StorePrice(string(typ), no, blColor, cond, avg, cur, !found)
+		if !found {
+			return detailPriceFetchedMsg{err: "BrickLink has no sales for this item in its price window."}
+		}
+		return detailPriceFetchedMsg{msg: fmt.Sprintf("BrickLink average sold price: %.4f %s.", avg, cur)}
+	})
+}
+
+// detailPriceFetchedMsg reports the background BrickLink price fetch fetchDetailPrice
+// kicked off; handled in App.Update.
+type detailPriceFetchedMsg struct{ msg, err string }
+
+func (a *App) detailPriceFetched(m detailPriceFetchedMsg) {
+	a.stopBusy()
+	if scr, ok := a.screens[scrLegoDetail]; ok { // refresh so the newly stored price shows
+		scr.OnEnter(a)
+	}
+	if m.err != "" {
+		a.setMsg(m.err, true)
 		return
 	}
-	_ = app.legoDB.StorePrice(string(typ), no, blColor, cond, avg, cur, !found)
-	if !found {
-		app.setMsg("BrickLink has no sales for this item in its price window.", true)
-		return
-	}
-	app.setMsg(fmt.Sprintf("BrickLink average sold price: %.4f %s.", avg, cur), false)
+	a.setMsg(m.msg, false)
 }
 
 // priceAdapter prices through BrickLink for the lego package's PriceFetcher shape.

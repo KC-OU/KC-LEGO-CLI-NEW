@@ -212,7 +212,7 @@ var screenPerm = map[string]string{
 	scrLegoMissingAsk: "lego.view", scrLegoMissing: "lego.view", scrLegoBuild: "lego.view", scrLegoHistory: "lego.view",
 	scrLegoDetailAsk: "lego.view", scrLegoDetail: "lego.view", scrLegoBLAsk: "bricklink.view", scrLegoAchievements: "lego.view",
 	scrExport: "exports.create", scrUsers: "users.view", scrSettingsHub: "settings.view", scrSettingsTheme: "settings.edit",
-	scrSettingsBrickLink: "settings.edit", scrMyTheme: "",
+	scrSettingsBrickLink: "settings.edit", scrMyTheme: "", scrMyLoading: "",
 	scrAccessHub: "access.manage", scrAccessGroups: "access.manage", scrAccessGroupNew: "access.manage", scrAccessGrid: "access.manage",
 	scrAccessUsers: "access.manage", scrAccessUserNew: "access.manage", scrAccessUserEdit: "access.manage",
 	scrAccessSettings: "access.manage", scrAccessCheckAsk: "access.manage", scrAccessCheck: "access.manage",

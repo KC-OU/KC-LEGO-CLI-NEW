@@ -23,17 +23,32 @@ const scrMyTheme = "my_theme"
 type userPref struct {
 	Theme string `json:"theme,omitempty"`
 	Tour  bool   `json:"tour,omitempty"` // has this user seen the first-run tour (see tour.go)?
+	// LoadingOff turns off the spinner startBusy shows for genuinely slow calls (sign-on,
+	// Part-DB sync, price look-ups) — inverted so the zero value (an absent/older prefs
+	// file) means "on", matching the on-by-default choice, without a *bool.
+	LoadingOff bool `json:"loading_off,omitempty"`
 }
 
 func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }
 
-// markTourSeen sets the tour flag without disturbing the user's theme choice — a
-// read-modify-write, not a replace, unlike savePref's "the whole pref is the theme".
-func markTourSeen(user string) error {
+// loadingEnabled is whether user should see startBusy's spinner — "" (not yet signed
+// in, e.g. during the sign-on call itself) always shows one, since there's no
+// authenticated identity yet to look a preference up by.
+func loadingEnabled(user string) bool {
+	if user == "" {
+		return true
+	}
+	return !loadPrefs()[user].LoadingOff
+}
+
+// savePrefField writes one field of user's pref via a read-modify-write, preserving
+// the rest — the same shape markTourSeen already used just for Tour, generalised so
+// setLoadingPref (loading_pref.go) doesn't duplicate it.
+func savePrefField(user string, set func(p *userPref)) error {
 	path := config.Get(config.UserPrefsFile)
 	m := loadPrefs()
 	p := m[user]
-	p.Tour = true
+	set(&p)
 	m[user] = p
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -47,6 +62,11 @@ func markTourSeen(user string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// markTourSeen sets the tour flag without disturbing the user's other preferences.
+func markTourSeen(user string) error {
+	return savePrefField(user, func(p *userPref) { p.Tour = true })
 }
 
 func loadPrefs() map[string]userPref {

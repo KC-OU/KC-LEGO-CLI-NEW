@@ -152,7 +152,9 @@ func (s *selectList) Body(app *App) string {
 			hint = s.emptyHint
 		}
 	}
-	return ui.RenderColumns(t, append([]string{""}, header...), marked, title) + "\n" + t.Muted.Render(ansi.Truncate(hint, t.W(), "…"))
+	cols := append([]string{""}, header...)
+	body := ui.RenderColumns(t, cols, marked, title)
+	return body + "\n" + t.Muted.Render(ansi.Truncate(hint, t.W(), "…"))
 }
 
 func (s *selectList) HandleKey(app *App, msg tea.KeyMsg) {

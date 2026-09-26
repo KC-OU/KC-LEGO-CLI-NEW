@@ -64,6 +64,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrSettingsPartDB:      settingsPartDBScreen(),
 		scrSettingsTheme:       &themeScreen{admin: true},
 		scrMyTheme:             &themeScreen{},
+		scrMyLoading:           loadingPrefScreen(),
 		scrSettingsBrickLink:   settingsBrickLinkScreen(),
 		scrLegoBLAsk:           legoBLAskScreen(),
 		scrLegoBLResult:        legoBLResultScreen(),

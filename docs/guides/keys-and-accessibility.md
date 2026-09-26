@@ -32,6 +32,20 @@ through the same navigation as the menus, so a screen your role may not use boun
   theme), `nord`, `gruvbox`, `catppuccin`, `tokyo-night`, `ibm-3270`, `matrix` and `lego`.
 - After sign-on a short **themed animation** plays (an HEV boot for half-life, a brick for lego, falling glyphs for matrix); any key
   skips it and `MODERNWMS_TUI_SPLASH=0` turns it off.
+- **My loading indicator** (also in the palette, next to *My display theme*): a spinner on the message line for calls that actually
+  take time — signing on, a Part-DB sync, a BrickLink price look-up. On by default; turning it off only hides the spinner text, it
+  never brings back a frozen-looking screen — those calls always run in the background either way.
+- Hub and section menus (Main Menu, Set Workshop, LEGO Collection, ...) are shown in a rounded, theme-coloured panel, the same one
+  the sign-on card uses. A menu with too many options to fit the panel's two extra border lines on your terminal falls back to the
+  plain list automatically (e.g. the LEGO Collection hub, at 80x24) — nothing is ever cut off to make room for the border.
+- **Every parts list you browse** — Owned Parts, a set's parts check, and Missing Parts & Prices in Set Workshop — is sorted by
+  colour (black, red, blue, then alphabetically), then by part category within each colour, so a specific part is easy to find.
+  There's no banner row breaking it up: real part categories are far more granular than "Bricks"/"Plates" (Rebrickable splits
+  them down to things like "Technic Axles" and "Technic Beams"), so a banner per category turned into more bars than parts —
+  the plain table with the improved order reads better. (A set's Missing Parts *report* stays sorted by biggest shortfall
+  first, for shopping — that's deliberate, not a screen this missed.)
+- A set coming up short on a check also **pops up on screen** while you're using the app (not just the external notification it
+  already sent) — **Q** dismisses it; nothing else does, and a second one queues rather than replacing or being lost.
 - **`NO_COLOR=1`** turns colour off entirely; pictures switch to ASCII.
 - In the high-contrast, colour-blind and no-colour modes **OK / FAIL / WARN are spelled out** beside the icons, and **LOW** is always
   spelled out, so meaning never depends on colour alone.

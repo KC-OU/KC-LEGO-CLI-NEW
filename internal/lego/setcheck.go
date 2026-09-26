@@ -114,12 +114,7 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 		c.Lines = append(c.Lines, CheckLine{PartNum: it.PartNum, PartName: it.PartName, Category: cat, ColorID: it.ColorID,
 			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n, Optional: optional})
 	}
-	sort.SliceStable(c.Lines, func(i, j int) bool {
-		if c.Lines[i].ColorName != c.Lines[j].ColorName {
-			return c.Lines[i].ColorName < c.Lines[j].ColorName
-		}
-		return c.Lines[i].PartNum < c.Lines[j].PartNum
-	})
+	sortLinesByColorThenCategory(c.Lines)
 	return c, nil
 }
 
@@ -146,7 +141,7 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 	c.StartedAt, _ = time.Parse(timeLayout, started)
 	c.FinishedAt, _ = time.Parse(timeLayout, finished)
 	rows, err := d.Query(`SELECT part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra
-		FROM set_check_lines WHERE check_id = ? ORDER BY color_name, part_num`, id)
+		FROM set_check_lines WHERE check_id = ?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +154,25 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 		l.Optional, _ = d.IsOptional(l.PartNum, l.Category) // recomputed fresh, in case it changed since this line was saved
 		c.Lines = append(c.Lines, l)
 	}
+	sortLinesByColorThenCategory(c.Lines)
 	return c, rows.Err()
+}
+
+// sortLinesByColorThenCategory is CheckLine's colour-then-category order (see
+// lego.LessColorThenCategory), with the part number as a final, fully deterministic
+// tiebreak — used by both NewCheck and GetCheck so a check's lines read the same
+// order whether freshly built or reloaded.
+func sortLinesByColorThenCategory(lines []CheckLine) {
+	sort.SliceStable(lines, func(i, j int) bool {
+		a, b := lines[i], lines[j]
+		if less := LessColorThenCategory(a.ColorName, a.Category, a.PartName, b.ColorName, b.Category, b.PartName); less {
+			return true
+		}
+		if LessColorThenCategory(b.ColorName, b.Category, b.PartName, a.ColorName, a.Category, a.PartName) {
+			return false
+		}
+		return a.PartNum < b.PartNum
+	})
 }
 
 // LastCheck is the set's most recent finished check (nil if never checked).

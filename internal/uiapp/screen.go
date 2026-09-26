@@ -66,6 +66,8 @@ type menuScreen struct {
 	deniedAction   string
 	caption        string                // classic style's line above the option list; "Select Option:" when empty
 	intro          func(app *App) string // shown under the options when non-empty (the LEGO hub's low-stock badge)
+
+	wrapped bool // the last Body() call put the menu in a panel (see below) — HandleClick needs to know
 }
 
 func (s *menuScreen) PanelID() string { return s.panelID }
@@ -88,7 +90,19 @@ func (s *menuScreen) Body(app *App) string {
 			body += "\n" + note
 		}
 	}
-	return body
+	// A rounded, theme-coloured panel — the same one the login screen's card uses —
+	// around every hub/section menu, classic and modern alike — unless the menu is
+	// already too tall for the terminal to take the panel's extra two border lines
+	// too, in which case it falls back to the plain, unwrapped list. HandleClick
+	// reads s.wrapped to know which one actually rendered.
+	panel := ui.RenderPanelRounded(app.theme, app.theme.Brand, "Menu", body)
+	const chrome = 8 + 2 // header band + blank/prompt — see tableScreen.capacity
+	if app.height > 0 && strings.Count(panel, "\n")+1 > max(3, app.height-chrome) {
+		s.wrapped = false
+		return body
+	}
+	s.wrapped = true
+	return panel
 }
 
 func (s *menuScreen) menuBody(app *App) string {
@@ -156,8 +170,12 @@ func (s *menuScreen) HandleKey(app *App, msg tea.KeyMsg) {
 // App.handleMouse): it triggers whichever option was drawn on bodyRow, the
 // same action a keypress on that option's Key would.
 func (s *menuScreen) HandleClick(app *App, bodyRow int) {
+	offset := 0
+	if s.wrapped {
+		offset = 1 // the panel's top border — see Body
+	}
 	for i, o := range s.shown(app) {
-		if bodyRow == ui.MenuOptionBodyRow(app.theme, i) {
+		if bodyRow == offset+ui.MenuOptionBodyRow(app.theme, i) {
 			o.Go(app)
 			return
 		}

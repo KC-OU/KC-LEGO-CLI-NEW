@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"time"
 )
 
@@ -109,13 +110,34 @@ func (d *DB) GetOwnedPart(partNum string, colorID int, colorName string) (*Owned
 	return p, nil
 }
 
-// OwnedPartsOf returns every colour of one part number you hold.
+// OwnedPartsOf returns every colour of one part number you hold, colour ordered
+// (see ColorSortKey).
 func (d *DB) OwnedPartsOf(partNum string) ([]OwnedPart, error) {
-	return d.queryOwned(`SELECT `+ownedCols+` FROM owned_parts WHERE part_num = ? ORDER BY color_name`, partNum)
+	out, err := d.queryOwned(`SELECT `+ownedCols+` FROM owned_parts WHERE part_num = ?`, partNum)
+	sortOwnedByColorThenCategory(out)
+	return out, err
 }
 
+// ListOwnedParts lists every owned part, colour then category ordered (see
+// ColorSortKey and LessColorThenCategory) — so a specific part is easy to find,
+// rather than scattered by whenever it happened to last be edited.
 func (d *DB) ListOwnedParts() ([]OwnedPart, error) {
-	return d.queryOwned(`SELECT ` + ownedCols + ` FROM owned_parts ORDER BY updated_at DESC`)
+	out, err := d.queryOwned(`SELECT ` + ownedCols + ` FROM owned_parts`)
+	sortOwnedByColorThenCategory(out)
+	return out, err
+}
+
+func sortOwnedByColorThenCategory(parts []OwnedPart) {
+	sort.SliceStable(parts, func(i, j int) bool {
+		a, b := parts[i], parts[j]
+		if less := LessColorThenCategory(a.ColorName, a.Category, a.Name, b.ColorName, b.Category, b.Name); less {
+			return true
+		}
+		if LessColorThenCategory(b.ColorName, b.Category, b.Name, a.ColorName, a.Category, a.Name) {
+			return false
+		}
+		return a.PartNum < b.PartNum // final tiebreak: fully deterministic
+	})
 }
 
 func (d *DB) queryOwned(q string, args ...any) ([]OwnedPart, error) {

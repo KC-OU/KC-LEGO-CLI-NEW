@@ -471,7 +471,6 @@ func setOrderStatus(app *App, id int64, st string) {
 		app.notifyEvent("order_shipped", strings.TrimSpace(desc+" has shipped"), tr)
 	case "received":
 		app.notifyEvent("order_received", desc+" has arrived", "")
-		pushReceived(app, id)
 	}
 	for _, set := range done {
 		msg += " Set " + set + " is now COMPLETE!"
@@ -479,6 +478,26 @@ func setOrderStatus(app *App, id int64, st string) {
 		app.emit("set_complete", map[string]any{"set": set})
 	}
 	app.setMsg(msg, false)
+	if st == "received" {
+		startPushReceived(app, id)
+	}
+}
+
+// orderPartDBSyncedMsg reports the background Part-DB push startPushReceived kicked
+// off; handled in App.Update. It carries nothing — pushReceived's own result was
+// never surfaced in the order-status message even before this ran in the background,
+// so there is nothing new to show, only the spinner to clear.
+type orderPartDBSyncedMsg struct{}
+
+func (a *App) orderPartDBSynced(orderPartDBSyncedMsg) { a.stopBusy() }
+
+// startPushReceived runs pushReceived off the key-handling path (see startBusy,
+// app.go) so a slow Part-DB sync can no longer freeze the screen.
+func startPushReceived(app *App, orderID int64) {
+	app.startBusy("Updating Part-DB…", func() tea.Msg {
+		pushReceived(app, orderID)
+		return orderPartDBSyncedMsg{}
+	})
 }
 
 // pushReceived updates Part-DB for the sets an order filled.
@@ -703,7 +722,7 @@ func lineReceiveScreen() screenModel {
 				return
 			}
 			app.audit.Log(app.userName(), "", "ORDER_RECEIVE", "SUCCESS", fmt.Sprintf("line %d x%d", app.ws().lineID, n))
-			pushReceived(app, app.ws().orderID)
+			orderID := app.ws().orderID
 			app.onBack()
 			msg := fmt.Sprintf("Received %d.", n)
 			if done != "" {
@@ -711,6 +730,7 @@ func lineReceiveScreen() screenModel {
 				app.notifyEvent("set_complete", "Set "+done+" is complete", "All missing parts have arrived.")
 			}
 			app.setMsg(msg, false)
+			startPushReceived(app, orderID)
 		},
 	}
 }

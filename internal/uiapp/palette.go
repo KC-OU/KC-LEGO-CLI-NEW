@@ -56,6 +56,7 @@ var paletteScreens = []struct{ Label, ID, Hint string }{
 	{"Settings: BrickLink API", scrSettingsBrickLink, "admin"},
 	{"Settings: Display theme", scrSettingsTheme, "admin — also everyone's default"},
 	{"My display theme", scrMyTheme, "13 themes, live preview"},
+	{"My loading indicator", scrMyLoading, "on/off — spinner for sign-on, Part-DB sync, price look-ups"},
 	{"Access control", scrAccessHub, "admin — permissions, 2FA, timeouts"},
 	{"Security settings", scrAccessSettings, "admin — 2FA window, idle, exports"},
 	{"LEGO achievements", scrLegoAchievements, "collection milestones"},

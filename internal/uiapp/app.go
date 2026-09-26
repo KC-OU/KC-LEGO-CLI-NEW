@@ -102,6 +102,7 @@ type App struct {
 	paletteInput  string
 	paletteSel    int
 	helpOpen      bool             // the F1 / ? key cheat sheet is showing (see help.go)
+	popups        []alertMsg       // queued on-screen popups (e.g. a set coming up short) — see alert.go
 	tourPage      int              // which first-run tour page is showing (see tour.go)
 	now           func() time.Time // the clock for idle checks; tests replace it
 
@@ -229,13 +230,26 @@ func spinnerTick() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
-// startBusy shows label on the message line while work runs on bubbletea's
-// own goroutine; work's returned tea.Msg reaches Update() like any other
-// message, so its handler is where the result gets applied and busy cleared.
+// startBusy runs work on bubbletea's own goroutine so the screen stays responsive —
+// work's returned tea.Msg reaches Update() like any other message, so its handler is
+// where the result gets applied and busy cleared. This always happens, whatever the
+// user's loading-indicator preference: that preference only decides whether label
+// actually shows, spinning, on the message line while it runs — turning it off can
+// never bring back a frozen-looking screen, only the spinner text. "" (not yet signed
+// in, e.g. during the sign-on call itself) always shows it: there's no preference to
+// look up yet.
 func (a *App) startBusy(label string, work tea.Cmd) {
-	a.busy = label
-	a.busyFrame = 0
-	a.pendingCmd = tea.Batch(work, spinnerTick())
+	cmds := []tea.Cmd{work}
+	user := ""
+	if a.session != nil {
+		user = a.session.Username
+	}
+	if loadingEnabled(user) {
+		a.busy = label
+		a.busyFrame = 0
+		cmds = append(cmds, spinnerTick())
+	}
+	a.pendingCmd = tea.Batch(cmds...)
 }
 
 func (a *App) stopBusy() { a.busy = "" }
@@ -306,6 +320,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if a.closeHelpOn(msg) {
 		return a, nil
 	}
+	if a.closeAlertOn(msg) {
+		return a, nil
+	}
 	if km, ok := msg.(tea.KeyMsg); ok && a.paletteOpen && a.authed {
 		a.paletteKey(km)
 		return a, nil
@@ -338,6 +355,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if done, ok := msg.(pricesFetchedMsg); ok {
 		a.pricesFetched(done)
+	}
+	if done, ok := msg.(orderPartDBSyncedMsg); ok {
+		a.orderPartDBSynced(done)
+	}
+	if done, ok := msg.(checkFinishedMsg); ok {
+		a.checkFinished(done)
+	}
+	if done, ok := msg.(detailPriceFetchedMsg); ok {
+		a.detailPriceFetched(done)
 	}
 	if done, ok := msg.(discordSentMsg); ok {
 		a.discordSent(done)
@@ -377,6 +403,9 @@ func (a *App) View() string {
 	}
 	if a.helpOpen && a.authed {
 		return a.helpView()
+	}
+	if len(a.popups) > 0 && a.authed {
+		return a.alertView()
 	}
 	if a.paletteOpen && a.authed {
 		return a.paletteView()

@@ -25,7 +25,7 @@ func TestSeedAndEffective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Groups) != 6 {
+	if len(p.Groups) != 7 {
 		t.Fatalf("groups = %d", len(p.Groups))
 	}
 	c := p.Effective("partdb", "clerk")
@@ -98,6 +98,71 @@ func TestValidateRefusesPrivilegedWithout2FA(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Errorf("an exempt exporter is fine: %v", err)
+	}
+}
+
+func TestCheckerGroupIsSafeFor2FAExempt(t *testing.T) {
+	tmpPolicy(t)
+	if _, err := Update(func(p *Policy) error {
+		p.Users["partdb:checker"] = &User{Groups: []string{"checker"}, TwoFA: TwoFAExempt}
+		return nil
+	}); err != nil {
+		t.Fatalf("an exempt checker should be accepted: %v", err)
+	}
+	p, _ := Load()
+	c := p.Effective("partdb", "checker")
+	for _, want := range []string{"sets.check", "orders.view", "orders.manage", "exports.create", "exports.download", "stock.check", "stock.adjust", "partdb.view", "lego.view", "lego.export"} {
+		if !c.Can(want) {
+			t.Errorf("checker should have %s", want)
+		}
+	}
+	for _, priv := range Privileged {
+		if c.Can(priv) {
+			t.Errorf("checker must not hold the privileged permission %s", priv)
+		}
+	}
+}
+
+// TestANewStarterGroupReachesAnAlreadySeededFile reproduces exactly what an
+// install seeded before "checker" existed in the code was stuck with: seed()
+// used to return immediately once Seeded was true, so a group added to the
+// starters map later never showed up there at all, however many times the
+// policy was reloaded. It must now arrive once, without resurrecting a starter
+// that install had deliberately deleted.
+func TestANewStarterGroupReachesAnAlreadySeededFile(t *testing.T) {
+	tmpPolicy(t)
+	// A file exactly like one seeded by the old code, before SeededGroups
+	// existed and before "checker" was a starter: bare Seeded=true, the
+	// original six groups, "exporter" deliberately deleted.
+	legacy := &Policy{Seeded: true, Groups: map[string]*Group{}, Users: map[string]*User{}}
+	for _, n := range originalStarterGroups {
+		if n != "exporter" {
+			legacy.Groups[n] = &Group{Description: "old"}
+		}
+	}
+	if err := save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Groups["checker"]; !ok {
+		t.Error("a starter group added to the code since must still reach an already-seeded file")
+	}
+	if _, ok := p.Groups["exporter"]; ok {
+		t.Error("a starter you deliberately deleted must not come back just because a new one was added")
+	}
+	if g := p.Groups["admin"]; g == nil || g.Description != "old" {
+		t.Errorf("an existing starter must be left exactly as it was, not reset: %+v", g)
+	}
+	// Reloading again must not add "exporter" back either, or duplicate anything.
+	p2, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p2.Groups["exporter"]; ok {
+		t.Error("exporter must still be gone after a second load")
 	}
 }
 

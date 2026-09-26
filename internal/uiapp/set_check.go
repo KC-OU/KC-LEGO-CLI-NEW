@@ -24,11 +24,12 @@ import (
 const scrSetCheck = "set_check"
 
 type checkState struct {
-	check   *lego.SetCheck
-	setName string
-	undo    []lego.CheckLine // line snapshots, newest last
-	undoIdx []int
-	spares  map[int]string // line index → "2 spare (10696)"
+	check     *lego.SetCheck
+	setName   string
+	undo      []lego.CheckLine // line snapshots, newest last
+	undoIdx   []int
+	spares    map[int]string // line index → "2 spare (10696)"
+	finishing bool           // Finish Check pressed, Part-DB sync running in the background — see finishCheck
 }
 
 type setCheckScreen struct {
@@ -160,8 +161,9 @@ func (s *setCheckScreen) Body(app *App) string {
 	if s.sel >= s.top+n {
 		s.top = s.sel - n + 1
 	}
-	var rows [][]string
-	for vi := s.top; vi < min(len(vis), s.top+n); vi++ {
+	end := min(len(vis), s.top+n)
+	rows := make([][]string, 0, end-s.top)
+	for vi := s.top; vi < end; vi++ {
 		i := vis[vi]
 		l := c.Lines[i]
 		mark := "  "
@@ -457,9 +459,16 @@ func (st *checkState) undoLast() {
 }
 
 // finishCheck records the check, pushes the set to Part-DB (when a token is set),
-// adds extras as loose parts, and flags or clears the set.
+// adds extras as loose parts, and flags or clears the set. The Part-DB push (up to
+// 5 minutes) runs off the key-handling path via startBusy, so the screen stays
+// responsive; app.checking is only cleared once it's done, so you're never
+// navigated away mid-sync and left unsure whether it worked — the check screen (with
+// a spinner on its message line) stays up until the result is known.
 func finishCheck(app *App) {
 	st := app.checking
+	if st.finishing { // a repeat F while the Part-DB push is still running: ignore it
+		return
+	}
 	c := st.check
 	extras, err := app.legoDB.FinishCheck(c)
 	if err != nil {
@@ -481,6 +490,7 @@ func finishCheck(app *App) {
 		msg += fmt.Sprintf("INCOMPLETE, %d missing (Missing Parts → P prices, O order).", missing)
 		app.emit("set_incomplete", map[string]any{"set": c.SetNum, "name": st.setName, "missing": missing, "by": user})
 		app.notifyEvent("set_incomplete", fmt.Sprintf("Set %s %s is missing %d part(s)", c.SetNum, st.setName, missing), "")
+		app.queueAlert("Missing parts", fmt.Sprintf("Set %s is missing %d part(s).", c.SetNum, missing))
 	} else {
 		msg += "COMPLETE."
 		app.emit("set_complete", map[string]any{"set": c.SetNum, "name": st.setName, "by": user})
@@ -488,7 +498,15 @@ func finishCheck(app *App) {
 	if extra > 0 {
 		msg += fmt.Sprintf(" %d extra part(s) added to your loose parts.", extra)
 	}
-	if app.pdbw != nil && app.pdbw.API().Enabled() {
+	if app.pdbw == nil || !app.pdbw.API().Enabled() {
+		msg += " (Part-DB not updated: no API token — `wms lego sync-parts` later.)"
+		app.checking = nil
+		app.onBack()
+		app.setMsg(msg, missing > 0)
+		return
+	}
+	st.finishing = true
+	app.startBusy("Updating Part-DB…", func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		syncer := &lego.PartSyncer{Lego: app.legoDB, Writer: app.pdbw}
@@ -504,10 +522,20 @@ func finishCheck(app *App) {
 		for _, p := range extras {
 			_, _ = syncer.Push(ctx, p)
 		}
-	} else {
-		msg += " (Part-DB not updated: no API token — `wms lego sync-parts` later.)"
-	}
-	app.checking = nil
-	app.onBack()
-	app.setMsg(msg, missing > 0)
+		return checkFinishedMsg{msg: msg, isErr: missing > 0}
+	})
+}
+
+// checkFinishedMsg reports the background Part-DB push finishCheck kicked off;
+// handled in App.Update.
+type checkFinishedMsg struct {
+	msg   string
+	isErr bool
+}
+
+func (a *App) checkFinished(m checkFinishedMsg) {
+	a.stopBusy()
+	a.checking = nil
+	a.onBack()
+	a.setMsg(m.msg, m.isErr)
 }

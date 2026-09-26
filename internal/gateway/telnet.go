@@ -111,6 +111,13 @@ func clampDim(v, max uint16) uint16 {
 	return v
 }
 
+// telnetIdleTimeout closes a connection that has sent nothing at all for this long —
+// well past the TUI's own idle-lock (15 min by default), so it only ever catches a
+// client that has gone away without a clean close (a dropped Wi-Fi link, a hung NAT),
+// not someone reading a screen slowly. Without it, such a connection's child process
+// runs forever.
+const telnetIdleTimeout = 30 * time.Minute
+
 func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath string, th *Throttle) {
 	defer conn.Close()
 
@@ -154,6 +161,7 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath strin
 		st := &IACState{}
 		buf := make([]byte, 4096)
 		for {
+			_ = conn.SetReadDeadline(time.Now().Add(telnetIdleTimeout))
 			n, err := conn.Read(buf)
 			if n > 0 {
 				clean := FilterIAC(buf[:n], st)

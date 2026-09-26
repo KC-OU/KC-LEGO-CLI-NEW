@@ -25,6 +25,45 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
 func plain(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
+// pressAndDrain sends a key press and, if it started a background job (see
+// startBusy, app.go), runs it synchronously and feeds whatever message(s) it
+// produces back through Update — standing in for bubbletea's own goroutine and
+// event loop, which tests never run. Use this instead of key()/typeKeys() for any
+// key that kicks off a startBusy job (Finish Check, Receive, a BrickLink price
+// look-up, ...), or the test observes state from before the job ran.
+func pressAndDrain(app *App, msg tea.KeyMsg) {
+	_, cmd := app.Update(msg)
+	for _, m := range flattenBatch(cmd) {
+		app.Update(m)
+	}
+}
+
+// drainPending is pressAndDrain for a background job a direct (non-keypress) call
+// started via startBusy — setOrderStatus("received"), say — rather than one driven
+// through Update.
+func drainPending(app *App) {
+	cmd := app.pendingCmd
+	app.pendingCmd = nil
+	for _, m := range flattenBatch(cmd) {
+		app.Update(m)
+	}
+}
+
+func flattenBatch(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if b, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range b {
+			out = append(out, flattenBatch(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
 // TestToggleLegoJumpsBothWays covers the new `G` global key
 // (handleGlobalKey -> toggleLego): from the hub it must land on the LEGO
 // hub, and from anywhere inside LEGO it must land back on the main hub —
@@ -203,18 +242,22 @@ func TestClassicHubLayout(t *testing.T) {
 	if !strings.Contains(lines[7], "F3=Exit") {
 		t.Errorf("row 7 should be the F-key legend directly under the tab bar, got %q", lines[7])
 	}
-	if lines[app.bodyRow] != "Main Navigation Hub:" {
-		t.Errorf("bodyRow=%d points at %q, want the menu caption", app.bodyRow, lines[app.bodyRow])
+	// +1: the hub's small enough to always take the rounded panel every menu
+	// screen wraps in now (see menuScreen.Body/wrapped, screen.go) — its top
+	// border is what bodyRow actually points at, one row above the caption.
+	const panelTopBorder = 1
+	if !strings.Contains(lines[app.bodyRow+panelTopBorder], "Main Navigation Hub:") {
+		t.Errorf("bodyRow=%d points at %q, want the menu caption", app.bodyRow, lines[app.bodyRow+panelTopBorder])
 	}
 	opts := hubOptions(app)
 	for i, o := range opts {
-		row := app.bodyRow + ui.MenuOptionBodyRow(app.theme, i)
+		row := app.bodyRow + panelTopBorder + ui.MenuOptionBodyRow(app.theme, i)
 		if !strings.Contains(lines[row], o.Label) {
 			t.Errorf("option %q: tap row %d shows %q", o.Label, row, lines[row])
 		}
 	}
-	if !strings.Contains(lines[app.bodyRow+1], "> ") && !strings.Contains(lines[app.bodyRow+1], ">") {
-		t.Errorf("the active tab's list row should carry the > marker: %q", lines[app.bodyRow+1])
+	if !strings.Contains(lines[app.bodyRow+panelTopBorder+1], "> ") && !strings.Contains(lines[app.bodyRow+panelTopBorder+1], ">") {
+		t.Errorf("the active tab's list row should carry the > marker: %q", lines[app.bodyRow+panelTopBorder+1])
 	}
 	last := lines[len(lines)-1]
 	if !strings.HasPrefix(last, "===> ") {

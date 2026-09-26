@@ -5,6 +5,28 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- **A `checker` role**, and a real fix for a genuine freeze: Finish Check, Receive, and a detail-screen BrickLink
+  price look-up all ran a multi-minute Part-DB/network call directly inside key handling with zero feedback,
+  blocking the session until it returned or timed out. All three now run through the existing background-job
+  spinner, which is also now used everywhere else a call can be slow (sign-on, docker status, a Rebrickable
+  look-up) and is toggleable per user (Settings → My loading indicator, on by default — turning it off only
+  hides the spinner, the underlying fix always applies). Also added a read-deadline on the raw telnet socket.
+  Fixed two bugs in the first cut of the `checker` role while trying it live: a starter group added to the code
+  after an install had already been seeded once never reached it (fixed for future starters too — see Starter
+  groups); and if the same username exists in both ModernWMS and Part-DB, sign-in always uses the ModernWMS one,
+  so the policy entry has to be on that source, not Part-DB's, or the exemption is never actually read.
+- **Colour, then category ordering** now covers every parts list you browse — Owned Parts, a set's parts check,
+  and Missing Parts & Prices in Set Workshop — sorted black, red, blue, then alphabetically, then by part
+  category within each colour. Tried this with visible banner rows first; real Rebrickable categories are far
+  more granular than expected (distinct "Technic Axles"/"Technic Beams"/etc. bands), so on an actual set it was
+  mostly banners, and they buried the `▶` selection cursor — reverted to the plain flat table with the improved
+  order underneath, no banners. (A set's Missing Parts *report* stays sorted by biggest shortfall for shopping,
+  deliberately.)
+- **On-screen alert popups**: a set coming up short on a check now also pops up on screen (not just external
+  notifications), **Q** to dismiss; queued rather than replacing or being lost if another comes up first.
+- **A bordered look for hub/section menus**: the same rounded, theme-coloured panel the sign-on card has always
+  used now wraps every hub and section menu too (classic and modern layouts alike) — a menu too long for the
+  panel's two extra lines on your terminal falls back to the plain list automatically.
 - **Barcode badge sign-in**: a username can be swapped for a scanned (or typed) badge token at sign-on — the
   password (and 2FA) is still required exactly as before. An unguessable, revocable token, never the literal
   username. `wms access user badge <user> [--regenerate|--clear|--qr]`.

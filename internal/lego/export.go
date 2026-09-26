@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -89,16 +88,10 @@ type ExportData struct {
 
 // ExportOwned gathers your owned parts and sets.
 func (d *DB) ExportOwned() (*ExportData, error) {
-	owned, err := d.ListOwnedParts()
+	owned, err := d.ListOwnedParts() // already colour, then category ordered
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(owned, func(i, j int) bool {
-		if owned[i].PartNum != owned[j].PartNum {
-			return owned[i].PartNum < owned[j].PartNum
-		}
-		return owned[i].ColorName < owned[j].ColorName
-	})
 	data := &ExportData{Title: "LEGO collection", When: time.Now()}
 	for _, p := range owned {
 		r := ExportRow{PartNum: p.PartNum, Name: p.Name, Category: p.Category, ColorID: p.ColorID, ColorName: p.ColorName, Qty: p.Qty, MinQty: p.MinQty, PartDBID: p.SyncedPartID}

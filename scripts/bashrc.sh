@@ -27,6 +27,15 @@ alias wms-go-doctor='wms-go doctor' wms-go-telnet-help='wms-go sys connect' wms-
 alias wms-go-deploy='bash /root/modernwms-partdb-go/scripts/deploy.sh' wms-go-publish='bash /root/modernwms-partdb-go/scripts/publish.sh' preflight='wms-go preflight'
 alias receive-stock='wms-go receive' reset-password='wms-go users reset' manage-users='wms-go users' wms-backup='wms-go backup'
 
+# telnet: no args = pick an instance (1 live, 2 test, 3 QA scratch); with args it is the normal telnet
+alias tnl='telnet 127.0.0.1 2323' tnt='telnet 127.0.0.1 2324' tnq='telnet 127.0.0.1 12323'
+telnet() {
+  [ $# -gt 0 ] && { command telnet "$@"; return; }
+  local PS3="telnet to which? " o; select o in "live (2323)" "test (2324)" "QA scratch (12323)"; do
+    case $REPLY in 1) command telnet 127.0.0.1 2323;; 2) command telnet 127.0.0.1 2324;; 3) command telnet 127.0.0.1 12323;; *) continue;; esac; break
+  done
+}
+
 # shell basics
 alias ls='ls --color=auto' ll='ls -la --color=auto' la='ls -A --color=auto' grep='grep --color=auto' df='df -h' du='du -h' free='free -h' ports='ss -tulpn'
 alias rm='rm -i' cp='cp -i' mv='mv -i' dps='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'

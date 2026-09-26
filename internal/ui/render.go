@@ -196,6 +196,17 @@ func RenderPrompt(t Theme, label, value string, active bool) string {
 // column of padding inside. border picks the color (t.Brand for the login
 // card, t.Warning for the forced-password-change card).
 func RenderPanel(t Theme, border lipgloss.Style, title, body string) string {
+	return renderPanel(t, border, title, body, "┌", "┐", "└", "┘")
+}
+
+// RenderPanelRounded is RenderPanel with soft corners instead of square ones — used
+// for hub/menu screens and the alert popup, so the rest of the app reads closer to
+// the sign-on card's look rather than inventing a second panel style.
+func RenderPanelRounded(t Theme, border lipgloss.Style, title, body string) string {
+	return renderPanel(t, border, title, body, "╭", "╮", "╰", "╯")
+}
+
+func renderPanel(t Theme, border lipgloss.Style, title, body, topLeft, topRight, bottomLeft, bottomRight string) string {
 	w := t.W()
 	inner := w - 4
 	if inner < 1 {
@@ -215,8 +226,8 @@ func RenderPanel(t Theme, border lipgloss.Style, title, body string) string {
 		fill = 0
 	}
 	left := fill / 2
-	top := "┌" + strings.Repeat("─", left) + seg + strings.Repeat("─", fill-left) + "┐"
-	bottom := "└" + strings.Repeat("─", w-2) + "┘"
+	top := topLeft + strings.Repeat("─", left) + seg + strings.Repeat("─", fill-left) + topRight
+	bottom := bottomLeft + strings.Repeat("─", w-2) + bottomRight
 
 	var b strings.Builder
 	b.WriteString(border.Render(top))
@@ -324,17 +335,21 @@ func RenderColumns(t Theme, columns []string, rows [][]string, title string) str
 	fmt.Fprintf(&b, "%s\n", t.HeaderReverse.Render(strings.Join(header, "  ")))
 
 	for _, row := range rows {
-		cells := make([]string, len(columns))
-		for i := range columns {
-			val := ""
-			if i < len(row) {
-				val = row[i]
-			}
-			cells[i] = padRight(ansi.Truncate(val, widths[i], "…"), widths[i])
-		}
-		fmt.Fprintf(&b, "%s\n", t.Text.Render(strings.Join(cells, "  ")))
+		fmt.Fprintf(&b, "%s\n", t.Text.Render(renderDataRow(row, widths)))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderDataRow(row []string, widths []int) string {
+	cells := make([]string, len(widths))
+	for i := range widths {
+		val := ""
+		if i < len(row) {
+			val = row[i]
+		}
+		cells[i] = padRight(ansi.Truncate(val, widths[i], "…"), widths[i])
+	}
+	return strings.Join(cells, "  ")
 }
 
 // FrameBodyRow is the 0-indexed terminal row the legacy (5250) Frame's body

@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Publishes this checkout to GitHub with a FRESH history (one commit, your GitHub noreply address), turns on
-# the docs site, waits for CI, and tags a release so the release workflow builds binaries and packages.
+# Publishes this checkout to GitHub, turns on the docs site, waits for CI, and tags a release so the
+# release workflow builds binaries and packages.
 #
 #   bash scripts/publish.sh [tag]        # the tag defaults to v1.0.0
+#
+# The very first publish (the repository doesn't exist yet) creates it with a single fresh commit under
+# your GitHub noreply address — a clean starting point with no local history exposed. Every publish after
+# that APPENDS: it fetches the repository's current commits, finds the local commit whose message matches
+# its tip, and pushes just the real commits after that point (same messages and dates, author re-mapped to
+# your noreply address) — the existing public history is never rewritten or force-pushed.
 #
 # It refuses to go on unless `wms preflight publish` says GO for this exact commit (it runs the preflight
 # itself when there is no fresh verdict): the preflight scans exactly what would be published for secrets and
@@ -29,24 +35,76 @@ if ! "$bin" preflight --require publish --repo "$REPO_DIR"; then
   "$bin" preflight publish --repo "$REPO_DIR" || die "NO-GO: fix what the preflight lists, then run this again."
 fi
 
-say "2/7 identity for the single commit"
+say "2/7 identity for the published commit(s)"
 name="${WMS_GIT_NAME:-$(gh api user --jq .login)}"
 mail="${WMS_GIT_EMAIL:-$(gh api user --jq '"\(.id)+\(.login)@users.noreply.github.com"')}"
 echo "$name <$mail>"
 
-say "3/7 export exactly what is committed"
 rm -rf "$OUT" && mkdir -p "$OUT"
-git archive HEAD | tar -x -C "$OUT"
+nothing_new=false
 
-say "4/7 fresh history, one commit"
-cd "$OUT"
-git init -q -b main
-git -c user.name="$name" -c user.email="$mail" add -A
-git -c user.name="$name" -c user.email="$mail" commit -q -m "Initial commit: wms-go, a LEGO collection manager with an offline Rebrickable catalog, BrickLink prices and a telnet/web terminal UI (successor to KC-LEGO-CLI)"
-git log --format='%h %an <%ae>' | head -1
+if gh repo view "$REPO" >/dev/null 2>&1; then
+	say "3/7 what's new since the last publish"
+	git clone -q "$REPO_DIR" "$OUT"
+	cd "$OUT"
+	git remote remove origin
+	git remote add origin "https://github.com/$REPO.git"
+	git fetch -q origin main
+	remote_msg="$(git log -1 --format=%B origin/main)"
+	match=""
+	while IFS= read -r h; do
+		if [ "$(git log -1 --format=%B "$h")" = "$remote_msg" ]; then
+			match="$h"
+			break
+		fi
+	done < <(git log --format=%H HEAD)
+	[ -n "$match" ] || die "couldn't find a local commit matching the published tip's message — resolve by hand (see the script's header comment)."
+	echo "last published: $(git rev-parse --short "$match") \"$(git log -1 --format=%s "$match")\""
 
-say "5/7 create the public repository and push"
-gh repo create "$REPO" --public --description "$DESC" --source . --remote origin --push
+	mapfile -t new_commits < <(git rev-list --reverse "$match..HEAD")
+	if [ "${#new_commits[@]}" -eq 0 ]; then
+		echo "nothing new to publish."
+		nothing_new=true
+	else
+		say "4/7 append ${#new_commits[@]} commit(s), re-authored under your noreply address"
+		git checkout -q -b publish-append origin/main
+		for c in "${new_commits[@]}"; do
+			msg="$(git log -1 --format=%B "$c")"
+			adate="$(git log -1 --format=%aI "$c")"
+			if ! git cherry-pick -n "$c" >/dev/null; then
+				git cherry-pick --abort
+				die "cherry-picking $(git rev-parse --short "$c") for publish didn't apply cleanly — resolve it by hand."
+			fi
+			GIT_AUTHOR_NAME="$name" GIT_AUTHOR_EMAIL="$mail" GIT_AUTHOR_DATE="$adate" \
+				GIT_COMMITTER_NAME="$name" GIT_COMMITTER_EMAIL="$mail" \
+				git commit -q -m "$msg"
+		done
+		git log --format='%h %an <%ae>  %s' "origin/main..HEAD"
+
+		say "5/7 push the new commit(s)"
+		git push origin publish-append:main
+	fi
+else
+	say "3/7 export exactly what is committed"
+	git archive HEAD | tar -x -C "$OUT"
+	cd "$OUT"
+
+	say "4/7 fresh history, one commit"
+	git init -q -b main
+	git -c user.name="$name" -c user.email="$mail" add -A
+	git -c user.name="$name" -c user.email="$mail" commit -q -m "Initial commit: wms-go, a LEGO collection manager with an offline Rebrickable catalog, BrickLink prices and a telnet/web terminal UI (successor to KC-LEGO-CLI)"
+	git log --format='%h %an <%ae>' | head -1
+
+	say "5/7 create the public repository and push"
+	gh repo create "$REPO" --public --description "$DESC" --source . --remote origin --push
+fi
+
+if [ "$nothing_new" = true ]; then
+	echo
+	echo "Repository: https://github.com/$REPO"
+	echo "Nothing to tag or wait on — the last publish already covered this commit."
+	exit 0
+fi
 
 say "6/7 docs site (GitHub Pages from Actions) and CI"
 gh api -X POST "repos/$REPO/pages" -f build_type=workflow >/dev/null 2>&1 \

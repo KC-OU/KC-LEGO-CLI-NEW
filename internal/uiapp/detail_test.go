@@ -170,14 +170,14 @@ func TestDetailKeysAddMissingAndPrice(t *testing.T) {
 	})
 	// P without credentials explains itself
 	openDetail(t, app, "3001")
-	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	pressAndDrain(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if !app.messageErr || !strings.Contains(app.message, "not set up") {
 		t.Errorf("P without BrickLink: %q", app.message)
 	}
 	for k, v := range map[string]string{config.BricklinkConsumerKey: "k", config.BricklinkConsumerSecret: "s", config.BricklinkToken: "t", config.BricklinkTokenSecret: "ts"} {
 		config.SetOverride(k, v)
 	}
-	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	pressAndDrain(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if app.messageErr || !strings.Contains(app.message, "0.0587 GBP") {
 		t.Fatalf("P with BrickLink: %q err=%v", app.message, app.messageErr)
 	}
@@ -186,7 +186,7 @@ func TestDetailKeysAddMissingAndPrice(t *testing.T) {
 	}
 	// a set with no sales says so and is remembered as unpriced, not free
 	openDetail(t, app, "75192")
-	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	pressAndDrain(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if !app.messageErr || !strings.Contains(app.message, "no sales") {
 		t.Errorf("no sales: %q", app.message)
 	}
