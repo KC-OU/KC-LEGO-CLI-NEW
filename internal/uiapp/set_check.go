@@ -330,6 +330,10 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 }
 
 func (s *setCheckScreen) leave(app *App) {
+	if app.currentTicketID != 0 {
+		app.goTo(scrQuitJob)
+		return
+	}
 	app.setMsg("Check not saved (S saves it for later, F finishes).", false)
 	app.checking = nil
 	app.onBack()
@@ -485,6 +489,13 @@ func finishCheck(app *App) {
 		action = "STOCK_CHECK"
 	}
 	app.audit.Log(user, role, action, "SUCCESS", fmt.Sprintf("set=%s pieces=%d missing=%d extra=%d", c.SetNum, pieces, missing, extra))
+	if app.currentTicketID != 0 {
+		_ = app.legoDB.FinishTicket(lego.TicketCheck, c.SetNum, user)
+		app.currentTicketID = 0
+		if _, escalate, err := app.legoDB.RecordCheckOutcome(user, lego.AccuracyChecker, lego.TicketCheck, c.SetNum, pieces, missing); err == nil && escalate {
+			app.notifyEvent("accuracy_escalation", fmt.Sprintf("%s is missing %d parts on %s — accuracy needs a manual review, not an automatic deduction.", user, missing, c.SetNum), "")
+		}
+	}
 	msg := fmt.Sprintf("%s: checked by %s — ", c.SetNum, user)
 	if missing > 0 {
 		msg += fmt.Sprintf("INCOMPLETE, %d missing (Missing Parts → P prices, O order).", missing)

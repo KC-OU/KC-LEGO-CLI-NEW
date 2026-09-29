@@ -11,6 +11,7 @@
 | **F9** or **U** | Undo the last change made in this session |
 | **F10** or **L** | Lock the session (it also locks itself after 15 idle minutes) |
 | **G** | Jump between the main menu and LEGO Collection |
+| **V** | Switch to Admin and back. If your own account already has admin-level access, this is a straight jump, same as **G**. Otherwise it asks for a *separate* admin account's username and password (no 2FA — this session is already signed in) and switches to it; pressing **V** again returns to exactly where you were, no credentials needed |
 | **/** | Filter a list |
 
 --8<-- "docs/assets/screens/help.html"

@@ -130,6 +130,31 @@ func (d *DB) draftCheck(setNum, kind string) (*SetCheck, error) {
 	return d.GetCheck(id)
 }
 
+// DeleteDraftCheck discards a draft's progress entirely (the "abandon without
+// saving" quit option — see uiapp's quit workflow) — refuses anything already
+// finished, since that would erase a real result, not a redo.
+func (d *DB) DeleteDraftCheck(id int64) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRow(`SELECT status FROM set_checks WHERE id = ?`, id).Scan(&status); err != nil {
+		return err
+	}
+	if status != StatusDraft {
+		return errors.New("only a draft (not yet finished) check can be abandoned this way")
+	}
+	if _, err := tx.Exec(`DELETE FROM set_check_lines WHERE check_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM set_checks WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // GetCheck loads a check with its lines.
 func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 	c := &SetCheck{ID: id}

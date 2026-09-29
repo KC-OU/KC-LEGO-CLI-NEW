@@ -134,12 +134,17 @@ func (w *Writer) setLocationIDs() map[int]bool {
 // looseLots are a part's lots outside the set locations: the stock the loose-part
 // sync owns.
 func (w *Writer) looseLots(partID int) ([]lot, error) {
+	// Resolved before opening the query below, not while its rows are still open:
+	// with a connection pool of exactly one (see TestLooseLotsDoesNotDeadlockOnA-
+	// SingleConnection), a second query started before the first's rows are closed
+	// can never get a connection — query, then iterate, then look something else
+	// up, not interleaved.
+	sets := w.setLocationIDs()
 	rows, err := w.DB.Query("SELECT id, amount, COALESCE(id_store_location, 0) FROM part_lots WHERE id_part = ? ORDER BY id", partID)
 	if err != nil {
 		return nil, fmt.Errorf("reading stock lots: %w", err)
 	}
 	defer rows.Close()
-	sets := w.setLocationIDs()
 	var out []lot
 	for rows.Next() {
 		var l lot

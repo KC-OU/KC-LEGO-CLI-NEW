@@ -203,6 +203,45 @@ func ensureSchema(db *sql.DB) error {
 		// category is Stickers, so every sticker is covered with nothing to migrate, and
 		// toggling any part (sticker or not) here overrides that default either way.
 		`CREATE TABLE IF NOT EXISTS part_optional (part_num TEXT PRIMARY KEY, optional INTEGER NOT NULL)`,
+		// A unit of assigned work: an admin points a picker/checker at a set to check or
+		// an order to pick, either by name (assigned_to set) or left for the open queue
+		// (assigned_to ""). Claiming it just means starting the underlying check/order
+		// normally — this table only tracks who's on it and its lifecycle, never a copy
+		// of the check/order data itself. token is a barcode claim code (see tickets.go).
+		`CREATE TABLE IF NOT EXISTS job_tickets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
+			assigned_to TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'queued', priority TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '', token TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, claimed_at TEXT NOT NULL DEFAULT '', done_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_job_tickets_status ON job_tickets(kind, status, assigned_to)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_job_tickets_token ON job_tickets(token) WHERE token != ''`,
+		// One row per accuracy-affecting event, scored per role (a picker and checker
+		// percentage are separate for someone holding both) and grouped by day (see
+		// accuracy.go) — "today" is just "day = today's date", so nothing has to reset at
+		// midnight, a new day's rows simply haven't been written yet.
+		`CREATE TABLE IF NOT EXISTS accuracy_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, role TEXT NOT NULL, day TEXT NOT NULL,
+			kind TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', pieces INTEGER NOT NULL DEFAULT 0, missing INTEGER NOT NULL DEFAULT 0,
+			delta REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_accuracy_log_user_day ON accuracy_log(username, role, day)`,
+		// A one-way admin-to-user note (see messages.go): delivered_at is set the first
+		// time the recipient's own session notices it (polling, not a push — sessions are
+		// separate processes), read_at when they dismiss the toast.
+		`CREATE TABLE IF NOT EXISTS user_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, from_user TEXT NOT NULL, to_user TEXT NOT NULL, body TEXT NOT NULL,
+			created_at TEXT NOT NULL, delivered_at TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_user_messages_to ON user_messages(to_user, delivered_at)`,
+		// A live registry of connected TUI sessions (see sessions.go) — each session
+		// upserts its own row on a slow timer and deletes it on exit; a session that
+		// crashed instead of exiting cleanly just ages out (admins see last_seen).
+		`CREATE TABLE IF NOT EXISTS live_sessions (
+			session_id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '',
+			transport TEXT NOT NULL DEFAULT '', remote_addr TEXT NOT NULL DEFAULT '', screen TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL, last_seen TEXT NOT NULL)`,
+		// The current shift handover note (see handover.go) — one row, always id 1,
+		// overwritten by whoever last saved it.
+		`CREATE TABLE IF NOT EXISTS handover_note (
+			id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '')`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

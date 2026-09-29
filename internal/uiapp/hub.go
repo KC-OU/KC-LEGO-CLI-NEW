@@ -89,6 +89,11 @@ func adminHubScreen() screenModel {
 		{"2", "settings", "Settings & API Keys", scrSettingsHub},
 		{"3", "docker", "Containers", scrContainers},
 		{"4", "access", "Access Control (permissions, 2FA, timeouts)", scrAccessHub},
+		{"5", "user_mgmt", "Assign Work (pickers/checkers)", scrAssignPick},
+		{"6", "user_mgmt", "Message a User", scrMessagePick},
+		{"7", "user_mgmt", "Dock Accuracy", scrAccuracyWho},
+		{"8", "user_mgmt", "Live Sessions", scrLiveSessions},
+		{"9", "user_mgmt", "Shift Handover Note", scrHandover},
 	})
 }
 

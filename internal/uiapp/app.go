@@ -157,6 +157,15 @@ type App struct {
 	coll      *collection // cached collection figures
 	logoFrame int         // the sign-on logo's sweep
 	clockOn   bool
+
+	currentTicketID int64            // the job ticket app.checking/app.ws().orderID belongs to, 0 = none (see tickets_screens.go)
+	assign          *assignDraft     // an admin's in-progress "assign work" flow (see tickets_screens.go)
+	dock            *dockDraft       // an admin's in-progress "dock accuracy" flow (see accuracy_screens.go)
+	message2        *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
+	abandonAdmin    string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
+	toasts          []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
+	sessionID       string           // this process's own id in live_sessions (see sessions.go)
+	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
 }
 
 func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Logger, requireTwoFA, touchMode bool) *App {
@@ -294,6 +303,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.checkIdle()
 		if a.quitting {
 			return a, tea.Quit
+		}
+		if a.authed && a.session != nil {
+			if a.pollMessages() && a.cur != scrMessagesFull {
+				a.goTo(scrMessagesFull)
+			}
+			a.heartbeat()
 		}
 		return a, idleTick()
 	}
@@ -548,6 +563,9 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) bool {
 	case 'g', 'G':
 		a.toggleLego()
 		return true
+	case 'v', 'V':
+		a.toggleAdminView()
+		return true
 	}
 	return false
 }
@@ -567,6 +585,10 @@ func (a *App) goTo(id string) {
 // onBack mirrors the original's context-dependent Q: pop one level
 // normally, log out at the hub, and quit outright from the login screen.
 func (a *App) onBack() {
+	if a.currentTicketID != 0 && a.cur == scrOrderLines {
+		a.goTo(scrQuitJob)
+		return
+	}
 	switch a.cur {
 	case scrLogin:
 		a.quitting = true
@@ -656,9 +678,21 @@ func (a *App) enterHub() {
 		a.legoDB.SetActor(a.session.Username) // the journal records who changed what
 	}
 	a.applyUserTheme()
+	a.applyUserRebrickableKey()
 	a.startSplash()
 	a.activeTab = "1"
-	a.goTo(scrHub)
+	a.goTo(a.landingScreen())
+	if a.session != nil {
+		// Any message sent while you were away, plus the shift handover note, show
+		// full-screen right at sign-on (see scrMessagesFull) — not up to 15s later,
+		// and not as a corner popup a long message would spill out of.
+		got := a.pollMessages()
+		got = a.showHandoverNoteOnce() || got
+		if got {
+			a.goTo(scrMessagesFull)
+		}
+	}
+	a.startHeartbeat()
 	if a.session == nil {
 		return
 	}

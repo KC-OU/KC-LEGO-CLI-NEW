@@ -62,3 +62,24 @@ func TestWebCommandWrapsInAPersistentSessionWithTmux(t *testing.T) {
 		}
 	}
 }
+
+// TestSoloCommandNeverWrapsInTmux guards the whole point of /solo: it must stay
+// a fresh, unshared process every time, with or without tmux on the box — unlike
+// webCommand, which wraps in the shared session whenever tmux is available.
+func TestSoloCommandNeverWrapsInTmux(t *testing.T) {
+	want := []string{"/usr/local/bin/wms-go", "tui"}
+	assertEqual := func(t *testing.T, got []string) {
+		t.Helper()
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("soloCommand = %v, want %v", got, want)
+		}
+	}
+	t.Run("without tmux", func(t *testing.T) {
+		withoutTmux(t)
+		assertEqual(t, soloCommand("/usr/local/bin/wms-go"))
+	})
+	t.Run("with tmux", func(t *testing.T) {
+		withTmux(t)
+		assertEqual(t, soloCommand("/usr/local/bin/wms-go"))
+	})
+}

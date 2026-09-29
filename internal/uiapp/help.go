@@ -47,6 +47,7 @@ var globalHelpKeys = [][2]string{
 	{"F9  or  U", "undo the last change made in this session"},
 	{"F10  or  L", "lock the session (also locks itself when idle)"},
 	{"G", "jump between the main menu and LEGO Collection"},
+	{"V", "jump between Admin and your Picker/Checker screen (if you hold both)"},
 	{"Ctrl+C", "quit"},
 }
 

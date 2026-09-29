@@ -47,6 +47,7 @@ Passwords are still checked by ModernWMS and Part-DB; this decides what a signed
 | `exporter` | LEGO view plus exports and downloads | yes |
 | `stock-clerk` | stock checks, Part-DB view, LEGO part/set search and export | yes |
 | `checker` | checks new sets' parts, orders and missing-parts exports, records delivered parts | yes |
+| `picker` | picks assigned orders, records what was taken | yes |
 
 Edit any of them (or make your own) in *Admin → Access Control → Groups*, or with `wms access groups set`.
 

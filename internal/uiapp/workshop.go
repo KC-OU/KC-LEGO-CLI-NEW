@@ -471,6 +471,15 @@ func setOrderStatus(app *App, id int64, st string) {
 		app.notifyEvent("order_shipped", strings.TrimSpace(desc+" has shipped"), tr)
 	case "received":
 		app.notifyEvent("order_received", desc+" has arrived", "")
+		if app.currentTicketID != 0 {
+			user := app.userName()
+			_ = app.legoDB.FinishTicket(lego.TicketOrder, strconv.FormatInt(id, 10), user)
+			app.currentTicketID = 0
+			// A received order doesn't track a per-line "missing" count the way a
+			// set check does, so this only ever recovers accuracy, never deducts —
+			// see DockAccuracy for the admin-driven side of picker accuracy.
+			_, _, _ = app.legoDB.RecordCheckOutcome(user, lego.AccuracyPicker, lego.TicketOrder, strconv.FormatInt(id, 10), 1, 0)
+		}
 	}
 	for _, set := range done {
 		msg += " Set " + set + " is now COMPLETE!"

@@ -34,6 +34,23 @@ ModernWMS / Part-DB KPI table.
   can be given a maximum length; both are set globally or per user in *Admin → Access Control → Security settings*.
 - The web terminal can't see client addresses, so it isn't throttled per address.
 
+## Multiple sessions at once
+
+Every telnet connection gets its own OS process (a fresh `wms tui` under its own PTY) — there's
+no shared lock between sessions in the gateway itself, and this machine's own address is exempt
+from the 4-sessions-per-address limit above, so opening several sessions from here to test
+something is never refused. If sessions still seem to slow each other down, `lego.db`/Part-DB
+contention is the more likely cause, not the gateway — one real deadlock was found and fixed this
+way (a Part-DB write that looked up a location while its own earlier query was still open), but
+restricting each process to one database connection more broadly turned out to be too large a
+change to make safely in one pass (this codebase has dozens of query sites that would all need
+auditing for the same pattern first). *Admin → Live Sessions* shows who's actually connected,
+from where, and on what screen — the place to look if this comes up again.
+
+Telnet was never actually the problem here — two telnet connections are already two fully
+independent processes. The **web terminal** was: see the next section for what "one persistent,
+shared session" means and `/solo` for a second, genuinely independent one.
+
 ## Two-factor authentication
 
 ```bash
@@ -57,6 +74,15 @@ connection. Opening a new tab, the PWA resuming after being backgrounded, or a d
 process** — wherever you left it, already signed in — instead of spawning a fresh one that has to ask again. Signing out (**Q** at the hub) still
 returns that process to the sign-on screen, so the next person to open the web terminal gets a real prompt.
 
-The trade-off: it's **one shared screen**, not one per device. Every tab or device that opens the web terminal is looking at (and driving) the
-same session — the right model for one person using several devices, not for several people sharing a login. `wms doctor` reports whether `tmux`
-is installed; without it, the web terminal falls back to today's per-connection behaviour (a fresh sign-in and 2FA prompt every time).
+The trade-off: it's **one shared screen**, not one per device. Every tab or device that opens the web terminal at the default address is looking
+at (and driving) the same session — the right model for one person using several devices, not for two different people at once. `wms doctor`
+reports whether `tmux` is installed; without it, the web terminal falls back to today's per-connection behaviour (a fresh sign-in and 2FA prompt
+every time).
+
+## `/solo`: a second, independent web terminal
+
+Open `http://<host>:7681/solo` (or `/solo` after whatever path your reverse proxy uses) for a **completely separate** web terminal — its own
+`ttyd` process, its own fresh `wms tui` per connection, sharing nothing with the default one at `/` or with any other `/solo` connection. This is
+the second identity the shared session above can't give you: two people (or one person testing as two accounts) on the web terminal
+simultaneously, neither one waiting on or seeing the other's screen. The cost is exactly what the default terminal avoids — no persistence:
+closing the tab or losing the connection ends that session for good, and reopening `/solo` is a fresh sign-on, 2FA included, every time.

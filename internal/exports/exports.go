@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -265,6 +266,40 @@ func Cleanup(dir string) int {
 // MaxLinkTTL bounds a custom expiry (NewLinkWithTTL/NewShareLink) and is the fallback
 // cleanup age for a link record too corrupt to read its own Expires.
 const MaxLinkTTL = 7 * 24 * time.Hour
+
+// ExportFile is one entry in ListExports.
+type ExportFile struct {
+	Path    string
+	ModTime time.Time
+	Size    int64
+}
+
+// ListExports is user's own export files still in dir (see Save's naming: they
+// all start "<user>-"), newest first — for a "My Exports" screen that regenerates
+// a fresh download link without a terminal, once the original's died.
+func ListExports(dir, user string) ([]ExportFile, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	prefix := unsafeName.ReplaceAllString(user, "_") + "-"
+	var out []ExportFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, ExportFile{Path: filepath.Join(dir, e.Name()), ModTime: fi.ModTime(), Size: fi.Size()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
+	return out, nil
+}
 
 // Describe is a one-line summary for messages: the file name and its size.
 func Describe(path string) string {

@@ -1,6 +1,9 @@
 package partdb
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSetLotsAreSeparateFromLooseStock(t *testing.T) {
 	f := newFixture(t)
@@ -37,5 +40,45 @@ func TestSetLotsAreSeparateFromLooseStock(t *testing.T) {
 	}
 	if total, _ = f.W.Stock(id); total != 14 {
 		t.Fatalf("total after recount = %v", total)
+	}
+}
+
+// TestLooseLotsDoesNotDeadlockOnASingleConnection guards a real bug: looseLots
+// used to call setLocationIDs (which runs its own query) while its own rows from
+// an earlier query were still open. That's invisible with an unbounded
+// connection pool — a second connection just opens — but with exactly one
+// connection (as some callers may reasonably want, to stop a process's own
+// goroutines contending with each other) the second query can never get a
+// connection, and the first is never released to give it one: a permanent
+// self-deadlock. This forces a single connection and fails fast instead of
+// hanging for minutes if the ordering regresses.
+func TestLooseLotsDoesNotDeadlockOnASingleConnection(t *testing.T) {
+	f := newFixture(t)
+	f.DB.SetMaxOpenConns(1)
+	loc, err := f.W.ResolveLocation(bg(), append(append([]string{}, SetsLocationPath...), "10254-1 Winter Village Train"))
+	if err != nil || loc == 0 {
+		t.Fatalf("location: %d %v", loc, err)
+	}
+	spec := PartSpec{Name: "Plate 1 x 3", IPN: "3623-1", CategoryID: fallbackCategoryID}
+	id, _, err := f.W.EnsurePart(bg(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.W.SetLotAt(bg(), id, loc, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.W.UpsertPart(bg(), spec, 2)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpsertPart did not return within 5s — looks deadlocked on a single connection")
 	}
 }

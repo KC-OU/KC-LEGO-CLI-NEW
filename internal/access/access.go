@@ -316,6 +316,9 @@ func seed(p *Policy) {
 		"checker": {Description: "checks new sets' parts, orders and missing-parts exports, records delivered parts", Restricted: true, Perms: grant(
 			"lego.view", "lego.search", "lego.export", "sets.check", "orders.view", "orders.manage",
 			"exports.create", "exports.download", "stock.check", "stock.adjust", "partdb.view")},
+		"picker": {Description: "picks assigned orders, records what was taken", Restricted: true, Perms: grant(
+			"lego.view", "lego.search", "orders.view", "orders.manage",
+			"exports.create", "exports.download", "stock.check", "partdb.view")},
 	}
 	already := map[string]bool{}
 	for _, n := range p.SeededGroups {

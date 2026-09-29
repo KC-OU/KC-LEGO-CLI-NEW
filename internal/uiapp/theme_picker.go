@@ -27,6 +27,9 @@ type userPref struct {
 	// Part-DB sync, price look-ups) — inverted so the zero value (an absent/older prefs
 	// file) means "on", matching the on-by-default choice, without a *bool.
 	LoadingOff bool `json:"loading_off,omitempty"`
+	// RebrickableKey is a personal Rebrickable API key overriding the shared
+	// instance-wide one (see my_settings.go) — "" means use the shared key.
+	RebrickableKey string `json:"rebrickable_key,omitempty"`
 }
 
 func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }

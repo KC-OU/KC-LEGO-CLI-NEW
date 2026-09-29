@@ -5,6 +5,54 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- **`/solo`, a second web terminal**: the default web terminal (`/`) is one shared session for
+  every tab/device on purpose (see its own doc section) — that's what was actually behind "two
+  people can't use it at once without slowing each other down," not the gateway or the database.
+  `/solo` runs a completely independent `ttyd` process with a fresh `wms tui` per connection
+  (the same isolation telnet already had), so a second person — or one person testing as a second
+  account — can use the web terminal at the same time as whoever's on the shared one. Trade-off:
+  no persistence there, a dropped `/solo` connection is a fresh sign-on next time, 2FA included.
+- **Assigned work for pickers and checkers**: a new `picker` role alongside `checker`, each with a
+  dedicated hub (Overview, Request, My Current Jobs, a Query submenu, My accuracy, My Exports).
+  Admins assign a set/order to a named person or the open queue (*Admin → Assign Work*); claiming
+  one just opens the normal check/order screen — a barcode on a printed ticket claims it too
+  (palette: "Scan a job ticket"). Leaving a ticket-backed job mid-way asks save-and-return,
+  finish now, or abandon without saving (needs a second admin's sign-on and a reason; fully
+  audited, never touches accuracy).
+- **Picker/checker accuracy**: starts at 100% each day, deducted per completed check/order by how
+  many parts were missing (linear within 1–5/6–15/16–20 bands), recovered partially by a
+  following clean one; 21+ missing never auto-deducts, it's flagged for a manual conversation.
+  Docking is always an admin action with a reason (*Admin → Dock Accuracy*), never automatic.
+  *My Accuracy* (also in the palette) shows today's number and the last 7 days, per role.
+- **Admin → user messages**: a one-way note (quick picks or your own text) that shows up
+  **full-screen**, the same "read it, press a key to clear it" page the first-run tour uses — no
+  cramped popup, the whole message is always readable. Shows up right at sign-on if one was
+  waiting (not up to 15s later on the next background check), pages through several one at a
+  time, **Enter** for the next, **Q** dismisses all of them at once.
+- **My Rebrickable API key** (My Settings, or the palette): use a personal key instead of the
+  shared one, or switch back with an explicit menu option — no magic keyword to remember.
+- **My Exports** (My Settings, or the palette): your own recent exports, with a one-key "get me a
+  fresh download link" for one whose link or file has expired.
+- **Shift handover note** (*Admin*): one free-text note for whoever's on next, shown at sign-on.
+- **Live Sessions** (*Admin*): who's connected, from where, on what screen — also the tool that
+  actually answers whether two sessions really block each other, instead of guessing at it.
+- **V** key, switch to Admin: a checker/picker whose own account isn't also an admin is asked for
+  a *different* admin account's username and password — deliberately no 2FA code, this session is
+  already signed in — and switches to it; pressing **V** again returns to exactly where they were,
+  no credentials needed going back down. An account that already holds both just jumps straight
+  there and back (mirrors **G**'s Main Hub ↔ LEGO Collection). Every switch is audited.
+- Picking a user for Assign Work / Message a User / Dock Accuracy now also matches on their
+  numeric user ID, not just their username, while narrowing the list as you type.
+- Fixed a real Part-DB deadlock, found while investigating sessions slowing each other down:
+  `looseLots` looked up a part's stock locations (a second query) while its own first query's
+  rows were still open — invisible with an unlimited connection pool, but a guaranteed hang the
+  moment anything constrains it to one connection. Reordered, with a regression test that forces
+  a single connection and fails in 5s if it regresses, instead of hanging for minutes. (A
+  same-process `SetMaxOpenConns(1)` was tried as a further fix for the original complaint — the
+  gateway itself has no shared lock between sessions, so this was the next suspect — but reverted:
+  this one instance is fixed and tested, but `internal/lego` has ~40 more query-loop sites an
+  afternoon can't responsibly audit for the same pattern, and a silent production deadlock is far
+  worse than "feels slow." Live Sessions remains the actual diagnostic tool for this.)
 - **A `checker` role**, and a real fix for a genuine freeze: Finish Check, Receive, and a detail-screen BrickLink
   price look-up all ran a multi-minute Part-DB/network call directly inside key handling with zero feedback,
   blocking the session until it returned or timed out. All three now run through the existing background-job

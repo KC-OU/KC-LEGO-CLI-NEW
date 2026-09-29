@@ -65,6 +65,9 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrSettingsTheme:       &themeScreen{admin: true},
 		scrMyTheme:             &themeScreen{},
 		scrMyLoading:           loadingPrefScreen(),
+		scrMySettings:          mySettingsScreen(),
+		scrMyRebrickKey:        myRebrickableKeyScreen(),
+		scrMyRebrickEdit:       myRebrickableEditScreen(),
 		scrSettingsBrickLink:   settingsBrickLinkScreen(),
 		scrLegoBLAsk:           legoBLAskScreen(),
 		scrLegoBLResult:        legoBLResultScreen(),
@@ -94,5 +97,29 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrExport:           &exportScreen{},
 		scrSetCheck:         &setCheckScreen{},
 		scrLegoAchievements: &achievementsScreen{},
+
+		scrPickerHub:    pickerHubScreen(),
+		scrQueryMenu:    queryMenuScreen(),
+		scrRequest:      requestJobScreen(),
+		scrCurrentJob:   currentJobScreen(),
+		scrAssignPick:   assignPickScreen(),
+		scrAssignTarget: assignTargetScreen(),
+		scrJobQueue:     jobQueueScreen(),
+		scrQuitJob:      quitJobScreen(),
+		scrAbandonAuth:  abandonAuthScreen(),
+		scrScanClaim:    scanClaimScreen(),
+		scrSwitchAdmin:  switchAdminScreen(),
+
+		scrMyAccuracy:   myAccuracyScreen(),
+		scrAccuracyWho:  accuracyWhoScreen(),
+		scrAccuracyDock: accuracyDockScreen(),
+
+		scrMessagePick:    messagePickScreen(),
+		scrMessageCompose: messageComposeScreen(),
+		scrMessagesFull:   messagesFullScreen(),
+
+		scrLiveSessions: liveSessionsScreen(),
+		scrHandover:     handoverScreen(),
+		scrMyExports:    myExportsScreen(),
 	}
 }

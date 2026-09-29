@@ -25,7 +25,7 @@ func TestSeedAndEffective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Groups) != 7 {
+	if len(p.Groups) != 8 {
 		t.Fatalf("groups = %d", len(p.Groups))
 	}
 	c := p.Effective("partdb", "clerk")
