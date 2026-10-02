@@ -11,8 +11,11 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
-// Printable set labels: pick the label stock, and a PDF (and an HTML page) is saved
-// with the one-time download link / QR code, like any export.
+// Printable set labels: pick the label stock, and — for exactly one set at a
+// non-sheet size, where PNG/ZPL/.lbx are even possible (see their own doc
+// comments in internal/labels) — which format(s) to save, then a PDF (and an
+// HTML page) is saved with the one-time download link / QR code, like any
+// export.
 
 const scrLabels = "labels"
 
@@ -28,11 +31,14 @@ func startLabels(app *App, sets []string) {
 	app.goTo(scrLabels)
 }
 
-type labelsScreen struct{ base }
+type labelsScreen struct {
+	base
+	sizeIdx int // -1 = still choosing the stock; >= 0 = that size chosen, waiting on a format choice
+}
 
 func (s *labelsScreen) PanelID() string    { return "LABELS" }
 func (s *labelsScreen) Title() string      { return "Print Labels" }
-func (s *labelsScreen) OnEnter(app *App)   {}
+func (s *labelsScreen) OnEnter(app *App)   { s.sizeIdx = -1 }
 func (s *labelsScreen) FKeys() [][2]string { return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}} }
 
 func (s *labelsScreen) Body(app *App) string {
@@ -40,6 +46,9 @@ func (s *labelsScreen) Body(app *App) string {
 		return exportResultBody(app, app.exportRes)
 	}
 	t := app.theme
+	if s.sizeIdx >= 0 {
+		return s.formatBody(app)
+	}
 	var b strings.Builder
 	sets := app.labelSets
 	what := strings.Join(sets[:min(len(sets), 6)], ", ")
@@ -50,7 +59,26 @@ func (s *labelsScreen) Body(app *App) string {
 	for i, sz := range labels.Sizes {
 		fmt.Fprintf(&b, "  %s  %s\n", t.Accent.Render(fmt.Sprint(i+1)), t.Text.Render(sz.Name))
 	}
-	b.WriteString("\n" + t.Muted.Render("Each label: set, name, year, pieces, missing, who checked it and when,\nlocation, QR code and barcode. PDF + web page: print at 100%, no margins.\nOne set, a non-sheet size: also saved as PNG, Zebra ZPL and Brother .lbx."))
+	b.WriteString("\n" + t.Muted.Render("Each label: set, name, year, pieces, missing, who checked it and when,\nlocation, QR code and barcode. PDF + web page: print at 100%, no margins."))
+	return b.String()
+}
+
+func (s *labelsScreen) formatBody(app *App) string {
+	t := app.theme
+	size := labels.Sizes[s.sizeIdx]
+	var b strings.Builder
+	b.WriteString(t.Strong.Render("Format for "+size.Name) + "\n\n")
+	rows := []string{
+		"PDF + web page (default — print at 100%, no margins)",
+		"Also a PNG image — no page-size matching to get wrong, print it via \"Print Picture\"",
+		"Also Zebra ZPL — Zebra-style printers, not a Brother QL",
+		"Also a Brother .lbx — a real P-touch Editor file; test-print before trusting it",
+		"All of the above",
+	}
+	for i, row := range rows {
+		fmt.Fprintf(&b, "  %s  %s\n", t.Accent.Render(fmt.Sprint(i+1)), t.Text.Render(row))
+	}
+	b.WriteString("\n" + t.Muted.Render("F12 cancels."))
 	return b.String()
 }
 
@@ -58,11 +86,31 @@ func (s *labelsScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	if app.exportRes != nil || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
 		return
 	}
-	i := int(msg.Runes[0] - '1')
-	if i < 0 || i >= len(labels.Sizes) {
+	if s.sizeIdx < 0 {
+		i := int(msg.Runes[0] - '1')
+		if i < 0 || i >= len(labels.Sizes) {
+			return
+		}
+		// Only one set at a non-sheet size can even produce PNG/ZPL/.lbx —
+		// everything else has nothing to choose, straight to PDF + web page.
+		if len(app.labelSets) == 1 && !labels.Sizes[i].Sheet() {
+			s.sizeIdx = i
+			return
+		}
+		s.save(app, i, 0)
 		return
 	}
-	size := labels.Sizes[i]
+	f := int(msg.Runes[0] - '0')
+	if f < 1 || f > 5 {
+		return
+	}
+	s.save(app, s.sizeIdx, f)
+}
+
+// save writes PDF + HTML (always) plus whichever extra format the format
+// step chose: 2 = PNG, 3 = ZPL, 4 = .lbx, 5 = all three, 0 or 1 = none.
+func (s *labelsScreen) save(app *App, sizeIdx, format int) {
+	size := labels.Sizes[sizeIdx]
 	var items []labels.Data
 	for _, n := range app.labelSets {
 		items = append(items, app.legoDB.LabelData(n))
@@ -83,20 +131,21 @@ func (s *labelsScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	pdfPath := strings.TrimSuffix(htmlPath, ".html") + ".pdf"
 	warnings := []string{"The web page version is " + exports.Describe(htmlPath)}
 
-	// PNG/ZPL/.lbx are one-label-at-a-time formats (see their own doc
-	// comments in internal/labels) — only offered here for the matching
-	// request, so they're never silently skipped without explanation.
-	if len(items) == 1 && !size.Sheet() {
+	if format == 2 || format == 5 {
 		if png, err := labels.PNG(items, size); err == nil {
 			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "png", png); err == nil {
 				warnings = append(warnings, "Also saved as a PNG image: "+exports.Describe(p))
 			}
 		}
+	}
+	if format == 3 || format == 5 {
 		if zpl, err := labels.ZPL(items, size); err == nil {
 			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "zpl", zpl); err == nil {
 				warnings = append(warnings, "Also saved as Zebra ZPL: "+exports.Describe(p))
 			}
 		}
+	}
+	if format == 4 || format == 5 {
 		if lbx, err := labels.LBX(items, size); err == nil {
 			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "lbx", lbx); err == nil {
 				warnings = append(warnings, "Also saved as a Brother .lbx (test-print before trusting it): "+exports.Describe(p))

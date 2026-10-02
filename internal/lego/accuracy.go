@@ -13,11 +13,12 @@ const (
 	AccuracyPicker  = "picker"
 	AccuracyChecker = "checker"
 
-	accKindSetCheck  = "set_check"
-	accKindOrderPick = "order_pick"
-	accKindAdminDock = "admin_dock"
-	accKindRecovery  = "recovery"
-	accKindEscalate  = "escalation" // 21+ missing: flagged, never auto-deducted
+	accKindSetCheck    = "set_check"
+	accKindOrderPick   = "order_pick"
+	accKindAdminDock   = "admin_dock"
+	accKindAdminCredit = "admin_credit"
+	accKindRecovery    = "recovery"
+	accKindEscalate    = "escalation" // 21+ missing: flagged, never auto-deducted
 )
 
 // DeductionFor is how many percentage points a completed check/order with this
@@ -85,6 +86,14 @@ func (d *DB) RecordCheckOutcome(username, role, kind, target string, pieces, mis
 // case, or anything else worth a conversation) — never automatic.
 func (d *DB) DockAccuracy(username, role string, amount float64, reason, by string) error {
 	return d.logAccuracy(username, role, accKindAdminDock, "", 0, 0, -amount, reason, by)
+}
+
+// CreditAccuracy is an admin's manual bonus (good performance, made up for an
+// earlier dock, anything else worth recognising) — never automatic, the
+// mirror image of DockAccuracy. AccuracyToday already clamps the running
+// total to 100, so crediting past a full day's worth is harmless.
+func (d *DB) CreditAccuracy(username, role string, amount float64, reason, by string) error {
+	return d.logAccuracy(username, role, accKindAdminCredit, "", 0, 0, amount, reason, by)
 }
 
 func (d *DB) logAccuracy(username, role, kind, target string, pieces, missing int, delta float64, reason, by string) error {

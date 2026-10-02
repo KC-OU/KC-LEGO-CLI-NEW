@@ -12,7 +12,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -42,17 +44,21 @@ type accessEdit struct {
 
 func accessScreens() map[string]screenModel {
 	return map[string]screenModel{
-		scrAccessHub:      accessHubScreen(),
-		scrAccessGroups:   &selectList{panelID: "ACCGRP", title: "Groups", rows: groupRows, keys: groupKeys, hint: "↑/↓ choose  Enter permissions  N new  C copy  R restricted  D delete"},
-		scrAccessGroupNew: accessGroupNewScreen(),
-		scrAccessGrid:     &gridScreen{},
-		scrMenuTabsEdit:   &menuTabsScreen{},
-		scrAccessUsers:    &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B menu tabs  N add user  X remove entry"},
-		scrAccessUserNew:  accessUserNewScreen(),
-		scrAccessUserEdit: accessUserEditScreen(),
-		scrAccessSettings: accessSettingsScreen(),
-		scrAccessCheckAsk: accessCheckAskScreen(),
-		scrAccessCheck:    accessCheckScreen(),
+		scrAccessHub:         accessHubScreen(),
+		scrAccessGroups:      &selectList{panelID: "ACCGRP", title: "Groups", rows: groupRows, keys: groupKeys, hint: "↑/↓ choose  Enter permissions  N new  C copy  R restricted  D delete"},
+		scrAccessGroupNew:    accessGroupNewScreen(),
+		scrAccessGrid:        &gridScreen{},
+		scrMenuTabsEdit:      &menuTabsScreen{},
+		scrAccessUsers:       &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B menu tabs  N add user  X remove entry"},
+		scrAccessUserNew:     accessUserNewScreen(),
+		scrAccessUserEdit:    accessUserEditScreen(),
+		scrAccessSettings:    accessSettingsScreen(),
+		scrAccessCheckAsk:    accessCheckAskScreen(),
+		scrAccessCheck:       accessCheckScreen(),
+		scrCustomMenu:        &customMenuScreen{},
+		scrAccessBotLink:     accessBotLinkScreen(),
+		scrAccessBotLinkEdit: accessBotLinkEditScreen(),
+		scrAccessBotReset:    accessBotResetScreen(),
 	}
 }
 
@@ -69,6 +75,8 @@ func accessHubScreen() screenModel {
 				{Key: "3", Label: "Security settings: 2FA window, idle, session, exports", Go: func(app *App) { app.goTo(scrAccessSettings) }},
 				{Key: "4", Label: "Check a user's effective permissions", Go: func(app *App) { app.goTo(scrAccessCheckAsk) }},
 				{Key: "5", Label: "Notifications: channels and where each alert goes", Go: func(app *App) { app.goTo(scrNotify) }},
+				{Key: "6", Label: "Customize the main menu (everyone's layout)", Go: func(app *App) { app.goTo(scrCustomMenu) }},
+				{Key: "7", Label: "My remote bot link (Discord/Slack, PIN, security Q&A)", Go: func(app *App) { app.goTo(scrAccessBotLink) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -782,6 +790,16 @@ func accessUserEditScreen() screenModel {
 			if u := app.pol().Users[e.User]; u != nil {
 				next.Perms = u.Perms           // overrides are edited on the grid
 				next.BadgeToken = u.BadgeToken // badges are issued from `wms access user badge`, not this form
+				// The remote-bot link/PIN/security-Q&A fields are edited on their own
+				// screen (accessBotLinkScreen), never this one — carry them forward
+				// or this form silently wipes them, same bug class BadgeToken once hit.
+				next.DiscordID = u.DiscordID
+				next.SlackID = u.SlackID
+				next.BotPINHash = u.BotPINHash
+				next.SecurityQuestion = u.SecurityQuestion
+				next.SecurityAnswerHash = u.SecurityAnswerHash
+				next.BotPINFails = u.BotPINFails
+				next.BotPINLockUntil = u.BotPINLockUntil
 			}
 			after, _ := json.Marshal(next)
 			if app.saveAccess("user "+e.User+": "+string(before)+" → "+string(after), func(p *access.Policy) error {
@@ -789,6 +807,204 @@ func accessUserEditScreen() screenModel {
 				return nil
 			}) {
 				app.onBack()
+			}
+		},
+	}
+}
+
+// ---- remote-bot link: Discord/Slack ID, bot PIN, security Q&A ----
+//
+// This is the credential internal/botapi checks on every webhook-driven
+// admin action — deliberately separate from the admin's real WMS login, so a
+// PIN typed into a chat app and intercepted never doubles as account
+// takeover. Always the acting admin's own record; one admin never sets this
+// up for another.
+
+const (
+	scrAccessBotLink     = "access_bot_link"
+	scrAccessBotLinkEdit = "access_bot_link_edit"
+	scrAccessBotReset    = "access_bot_reset"
+)
+
+func accessBotLinkScreen() screenModel {
+	return &menuScreen{
+		panelID:      "BOTLNK",
+		title:        "My Remote Bot Link",
+		adminGated:   true,
+		deniedAction: "ACCESS_CONTROL",
+		options: func(app *App) []menuOption {
+			return []menuOption{
+				{Key: "1", Label: "Set up / change my link, PIN, security question", Go: func(app *App) { app.goTo(scrAccessBotLinkEdit) }},
+				{Key: "2", Label: "Reset my bot PIN (needs a 2FA code and the security answer)", Go: func(app *App) { app.goTo(scrAccessBotReset) }},
+				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
+			}
+		},
+		intro: func(app *App) string {
+			if app.session == nil {
+				return ""
+			}
+			u := app.pol().Users[access.Key(app.session.Source, app.session.Username)]
+			if u == nil || u.BotPINHash == "" {
+				return app.theme.Muted.Render("No bot PIN set yet — the bot can't act for you until you set one up.")
+			}
+			linked := u.DiscordID != "" || u.SlackID != ""
+			status := "linked"
+			if !linked {
+				status = "no Discord/Slack ID linked yet"
+			}
+			return app.theme.Muted.Render("Bot PIN is set; " + status + ".")
+		},
+	}
+}
+
+func accessBotLinkEditScreen() screenModel {
+	return &formScreen{
+		panelID: "BOTLNKE",
+		title:   "My Remote Bot Link",
+		preamble: func(app *App) string {
+			hint := "Blank PIN/answer = leave it unchanged. Both PIN fields and both answer fields must match to change them."
+			if !app.governed() {
+				hint = "You need a group of your own in Access Control → Users first (even just \"admin\") " +
+					"before linking a bot credential — otherwise saving this would leave you with no policy-level " +
+					"permissions at all. " + hint
+			}
+			return app.theme.Muted.Render(hint)
+		},
+		build: func(app *App) []ui.Field {
+			u := &access.User{}
+			if app.session != nil {
+				if existing := app.pol().Users[access.Key(app.session.Source, app.session.Username)]; existing != nil {
+					u = existing
+				}
+			}
+			return []ui.Field{
+				{Label: "Discord user ID", Value: u.DiscordID},
+				{Label: "Slack user ID", Value: u.SlackID},
+				{Label: "New bot PIN (blank = unchanged)", Password: true},
+				{Label: "Confirm new bot PIN", Password: true},
+				{Label: "Security question (blank = unchanged)", Value: u.SecurityQuestion},
+				{Label: "New security answer (blank = unchanged)", Password: true},
+			}
+		},
+		submit: func(app *App, v []string) {
+			if app.session == nil {
+				app.onBack()
+				return
+			}
+			// A bare Users[] entry with no Groups would govern this admin with
+			// zero policy permissions, instantly losing every legacy-role fallback
+			// (see app.can) the moment it's created — refuse rather than silently
+			// lock the admin out of their own account to store a bot credential.
+			if !app.governed() {
+				app.setMsg("Give your account a group in Access Control → Users first, then come back to link your bot credential.", true)
+				return
+			}
+			discordID, slackID := strings.TrimSpace(v[0]), strings.TrimSpace(v[1])
+			pin, confirmPIN := v[2], v[3]
+			question := strings.TrimSpace(v[4])
+			answer := v[5]
+			if pin != confirmPIN {
+				app.setMsg("The two PIN fields don't match.", true)
+				return
+			}
+			var pinHash, answerHash string
+			if pin != "" {
+				h, err := auth.HashPartDB(pin)
+				if err != nil {
+					app.setMsg(err.Error(), true)
+					return
+				}
+				pinHash = h
+			}
+			if answer != "" {
+				h, err := auth.HashPartDB(strings.ToLower(strings.TrimSpace(answer)))
+				if err != nil {
+					app.setMsg(err.Error(), true)
+					return
+				}
+				answerHash = h
+			}
+			key := access.Key(app.session.Source, app.session.Username)
+			if app.saveAccess("bot link updated for "+key, func(p *access.Policy) error {
+				u := p.Users[key]
+				if u == nil {
+					u = &access.User{}
+					p.Users[key] = u
+				}
+				u.DiscordID, u.SlackID = discordID, slackID
+				if pinHash != "" {
+					u.BotPINHash, u.BotPINFails, u.BotPINLockUntil = pinHash, 0, ""
+				}
+				if question != "" {
+					u.SecurityQuestion = question
+				}
+				if answerHash != "" {
+					u.SecurityAnswerHash = answerHash
+				}
+				return nil
+			}) {
+				app.onBack()
+			}
+		},
+	}
+}
+
+func accessBotResetScreen() screenModel {
+	return &formScreen{
+		panelID: "BOTRST",
+		title:   "Reset My Bot PIN",
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("Needs a live 2FA code AND the correct security answer — either alone is refused.")
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{
+				{Label: "2FA code"},
+				{Label: "Security answer", Password: true},
+				{Label: "New bot PIN", Password: true},
+				{Label: "Confirm new bot PIN", Password: true},
+			}
+		},
+		submit: func(app *App, v []string) {
+			if app.session == nil {
+				app.onBack()
+				return
+			}
+			code, answer, pin, confirmPIN := strings.TrimSpace(v[0]), v[1], v[2], v[3]
+			if pin == "" || pin != confirmPIN {
+				app.setMsg("Enter a new PIN, and confirm it — both fields must match.", true)
+				return
+			}
+			key := access.Key(app.session.Source, app.session.Username)
+			u := app.pol().Users[key]
+			if u == nil || u.SecurityAnswerHash == "" {
+				app.setMsg("No security question is set up yet — set one up first.", true)
+				return
+			}
+			if !auth.VerifyPartDB(strings.ToLower(strings.TrimSpace(answer)), u.SecurityAnswerHash) {
+				app.setMsg("That doesn't match the security answer on file.", true)
+				return
+			}
+			if _, err := twofa.Verify(app.session.Username, app.session.Source, code); err != nil {
+				app.setMsg("2FA check failed: "+err.Error(), true)
+				return
+			}
+			newHash, err := auth.HashPartDB(pin)
+			if err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			if app.saveAccess("bot PIN reset for "+key, func(p *access.Policy) error {
+				u := p.Users[key]
+				if u == nil {
+					u = &access.User{}
+					p.Users[key] = u
+				}
+				u.BotPINHash, u.BotPINFails, u.BotPINLockUntil = newHash, 0, ""
+				return nil
+			}) {
+				app.setMsg("Bot PIN reset.", false)
+				app.stack = nil
+				app.cur = scrAccessHub
 			}
 		},
 	}

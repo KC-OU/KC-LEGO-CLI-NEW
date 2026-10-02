@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/labels"
 )
@@ -41,6 +43,7 @@ func TestLabelsScreenSavesTheNewFormatsForOneNonSheetSet(t *testing.T) {
 	app := newTestApp(t)
 	startLabels(app, []string{"75192-1"})
 	typeKeys(app, "1") // "4x6", not a sheet size
+	typeKeys(app, "5") // format: all of the above
 
 	if app.exportRes == nil {
 		t.Fatalf("no export result: %s", app.message)
@@ -62,6 +65,38 @@ func TestLabelsScreenSavesTheNewFormatsForOneNonSheetSet(t *testing.T) {
 		if err != nil || len(b) == 0 {
 			t.Errorf("%s: %v (len %d)", path, err, len(b))
 		}
+	}
+}
+
+// TestLabelsScreenAsksWhichFormatForOneNonSheetSet covers the actual ask:
+// an admin wanted to be asked which format(s) they want, not have
+// PNG/ZPL/.lbx generated silently every time.
+func TestLabelsScreenAsksWhichFormatForOneNonSheetSet(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
+	startLabels(app, []string{"75192-1"})
+	typeKeys(app, "1") // "4x6", not a sheet size
+
+	if app.exportRes != nil {
+		t.Fatal("picking the size alone must not save anything yet — a format choice comes first")
+	}
+	body := plain(app.View())
+	if !strings.Contains(body, "Format for") || !strings.Contains(body, "Brother .lbx") {
+		t.Errorf("expected the format picker, got:\n%s", body)
+	}
+
+	typeKeys(app, "1") // format: PDF + web page only
+	if app.exportRes == nil {
+		t.Fatalf("no export result: %s", app.message)
+	}
+	joined := strings.Join(app.exportRes.Warnings, " | ")
+	for _, dontWant := range []string{"PNG image", "Zebra ZPL", "Brother .lbx"} {
+		if strings.Contains(joined, dontWant) {
+			t.Errorf("choosing PDF-only must not also save extra formats, got %q", joined)
+		}
+	}
+	if findByExt(t, exports.Dir(), ".png") != "" {
+		t.Error("no PNG file should exist after a PDF-only choice")
 	}
 }
 

@@ -37,7 +37,8 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   trusts the dimensions completely; lower confidence than the others since Brother has never
   published a spec for it, built from community reverse-engineering — test-print before trusting
   it). `png`/`zpl`/`lbx` are one label at a time, no sheet stock; picking exactly one set at a
-  non-sheet size in the terminal now saves all three automatically alongside the usual PDF/HTML.
+  non-sheet size in the terminal now **asks which format(s)** you want (PDF alone, or also PNG/
+  ZPL/`.lbx`, or all of them) instead of always generating every extra format silently.
 - **Brother QL-600, 38mm** (`--size 38x90`) alongside the existing 62mm label sizes.
 - **Live/Test picker on the gateway**: with `WMS_TEST_BINARY_PATH`/`WMS_TEST_ENV_FILE` set (off by
   default, and never on the test instance itself), the already-exposed telnet/web gateway offers a

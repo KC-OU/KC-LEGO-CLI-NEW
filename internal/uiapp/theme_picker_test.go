@@ -8,7 +8,6 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
@@ -80,34 +79,15 @@ func indexOf(xs []string, x string) int {
 	return -1
 }
 
-func TestThemeRequestLogsAnAdminEventAndNotifies(t *testing.T) {
+// TestThemePickerRRoutesToTheGeneralFeatureRequest covers the one bit of
+// theme_picker.go that still reaches the (now generalized, see
+// my_settings.go) feature-request screen — the rest of that flow's own
+// behavior is covered by TestFeatureRequest* in my_settings_test.go.
+func TestThemePickerRRoutesToTheGeneralFeatureRequest(t *testing.T) {
 	app := newTestApp(t)
-	app.goTo(scrThemeRequest)
-	app.screens[scrThemeRequest].(*formScreen).submit(app, []string{"Solarized", "https://ethanschoonover.com/solarized/"})
-
-	evs, err := app.legoDB.AdminEvents(10)
-	if err != nil || len(evs) != 1 || evs[0].Kind != lego.EventThemeRequest {
-		t.Fatalf("AdminEvents = %+v, %v, want one theme_request event", evs, err)
-	}
-	if !strings.Contains(evs[0].Detail, "Solarized") || !strings.Contains(evs[0].Detail, "ethanschoonover") {
-		t.Errorf("detail = %q, want the name and link", evs[0].Detail)
-	}
-	if evs[0].Actor != "admin" {
-		t.Errorf("actor = %q, want the signed-in user", evs[0].Actor)
-	}
-	if !auditHas(t, "THEME_REQUESTED") {
-		t.Error("expected an audit log entry")
-	}
-}
-
-func TestThemeRequestRequiresAName(t *testing.T) {
-	app := newTestApp(t)
-	app.goTo(scrThemeRequest)
-	app.screens[scrThemeRequest].(*formScreen).submit(app, []string{"", "https://example.com"})
-	if !app.messageErr {
-		t.Error("a blank name should be refused")
-	}
-	if evs, _ := app.legoDB.AdminEvents(10); len(evs) != 0 {
-		t.Errorf("nothing should be logged on refusal, got %+v", evs)
+	app.cur = scrMyTheme
+	app.screens[scrMyTheme].HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if app.cur != scrFeatureRequest {
+		t.Fatalf("cur after R = %q, want %q", app.cur, scrFeatureRequest)
 	}
 }

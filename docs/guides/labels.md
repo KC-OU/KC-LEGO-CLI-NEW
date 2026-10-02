@@ -19,10 +19,11 @@ scanner mode reads.
 ## Printing
 
 In the terminal: **L** on a set's detail page, **L** on the completion dashboard, or *Set Workshop → 6* (`all`,
-`incomplete`, or set numbers). Pick the size; you get a **PDF** and a web page, with the one-time download link and QR code
-([exports](export-import.md#download-it-with-a-qr-code)) — scan it with your phone or open the link on the PC the printer is
-connected to. Pick exactly **one** set at a non-sheet size and three more files are saved alongside them automatically: a
-**PNG** image, **Zebra ZPL**, and a **Brother `.lbx`** — see Formats below.
+`incomplete`, or set numbers). Pick the size; for exactly **one** set at a non-sheet size, you're then asked which
+format(s) you want — PDF + web page alone, or also a **PNG** image, **Zebra ZPL**, or a **Brother `.lbx`**, or all of
+them (see Formats below). Any other pick (several sets, or a sheet size) goes straight to the usual **PDF** and a web
+page, with the one-time download link and QR code ([exports](export-import.md#download-it-with-a-qr-code)) — scan it
+with your phone or open the link on the PC the printer is connected to.
 
 ```bash
 wms-go lego labels 75192 --size 4x6 -o falcon.pdf

@@ -248,3 +248,51 @@ func TestBadgeTokenResolvesToTheRealUsernameNotTheKey(t *testing.T) {
 		t.Error("the plain username itself must not work as a badge")
 	}
 }
+
+func TestFindByBotIDResolvesTheFullKeyNotABareUsername(t *testing.T) {
+	p := &Policy{Users: map[string]*User{
+		Key("partdb", "alex"):   {DiscordID: "111222333"},
+		Key("modernwms", "sam"): {SlackID: "U0ABCDEF"},
+	}}
+	if key, ok := p.FindByBotID("discord", "111222333"); !ok || key != Key("partdb", "alex") {
+		t.Errorf("FindByBotID(discord) = %q, %v, want %q, true", key, ok, Key("partdb", "alex"))
+	}
+	if key, ok := p.FindByBotID("slack", "U0ABCDEF"); !ok || key != Key("modernwms", "sam") {
+		t.Errorf("FindByBotID(slack) = %q, %v, want %q, true", key, ok, Key("modernwms", "sam"))
+	}
+	if _, ok := p.FindByBotID("discord", "U0ABCDEF"); ok {
+		t.Error("a Slack ID must not resolve under the discord platform")
+	}
+	if _, ok := p.FindByBotID("discord", ""); ok {
+		t.Error("an empty id must not resolve to anyone")
+	}
+	if _, ok := p.FindByBotID("discord", "no-such-id"); ok {
+		t.Error("an unknown id must not resolve to anyone")
+	}
+}
+
+func TestValidateRefusesABotPINWithNoLinkedID(t *testing.T) {
+	p := &Policy{Groups: map[string]*Group{}, Users: map[string]*User{
+		Key("partdb", "alex"): {BotPINHash: "bcrypt-hash-but-no-id-linked"},
+	}}
+	if err := p.Validate(); err == nil {
+		t.Error("a bot PIN with no Discord/Slack ID linked should be refused")
+	}
+	p.Users[Key("partdb", "alex")].DiscordID = "111222333"
+	if err := p.Validate(); err != nil {
+		t.Errorf("once linked, Validate should pass: %v", err)
+	}
+}
+
+func TestValidateRefusesASecurityAnswerWithNoQuestion(t *testing.T) {
+	p := &Policy{Groups: map[string]*Group{}, Users: map[string]*User{
+		Key("partdb", "alex"): {SecurityAnswerHash: "bcrypt-hash-but-no-question"},
+	}}
+	if err := p.Validate(); err == nil {
+		t.Error("a security answer with no question should be refused")
+	}
+	p.Users[Key("partdb", "alex")].SecurityQuestion = "First pet's name?"
+	if err := p.Validate(); err != nil {
+		t.Errorf("once a question is set, Validate should pass: %v", err)
+	}
+}

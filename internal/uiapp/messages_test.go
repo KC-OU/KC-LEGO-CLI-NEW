@@ -67,6 +67,39 @@ func TestMessagesFullScreenAdvancesThenReturns(t *testing.T) {
 	}
 }
 
+// TestMessageComposeOffersADozenTemplatesAndFreeText covers the picker-based
+// compose flow (messageComposeScreen/menuScreen could only dispatch one
+// keystroke per option, so it was retired once the template list grew past
+// nine entries) — both a numbered quick-message pick and free text must reach
+// SendMessage with the right body.
+func TestMessageComposeOffersADozenTemplatesAndFreeText(t *testing.T) {
+	if len(quickMessages) < 10 {
+		t.Fatalf("quickMessages = %d entries, want at least ~12", len(quickMessages))
+	}
+
+	app := newTestApp(t)
+	app.message2 = &messageDraft{to: "checker3"}
+	startMessageCompose(app)
+	if app.cur != scrPick {
+		t.Fatalf("cur after startMessageCompose = %q, want %q", app.cur, scrPick)
+	}
+
+	pickSubmit(app, "3") // "Nice work — keep it up"
+	msgs, err := app.legoDB.UndeliveredMessages("checker3")
+	if err != nil || len(msgs) != 1 || msgs[0].Body != quickMessages[2].Label {
+		t.Fatalf("UndeliveredMessages = %+v, %v, want one message with body %q", msgs, err, quickMessages[2].Label)
+	}
+	_ = app.legoDB.MarkDelivered(msgs[0].ID)
+
+	app.message2 = &messageDraft{to: "checker3"}
+	startMessageCompose(app)
+	pickSubmit(app, "running a bit behind, back in ten")
+	msgs, err = app.legoDB.UndeliveredMessages("checker3")
+	if err != nil || len(msgs) != 1 || msgs[0].Body != "running a bit behind, back in ten" {
+		t.Fatalf("UndeliveredMessages after free text = %+v, %v", msgs, err)
+	}
+}
+
 func TestMessagesFullScreenQDismissesAllAtOnce(t *testing.T) {
 	app := newTestApp(t)
 	app.queueMessage(1, "admin", "first message")

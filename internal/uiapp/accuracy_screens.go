@@ -55,17 +55,18 @@ func fmtNonZero(n int) string {
 	return fmt.Sprint(n)
 }
 
-// ---- Admin: dock someone's accuracy ----
+// ---- Admin: dock or credit someone's accuracy ----
 
 func accuracyWhoScreen() screenModel {
 	return &menuScreen{
 		panelID:      "ACCWHO",
-		title:        "Dock Accuracy",
+		title:        "Dock / Credit Accuracy",
 		adminGated:   true,
 		deniedAction: "SETTINGS_ACCESS",
 		options: func(app *App) []menuOption {
 			return []menuOption{
-				{Key: "1", Label: "Pick a user…", Go: startDockPick},
+				{Key: "1", Label: "Dock someone's accuracy…", Go: func(app *App) { startDockPick(app, false) }},
+				{Key: "2", Label: "Credit someone's accuracy…", Go: func(app *App) { startDockPick(app, true) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -74,9 +75,10 @@ func accuracyWhoScreen() screenModel {
 
 type dockDraft struct {
 	username, role string
+	credit         bool // false = dock (subtract), true = credit (add) — the mirror action
 }
 
-func startDockPick(app *App) {
+func startDockPick(app *App, credit bool) {
 	rows, _ := app.users.ListAll(app.ctx())
 	var items []pickItem
 	seen := map[string]bool{}
@@ -87,23 +89,27 @@ func startDockPick(app *App) {
 		seen[r.Username] = true
 		items = append(items, pickItem{Key: r.Username, Label: r.Username + "  (id " + r.ID + ", " + r.RoleOrGroup + ")"})
 	}
+	verb := "Dock"
+	if credit {
+		verb = "Credit"
+	}
 	startPick(app, &pickState{
-		Header: "Dock whose accuracy?",
+		Header: verb + " whose accuracy?",
 		Prompt: "Choose",
 		Items:  items,
 		OnPick: func(app *App, it pickItem) {
-			startDockRole(app, it.Key)
+			startDockRole(app, it.Key, credit)
 		},
 	})
 }
 
-func startDockRole(app *App, username string) {
+func startDockRole(app *App, username string, credit bool) {
 	startPick(app, &pickState{
 		Header: "As a picker or a checker?",
 		Prompt: "Choose",
 		Items:  []pickItem{{Key: lego.AccuracyPicker, Label: "Picker accuracy"}, {Key: lego.AccuracyChecker, Label: "Checker accuracy"}},
 		OnPick: func(app *App, it pickItem) {
-			app.dock = &dockDraft{username: username, role: it.Key}
+			app.dock = &dockDraft{username: username, role: it.Key, credit: credit}
 			app.goTo(scrAccuracyDock)
 		},
 	})
@@ -112,9 +118,23 @@ func startDockRole(app *App, username string) {
 func accuracyDockScreen() screenModel {
 	return &formScreen{
 		panelID: "ACCDCK",
-		title:   "Dock Accuracy",
+		title:   "Dock / Credit Accuracy",
+		preamble: func(app *App) string {
+			if app.dock == nil {
+				return ""
+			}
+			verb := "Docking"
+			if app.dock.credit {
+				verb = "Crediting"
+			}
+			return app.theme.Muted.Render(fmt.Sprintf("%s %s's %s accuracy.", verb, app.dock.username, app.dock.role))
+		},
 		build: func(app *App) []ui.Field {
-			return []ui.Field{{Label: "Points to dock (e.g. 10)"}, {Label: "Reason"}}
+			label := "Points to dock (e.g. 10)"
+			if app.dock != nil && app.dock.credit {
+				label = "Points to credit (e.g. 10)"
+			}
+			return []ui.Field{{Label: label}, {Label: "Reason"}}
 		},
 		submit: func(app *App, values []string) {
 			if app.dock == nil {
@@ -131,16 +151,22 @@ func accuracyDockScreen() screenModel {
 				return
 			}
 			d := app.dock
-			if err := app.legoDB.DockAccuracy(d.username, d.role, amount, values[1], app.userName()); err != nil {
+			verb, pastTense, sign, kind := "dock", "Docked", "-", lego.EventAccuracyDock
+			apply := app.legoDB.DockAccuracy
+			if d.credit {
+				verb, pastTense, sign, kind = "credit", "Credited", "+", lego.EventAccuracyCredit
+				apply = app.legoDB.CreditAccuracy
+			}
+			if err := apply(d.username, d.role, amount, values[1], app.userName()); err != nil {
 				app.setMsg(err.Error(), true)
 				return
 			}
-			app.audit.Log(app.userName(), "", "ACCURACY_DOCKED", "SUCCESS", fmt.Sprintf("%s (%s) -%.1f%%: %s", d.username, d.role, amount, values[1]))
-			_ = app.legoDB.LogEvent(lego.EventAccuracyDock, app.userName(), d.username, fmt.Sprintf("%s -%.1f%%: %s", d.role, amount, values[1]))
-			app.notifyEvent(lego.EventAccuracyDock, fmt.Sprintf("%s's %s accuracy docked %.1f%% by %s: %s", d.username, d.role, amount, app.userName(), values[1]), "")
-			_ = app.legoDB.SendMessage(app.userName(), d.username, fmt.Sprintf("Your %s accuracy was docked %.1f%% by an admin: %s", d.role, amount, values[1]))
+			app.audit.Log(app.userName(), "", "ACCURACY_"+strings.ToUpper(verb)+"ED", "SUCCESS", fmt.Sprintf("%s (%s) %s%.1f%%: %s", d.username, d.role, sign, amount, values[1]))
+			_ = app.legoDB.LogEvent(kind, app.userName(), d.username, fmt.Sprintf("%s %s%.1f%%: %s", d.role, sign, amount, values[1]))
+			app.notifyEvent(kind, fmt.Sprintf("%s's %s accuracy %sed %.1f%% by %s: %s", d.username, d.role, verb, amount, app.userName(), values[1]), "")
+			_ = app.legoDB.SendMessage(app.userName(), d.username, fmt.Sprintf("Your %s accuracy was %sed %.1f%% by an admin: %s", d.role, verb, amount, values[1]))
 			app.dock = nil
-			app.setMsg("Docked.", false)
+			app.setMsg(pastTense+".", false)
 			app.stack = nil
 			app.cur = scrAdminHub
 		},

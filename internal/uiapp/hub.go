@@ -9,40 +9,87 @@ func anyModuleAllowed(app *App, modules ...string) bool {
 	return false
 }
 
-// hubOptions mirrors AVAILABLE_TABS from modernwms_tui.py, but groups the
-// warehouse-operation and admin tabs into the Operations/Admin submenus
-// below instead of listing all eleven as one flat page — each submenu item
-// still gates on the exact same auth.IsModuleAllowed check it always did, so
-// this only adds a navigation hop for those items, never a permission
-// change; dashboard/partdb/scripts/lego stay top-level since (per
-// alwaysAllowedModules) every signed-in user can already reach them.
-func hubOptions(app *App) []menuOption {
-	// open makes the chosen entry the highlighted tab (classic layout's tab
-	// bar) for every screen reached from it, then navigates.
-	open := func(key, target string) func(app *App) {
-		return func(app *App) {
-			app.activeTab = key
-			app.goTo(target)
+// mainMenuItem is one entry an admin can choose to show on the top-level
+// menu — either a standard hub tab or a promoted row from the Admin submenu
+// (see adminHubScreen below) — with a fixed hotkey of its own regardless of
+// where it lands in the chosen order, so G/V/toggleLego's hardcoded tab-bar
+// keys ("1" overview, "9" admin, "e" lego) keep lighting up the right tab
+// whenever that tab is actually shown.
+type mainMenuItem struct {
+	key, hotkey, label string
+	allowed            func(app *App) bool
+	open               func(app *App)
+}
+
+// open makes the chosen entry the highlighted tab (classic layout's tab bar)
+// for every screen reached from it, then navigates.
+func openTab(hotkey, target string) func(app *App) {
+	return func(app *App) {
+		app.activeTab = hotkey
+		app.goTo(target)
+	}
+}
+
+// mainMenuCatalog is every item that can appear on the top-level menu: the
+// six hub tabs, in their traditional order and hotkeys, plus every row in
+// the Admin submenu (adminHubScreen) promoted out of it — anything else
+// stays nested exactly as it already is. See internal/access.Settings.MainMenu
+// and customMenuScreen for where an admin chooses from this list.
+var mainMenuCatalog = []mainMenuItem{
+	{"overview", "1", "Overview", func(app *App) bool { return app.moduleAllowed("dashboard") }, openTab("1", scrOverview)},
+	{"partdb", "2", "PartDB Hub", func(app *App) bool { return app.moduleAllowed("partdb") }, openTab("2", scrPartDBHub)},
+	{"operations", "3", "Operations", func(app *App) bool {
+		return anyModuleAllowed(app, "asn", "warehouse_ops", "stock_lookup", "master_data", "delivery")
+	}, openTab("3", scrOpsHub)},
+	{"scripts", "4", "Script Hub", func(app *App) bool { return app.moduleAllowed("scripts") }, openTab("4", scrScripts)},
+	{"lego", "e", "LEGO Collection", func(app *App) bool { return app.moduleAllowed("lego") }, openTab("e", scrLegoHub)},
+	{"admin", "9", "Admin", func(app *App) bool {
+		return anyModuleAllowed(app, "user_mgmt", "settings", "docker", "access")
+	}, openTab("9", scrAdminHub)},
+	{"admin_users", "b", "Admin: Users", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrUsers) }},
+	{"admin_settings", "c", "Admin: Settings & API Keys", func(app *App) bool { return app.moduleAllowed("settings") }, func(app *App) { app.goTo(scrSettingsHub) }},
+	{"admin_containers", "d", "Admin: Containers", func(app *App) bool { return app.moduleAllowed("docker") }, func(app *App) { app.goTo(scrContainers) }},
+	{"admin_access", "f", "Admin: Access Control", func(app *App) bool { return app.moduleAllowed("access") }, func(app *App) { app.goTo(scrAccessHub) }},
+	{"admin_assign", "h", "Admin: Assign Work", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAssignPick) }},
+	{"admin_message", "i", "Admin: Message a User", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrMessagePick) }},
+	{"admin_accuracy", "j", "Admin: Dock / Credit Accuracy", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAccuracyWho) }},
+	{"admin_sessions", "k", "Admin: Live Sessions", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrLiveSessions) }},
+	{"admin_handover", "m", "Admin: Shift Handover Note", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrHandover) }},
+	{"admin_activity", "n", "Admin: Recent Activity", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAdminEvents) }},
+}
+
+// defaultMainMenuKeys is today's unmodified top-level menu — what every
+// installation already showed before menu customization existed, and what a
+// cleared/never-set Settings.MainMenu still produces.
+var defaultMainMenuKeys = []string{"overview", "partdb", "operations", "scripts", "lego", "admin"}
+
+func mainMenuItemByKey(key string) *mainMenuItem {
+	for i := range mainMenuCatalog {
+		if mainMenuCatalog[i].key == key {
+			return &mainMenuCatalog[i]
 		}
 	}
+	return nil
+}
+
+// hubOptions mirrors AVAILABLE_TABS from modernwms_tui.py by default (see
+// defaultMainMenuKeys), but an admin can reorder it, drop tabs they don't
+// want shown, or promote specific Admin rows onto it instead — see
+// internal/access.Settings.MainMenu and customMenuScreen. Every item still
+// gates on the exact same permission check it always did, so this only
+// changes navigation, never what a given item requires to open.
+func hubOptions(app *App) []menuOption {
+	keys := app.pol().Settings.MainMenu
+	if len(keys) == 0 {
+		keys = defaultMainMenuKeys
+	}
 	var opts []menuOption
-	if app.moduleAllowed("dashboard") {
-		opts = append(opts, menuOption{Key: "1", Label: "Overview", Go: open("1", scrOverview)})
-	}
-	if app.moduleAllowed("partdb") {
-		opts = append(opts, menuOption{Key: "2", Label: "PartDB Hub", Go: open("2", scrPartDBHub)})
-	}
-	if anyModuleAllowed(app, "asn", "warehouse_ops", "stock_lookup", "master_data", "delivery") {
-		opts = append(opts, menuOption{Key: "3", Label: "Operations", Go: open("3", scrOpsHub)})
-	}
-	if app.moduleAllowed("scripts") {
-		opts = append(opts, menuOption{Key: "4", Label: "Script Hub", Go: open("4", scrScripts)})
-	}
-	if app.moduleAllowed("lego") {
-		opts = append(opts, menuOption{Key: "e", Label: "LEGO Collection", Go: open("e", scrLegoHub)})
-	}
-	if anyModuleAllowed(app, "user_mgmt", "settings", "docker", "access") {
-		opts = append(opts, menuOption{Key: "9", Label: "Admin", Go: open("9", scrAdminHub)})
+	for _, key := range keys {
+		it := mainMenuItemByKey(key)
+		if it == nil || !it.allowed(app) {
+			continue
+		}
+		opts = append(opts, menuOption{Key: it.hotkey, Label: it.label, Go: it.open})
 	}
 	return opts
 }
@@ -91,7 +138,7 @@ func adminHubScreen() screenModel {
 		{"4", "access", "Access Control (permissions, 2FA, timeouts)", scrAccessHub},
 		{"5", "user_mgmt", "Assign Work (pickers/checkers)", scrAssignPick},
 		{"6", "user_mgmt", "Message a User", scrMessagePick},
-		{"7", "user_mgmt", "Dock Accuracy", scrAccuracyWho},
+		{"7", "user_mgmt", "Dock / Credit Accuracy", scrAccuracyWho},
 		{"8", "user_mgmt", "Live Sessions", scrLiveSessions},
 		{"9", "user_mgmt", "Shift Handover Note", scrHandover},
 		{"a", "user_mgmt", "Recent Activity", scrAdminEvents},

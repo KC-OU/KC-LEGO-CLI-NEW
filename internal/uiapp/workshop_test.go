@@ -113,7 +113,8 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 
 	// A label for it.
 	startLabels(app, []string{"75192-1"})
-	typeKeys(app, "1")
+	typeKeys(app, "1") // "4x6"
+	typeKeys(app, "1") // format: PDF + web page (default)
 	if app.exportRes == nil || !strings.HasSuffix(app.exportRes.Path, ".pdf") {
 		t.Fatalf("labels: %+v %q", app.exportRes, app.message)
 	}

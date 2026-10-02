@@ -164,6 +164,7 @@ type App struct {
 	message2        *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
 	abandonAdmin    string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
 	forceOff        *forceOffDraft   // an admin's in-progress "force off a job" flow (see tickets_screens.go)
+	kick            *kickDraft       // an admin's in-progress "kick a live session" flow (see sessions_screen.go)
 	toasts          []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
 	sessionID       string           // this process's own id in live_sessions (see sessions.go)
 	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
@@ -310,6 +311,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.goTo(scrMessagesFull)
 			}
 			a.checkTicketStillMine()
+			a.checkForceLogoff()
 			a.heartbeat()
 		}
 		return a, idleTick()
@@ -631,6 +633,24 @@ func (a *App) checkTicketStillMine() {
 	}
 }
 
+// checkForceLogoff notices when an admin has kicked this live session (see
+// lego.DB.ForceLogoff) — the idle tick is how this separate process finds
+// out, same poll-and-clear shape as pollMessages/checkTicketStillMine. Unlike
+// a.lock(), the message explains *why* rather than just that the session
+// ended, so it uses setMsg directly instead of lock()'s fixed wording.
+func (a *App) checkForceLogoff() {
+	if a.sessionID == "" || a.session == nil {
+		return
+	}
+	msg, found, err := a.legoDB.ConsumeForceLogoff(a.sessionID)
+	if err != nil || !found {
+		return
+	}
+	a.audit.Log(a.session.Username, a.session.Role, "SESSION_FORCED_OFF", "SUCCESS", msg)
+	a.resetSession()
+	a.setMsg(msg, true)
+}
+
 // back does not clear a.message: goTo already clears it on every forward
 // navigation, and the dominant pattern across this package is
 // setMsg(...); app.onBack() to show a result (a create/update confirmation,
@@ -708,6 +728,15 @@ func (a *App) enterHub() {
 	a.activeTab = "1"
 	a.goTo(a.landingScreen())
 	if a.session != nil {
+		// A picker/checker sees today's accuracy (and any admin dock/credit
+		// behind it) right at sign-on, not buried in a menu they'd have to
+		// think to open — pushed before the messages/handover check below so
+		// an urgent message still ends up on top of it, not under it. Gated
+		// by isPickerOrChecker, not just roleForApp, so an admin/operator who
+		// also happens to hold sets.check/orders.manage isn't redirected too.
+		if isPickerOrChecker(a) {
+			a.goTo(scrMyAccuracy)
+		}
 		// Any message sent while you were away, plus the shift handover note, show
 		// full-screen right at sign-on (see scrMessagesFull) — not up to 15s later,
 		// and not as a corner popup a long message would spill out of.

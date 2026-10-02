@@ -106,6 +106,26 @@ type User struct {
 	// literal username, so a lost badge is revoked by reprinting, not by changing
 	// a real credential. See NewBadgeToken and Policy.FindByBadge.
 	BadgeToken string `json:"badge_token,omitempty"`
+	// DiscordID/SlackID are the admin's platform user ID, pre-linked so a bot
+	// webhook call can resolve "who is this" before anything else runs — never a
+	// username/handle, since those change; a platform's own ID doesn't.
+	DiscordID string `json:"discord_id,omitempty"`
+	SlackID   string `json:"slack_id,omitempty"`
+	// BotPINHash gates every remote-bot action (internal/botapi) — a separate
+	// secret from the real WMS login, so a PIN typed into a chat app and
+	// intercepted never doubles as account takeover. bcrypt, see
+	// internal/auth.HashPartDB/VerifyPartDB.
+	BotPINHash string `json:"bot_pin_hash,omitempty"`
+	// SecurityQuestion/SecurityAnswerHash back a forgotten-PIN reset: both this
+	// AND a live 2FA code are required together (see internal/twofa.Verify), so
+	// losing access to either alone can never reset the PIN on its own.
+	SecurityQuestion   string `json:"security_question,omitempty"`
+	SecurityAnswerHash string `json:"security_answer_hash,omitempty"` // bcrypt; answer lowercased+trimmed first
+	// BotPINFails/BotPINLockUntil throttle PIN guessing. Kept here rather than in
+	// memory because they must survive a gateway restart, and this file's own
+	// locked read-modify-write (Update) is already the mechanism for that.
+	BotPINFails     int    `json:"bot_pin_fails,omitempty"`
+	BotPINLockUntil string `json:"bot_pin_lock_until,omitempty"` // RFC3339; "" = not locked
 }
 
 // NewBadgeToken generates a random opaque badge token: the same 160-bit base32
@@ -136,6 +156,30 @@ func (p *Policy) FindByBadge(token string) (username string, ok bool) {
 	return "", false
 }
 
+// FindByBotID resolves a Discord/Slack user ID to the stored "source:username"
+// key it's linked to — the full key, not a bare username, since callers need
+// it to compute Policy.Effective(source, name) for the remote-bot permission
+// check (see internal/botapi).
+func (p *Policy) FindByBotID(platform, id string) (key string, ok bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", false
+	}
+	for k, u := range p.Users {
+		switch platform {
+		case "discord":
+			if u.DiscordID != "" && u.DiscordID == id {
+				return k, true
+			}
+		case "slack":
+			if u.SlackID != "" && u.SlackID == id {
+				return k, true
+			}
+		}
+	}
+	return "", false
+}
+
 // Settings are the global timings; nil means "use the config key" (the env/settings value).
 type Settings struct {
 	GraceMin    *int `json:"grace_minutes,omitempty"`
@@ -145,6 +189,9 @@ type Settings struct {
 	LinkMinutes *int `json:"link_minutes,omitempty"`
 	// NotifyRoutes sends each alert event to notify channel ids (none = every channel).
 	NotifyRoutes map[string][]string `json:"notify_routes,omitempty"`
+	// MainMenu is the ordered keys (see uiapp's mainMenuCatalog) an admin chose for
+	// everyone's top-level menu — empty means "the built-in default order/set."
+	MainMenu []string `json:"main_menu,omitempty"`
 }
 
 type Policy struct {
@@ -459,6 +506,12 @@ func (p *Policy) Validate() error {
 		}
 		if u.TwoFA != TwoFADefault && u.TwoFA != TwoFARequired && u.TwoFA != TwoFAExempt {
 			return fmt.Errorf("user %s: 2FA must be required, exempt or default", key)
+		}
+		if u.BotPINHash != "" && u.DiscordID == "" && u.SlackID == "" {
+			return fmt.Errorf("user %s: a bot PIN with no linked Discord/Slack ID can never be used", key)
+		}
+		if u.SecurityAnswerHash != "" && u.SecurityQuestion == "" {
+			return fmt.Errorf("user %s: a security answer with no question makes no sense", key)
 		}
 		if u.TwoFA == TwoFAExempt {
 			for _, gn := range u.Groups {

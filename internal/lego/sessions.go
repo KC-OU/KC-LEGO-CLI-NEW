@@ -1,6 +1,10 @@
 package lego
 
-import "time"
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
 
 // A live session heartbeat, upserted by the session itself on a slow timer and
 // deleted on a clean exit (see uiapp App.heartbeat) — purely diagnostic (Admin →
@@ -23,6 +27,31 @@ func (d *DB) Heartbeat(sessionID, username, role, transport, remoteAddr, screen 
 func (d *DB) EndSession(sessionID string) error {
 	_, err := d.Exec(`DELETE FROM live_sessions WHERE session_id = ?`, sessionID)
 	return err
+}
+
+// ForceLogoff flags sessionID to be signed off at its next idle tick (at most
+// 15s away — see app.go's checkForceLogoff), carrying the message that
+// session should show once it happens.
+func (d *DB) ForceLogoff(sessionID, message string) error {
+	_, err := d.Exec(`INSERT INTO force_logoffs (session_id, message, created_at) VALUES (?,?,?)
+		ON CONFLICT(session_id) DO UPDATE SET message = excluded.message, created_at = excluded.created_at`,
+		sessionID, message, time.Now().Format(time.RFC3339))
+	return err
+}
+
+// ConsumeForceLogoff reports and clears a pending ForceLogoff for sessionID —
+// a session calls this on its own idle tick, same poll-and-clear shape as
+// pollMessages/MarkDelivered.
+func (d *DB) ConsumeForceLogoff(sessionID string) (message string, found bool, err error) {
+	err = d.QueryRow(`SELECT message FROM force_logoffs WHERE session_id = ?`, sessionID).Scan(&message)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	_, err = d.Exec(`DELETE FROM force_logoffs WHERE session_id = ?`, sessionID)
+	return message, true, err
 }
 
 // LiveSessions lists every session seen within maxAge — older rows are treated as

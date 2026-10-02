@@ -64,7 +64,8 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrSettingsPartDB:      settingsPartDBScreen(),
 		scrSettingsTheme:       &themeScreen{admin: true},
 		scrMyTheme:             &themeScreen{},
-		scrThemeRequest:        themeRequestScreen(),
+		scrFeatureRequest:      featureRequestScreen(),
+		scrMessageAdmin:        messageAdminScreen(),
 		scrMyLoading:           loadingPrefScreen(),
 		scrMySettings:          mySettingsScreen(),
 		scrMyRebrickKey:        myRebrickableKeyScreen(),
@@ -117,9 +118,8 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrAccuracyWho:  accuracyWhoScreen(),
 		scrAccuracyDock: accuracyDockScreen(),
 
-		scrMessagePick:    messagePickScreen(),
-		scrMessageCompose: messageComposeScreen(),
-		scrMessagesFull:   messagesFullScreen(),
+		scrMessagePick:  messagePickScreen(),
+		scrMessagesFull: messagesFullScreen(),
 
 		scrLiveSessions: liveSessionsScreen(),
 		scrHandover:     handoverScreen(),

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/botapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
@@ -97,6 +98,15 @@ func newGatewayServeCmd() *cobra.Command {
 			})
 			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
 				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })
+			}
+			if port := strings.TrimSpace(config.Get(config.BotAPIPort)); port != "" {
+				legoDB, err := openLego()
+				if err != nil {
+					return fmt.Errorf("opening lego db for the bot API: %w", err)
+				}
+				legoDB.SetActor("botapi")
+				defer legoDB.Close()
+				g.Go(func() error { return botapi.Serve(gctx, "127.0.0.1:"+port, legoDB, audit.New()) })
 			}
 			return g.Wait()
 		},

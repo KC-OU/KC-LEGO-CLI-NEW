@@ -113,6 +113,9 @@ not a password reset.
    never a single checkbox; **N** adds a user; **X** removes the entry (back to their ModernWMS role).
 3. **Security settings**: the global timings above.
 4. **Check a user's effective permissions**: every permission with *why* ("allowed by group exporter", "denied by user override").
+5. **My remote bot link**: link your Discord/Slack ID, set a bot PIN and a security question — see
+   [the remote-bot API guide](remote-bot-api.md) for what that credential actually unlocks. You need a group of
+   your own first; this screen refuses to run for an account with no policy entry at all.
 
 You can't save a change that removes your own `access.manage`. Every change is audited as `ACCESS_CHANGED` with what changed.
 

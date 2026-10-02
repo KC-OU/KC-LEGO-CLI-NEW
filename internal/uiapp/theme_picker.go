@@ -2,7 +2,6 @@ package uiapp
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -170,7 +168,7 @@ func (s *themeScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	case s.admin && isKey(msg, 'd'):
 		s.save(app, true)
 	case isKey(msg, 'r'):
-		app.goTo(scrThemeRequest)
+		app.goTo(scrFeatureRequest)
 	}
 }
 
@@ -213,7 +211,7 @@ func (s *themeScreen) Body(app *App) string {
 		}
 		list.WriteString(style.Render(marker+n) + "\n")
 	}
-	keys := "↑/↓ choose   Enter use for me   R request a new one"
+	keys := "↑/↓ choose   Enter use for me   R request a feature"
 	if s.admin {
 		keys += "   D default for everyone"
 	}
@@ -224,50 +222,6 @@ func (s *themeScreen) Body(app *App) string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(24).Render(left), preview)
 	}
 	return body + "\n\n" + t.Muted.Render(keys)
-}
-
-// ---- Request a new theme ----
-//
-// Adding a theme for real still means editing internal/ui/theme.go by hand
-// (base-16 ANSI colours only, no dynamic/arbitrary-colour loading — see that
-// file's own doc comment) — this just gets the request to an admin without
-// one having to go looking for it: the same activity feed and notification
-// routing (Discord, Slack, ...) every other admin-relevant event already
-// uses, not a new delivery mechanism.
-
-const scrThemeRequest = "theme_request"
-
-func themeRequestScreen() screenModel {
-	return &formScreen{
-		panelID: "THMREQ",
-		title:   "Request a New Theme",
-		preamble: func(app *App) string {
-			return app.theme.Muted.Render("Found a colour scheme you'd like added? Tell an admin about it.")
-		},
-		build: func(app *App) []ui.Field {
-			return []ui.Field{{Label: "Theme name"}, {Label: "Link or description"}}
-		},
-		submit: func(app *App, v []string) {
-			name, link := strings.TrimSpace(v[0]), strings.TrimSpace(v[1])
-			if name == "" {
-				app.setMsg("Enter a name for the theme.", true)
-				return
-			}
-			user, role := "", ""
-			if app.session != nil {
-				user, role = app.session.Username, app.session.Role
-			}
-			detail := name
-			if link != "" {
-				detail += ": " + link
-			}
-			_ = app.legoDB.LogEvent(lego.EventThemeRequest, user, "", detail)
-			app.notifyEvent(lego.EventThemeRequest, fmt.Sprintf("%s requested a new theme: %s", user, detail), "")
-			app.audit.Log(user, role, "THEME_REQUESTED", "SUCCESS", detail)
-			app.setMsg("Sent — an admin will see it in Recent Activity.", false)
-			app.onBack()
-		},
-	}
 }
 
 // themePreview is a small sample panel drawn in the named theme.

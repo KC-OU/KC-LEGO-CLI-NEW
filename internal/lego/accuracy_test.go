@@ -109,3 +109,38 @@ func TestDockAccuracy(t *testing.T) {
 		t.Fatalf("accuracy after a manual dock = %v, %v, want 85", acc, err)
 	}
 }
+
+func TestCreditAccuracy(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.DockAccuracy("sam", AccuracyPicker, 15, "too many mis-picks this week", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreditAccuracy("sam", AccuracyPicker, 10, "made up for it this afternoon", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	acc, err := db.AccuracyToday("sam", AccuracyPicker)
+	if err != nil || acc != 95 {
+		t.Fatalf("accuracy after a -15 dock then a +10 credit = %v, %v, want 95", acc, err)
+	}
+}
+
+func TestCreditAccuracyClampsAt100(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.CreditAccuracy("sam", AccuracyPicker, 50, "exceptional week", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	acc, err := db.AccuracyToday("sam", AccuracyPicker)
+	if err != nil || acc != 100 {
+		t.Fatalf("a credit on an already-perfect day = %v, %v, want still 100 (clamped)", acc, err)
+	}
+}

@@ -2,7 +2,6 @@ package uiapp
 
 import (
 	"fmt"
-	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -132,7 +131,7 @@ func startMessagePick(app *App) {
 		Items:  items,
 		OnPick: func(app *App, it pickItem) {
 			app.message2 = &messageDraft{to: it.Key}
-			app.goTo(scrMessageCompose)
+			startMessageCompose(app)
 		},
 	})
 }
@@ -141,39 +140,30 @@ var quickMessages = []pickItem{
 	{Key: "double_check", Label: "Please double check your last set — accuracy dipped"},
 	{Key: "finish_today", Label: "Can you finish what's outstanding today?"},
 	{Key: "nice_work", Label: "Nice work — keep it up"},
+	{Key: "reassigned", Label: "We've assigned you another task — don't worry, your accuracy won't be affected"},
+	{Key: "break_reminder", Label: "Take your break when you're ready, no rush"},
+	{Key: "slow_down", Label: "No need to rush — accuracy matters more than speed"},
+	{Key: "check_in", Label: "Can you check in when you get a minute?"},
+	{Key: "meeting", Label: "Quick meeting in 5 minutes, head over when you can"},
+	{Key: "shift_end", Label: "You're good to log off for today — thanks for the work"},
+	{Key: "priority_change", Label: "Priorities have changed — please check your task list"},
+	{Key: "training", Label: "Please review the training notes before your next set"},
+	{Key: "welcome_back", Label: "Welcome back — let us know if you need anything to get going again"},
 }
 
-const scrMessageCompose = "message_compose"
-
-func messageComposeScreen() screenModel {
-	return &menuScreen{
-		panelID: "MSGCMP",
-		title:   "Message",
-		options: func(app *App) []menuOption {
-			var opts []menuOption
-			for i, q := range quickMessages {
-				body := q.Label
-				opts = append(opts, menuOption{Key: strconv.Itoa(i + 1), Label: body, Go: func(app *App) { sendAdminMessage(app, body) }})
-			}
-			opts = append(opts, menuOption{Key: "w", Label: "Write your own…", Go: func(app *App) {
-				startPick(app, &pickState{
-					Header:    "Message",
-					Prompt:    "Type it",
-					AllowFree: true,
-					FreeHint:  "your message",
-					OnFree:    func(app *App, text string) { sendAdminMessage(app, text) },
-				})
-			}})
-			opts = append(opts, menuOption{Key: "0", Label: "Cancel", Go: func(app *App) { app.message2 = nil; app.onBack() }})
-			return opts
-		},
-		intro: func(app *App) string {
-			if app.message2 == nil {
-				return ""
-			}
-			return app.theme.Muted.Render("To: " + app.message2.to)
-		},
-	}
+// startMessageCompose shows the quick-message list (now a dozen templates, too
+// many for menuScreen's one-keystroke dispatch) via the shared numbered picker,
+// falling through to free text for anything not on the list.
+func startMessageCompose(app *App) {
+	startPick(app, &pickState{
+		Header:    "To: " + app.message2.to,
+		Prompt:    "Choose a quick message, or type your own",
+		Items:     quickMessages,
+		AllowFree: true,
+		FreeHint:  "or write your own",
+		OnPick:    func(app *App, it pickItem) { sendAdminMessage(app, it.Label) },
+		OnFree:    func(app *App, text string) { sendAdminMessage(app, text) },
+	})
 }
 
 func sendAdminMessage(app *App, body string) {

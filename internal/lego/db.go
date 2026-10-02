@@ -238,6 +238,12 @@ func ensureSchema(db *sql.DB) error {
 			session_id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '',
 			transport TEXT NOT NULL DEFAULT '', remote_addr TEXT NOT NULL DEFAULT '', screen TEXT NOT NULL DEFAULT '',
 			started_at TEXT NOT NULL, last_seen TEXT NOT NULL)`,
+		// A one-shot flag an admin sets to force a specific live session to sign
+		// off at its next idle tick (see ForceLogoff/ConsumeForceLogoff) — kept
+		// separate from live_sessions itself, which stays purely diagnostic and
+		// never access-related.
+		`CREATE TABLE IF NOT EXISTS force_logoffs (
+			session_id TEXT PRIMARY KEY, message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
 		// The current shift handover note (see handover.go) — one row, always id 1,
 		// overwritten by whoever last saved it.
 		`CREATE TABLE IF NOT EXISTS handover_note (

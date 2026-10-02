@@ -3,10 +3,14 @@ package uiapp
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/pquerna/otp/totp"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 )
 
 func adminApp(t *testing.T) *App {
@@ -113,6 +117,151 @@ func TestEditingAUserPreservesTheirBadgeToken(t *testing.T) {
 	u := p.Users["partdb:exportbot"]
 	if u == nil || u.BadgeToken != "BADGE123XYZ" {
 		t.Fatalf("saving the edit form must keep the badge token: %+v (%s)", u, app.message)
+	}
+}
+
+// TestEditingAUserPreservesTheirBotLink is the same regression as the badge
+// token above, for the remote-bot fields (internal/botapi): they're edited on
+// accessBotLinkEditScreen, never this form, so a save here must not wipe them.
+func TestEditingAUserPreservesTheirBotLink(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:exportbot"] = &access.User{
+			Groups: []string{"exporter"}, DiscordID: "111222333", BotPINHash: "hash",
+			SecurityQuestion: "First pet?", SecurityAnswerHash: "hash2", BotPINFails: 2, BotPINLockUntil: "2030-01-01T00:00:00Z",
+		}
+	})
+	app.loadPolicy()
+	app.accessEdit = &accessEdit{User: "partdb:exportbot"}
+	app.goTo(scrAccessUserEdit)
+	app.screens[scrAccessUserEdit].(*formScreen).submit(app, []string{"exporter", "default", "", "all", "", "", "", "", "renamed note"})
+	p, _ := access.Load()
+	u := p.Users["partdb:exportbot"]
+	if u == nil || u.DiscordID != "111222333" || u.BotPINHash != "hash" || u.SecurityQuestion != "First pet?" ||
+		u.SecurityAnswerHash != "hash2" || u.BotPINFails != 2 || u.BotPINLockUntil != "2030-01-01T00:00:00Z" {
+		t.Fatalf("saving the edit form must keep every bot-link field: %+v (%s)", u, app.message)
+	}
+}
+
+// governAdmin gives adminApp's own signed-in account a real (fully-permissioned)
+// group of its own, so it's "governed" before touching a bot-link screen —
+// otherwise a bare Users[] entry would govern it with zero policy permissions,
+// which those screens now deliberately refuse (see accessBotLinkEditScreen).
+func governAdmin(t *testing.T, app *App) {
+	t.Helper()
+	key := access.Key(app.session.Source, app.session.Username)
+	setPolicy(t, func(p *access.Policy) { p.Users[key] = &access.User{Groups: []string{"admin"}} })
+	app.loadPolicy()
+}
+
+// TestAccessBotLinkEditSetsAndKeepsFieldsBlankMeansUnchanged covers the
+// actual setup screen: a first save sets everything, a second save with
+// blank PIN/answer fields must leave those hashes exactly as they were.
+func TestAccessBotLinkEditSetsAndKeepsFieldsBlankMeansUnchanged(t *testing.T) {
+	app := adminApp(t)
+	governAdmin(t, app)
+	app.goTo(scrAccessBotLinkEdit)
+	app.screens[scrAccessBotLinkEdit].(*formScreen).submit(app, []string{"111222333", "", "1234", "1234", "First pet?", "Rex"})
+
+	key := access.Key(app.session.Source, app.session.Username)
+	u := app.pol().Users[key]
+	if u == nil || u.DiscordID != "111222333" || u.BotPINHash == "" || u.SecurityQuestion != "First pet?" || u.SecurityAnswerHash == "" {
+		t.Fatalf("first save should set everything: %+v", u)
+	}
+	firstPINHash, firstAnswerHash := u.BotPINHash, u.SecurityAnswerHash
+
+	app.goTo(scrAccessBotLinkEdit)
+	app.screens[scrAccessBotLinkEdit].(*formScreen).submit(app, []string{"999888777", "", "", "", "", ""})
+	u = app.pol().Users[key]
+	if u.DiscordID != "999888777" {
+		t.Errorf("the Discord ID itself should still be editable, got %q", u.DiscordID)
+	}
+	if u.BotPINHash != firstPINHash || u.SecurityAnswerHash != firstAnswerHash {
+		t.Error("blank PIN/answer fields on a later save must leave the existing hashes untouched")
+	}
+}
+
+// TestAccessBotLinkEditRefusesForAnUngovernedAdmin locks in the guard added
+// to prevent a real footgun: a bare Users[] entry with no Groups would govern
+// this admin with zero policy permissions, instantly dropping every
+// legacy-role fallback (app.can) for the rest of the session.
+func TestAccessBotLinkEditRefusesForAnUngovernedAdmin(t *testing.T) {
+	app := adminApp(t) // the default fixture admin is deliberately ungoverned (legacy IsAdmin)
+	app.goTo(scrAccessBotLinkEdit)
+	app.screens[scrAccessBotLinkEdit].(*formScreen).submit(app, []string{"111222333", "", "1234", "1234", "First pet?", "Rex"})
+	if !app.messageErr {
+		t.Fatal("an ungoverned admin's save must be refused, not silently govern them with zero permissions")
+	}
+	key := access.Key(app.session.Source, app.session.Username)
+	if _, governed := app.pol().Users[key]; governed {
+		t.Error("the refused save must not have created a Users[] entry at all")
+	}
+}
+
+func TestAccessBotLinkEditRefusesMismatchedPINConfirmation(t *testing.T) {
+	app := adminApp(t)
+	governAdmin(t, app)
+	app.goTo(scrAccessBotLinkEdit)
+	app.screens[scrAccessBotLinkEdit].(*formScreen).submit(app, []string{"111222333", "", "1234", "9999", "", ""})
+	if !app.messageErr {
+		t.Error("mismatched PIN/confirm should be refused")
+	}
+	key := access.Key(app.session.Source, app.session.Username)
+	if u := app.pol().Users[key]; u != nil && u.BotPINHash != "" {
+		t.Error("a refused save must not set a PIN")
+	}
+}
+
+// TestAccessBotResetNeedsBothFactors drives the reset screen directly and
+// checks the "both required together" rule: a real 2FA code with the wrong
+// answer fails, the right answer with a bogus code fails, and only both
+// correct together actually changes the PIN.
+func TestAccessBotResetNeedsBothFactors(t *testing.T) {
+	app := adminApp(t)
+	governAdmin(t, app)
+	app.goTo(scrAccessBotLinkEdit)
+	app.screens[scrAccessBotLinkEdit].(*formScreen).submit(app, []string{"111222333", "", "1234", "1234", "First pet?", "Rex"})
+	key := access.Key(app.session.Source, app.session.Username)
+	oldHash := app.pol().Users[key].BotPINHash
+
+	secret, _, err := twofa.Enroll(app.session.Username, app.session.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCode, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := twofa.Confirm(app.session.Username, app.session.Source, firstCode); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each code must land in a later 30s step than the last one actually
+	// consumed (twofa.Verify refuses a repeated/earlier step as a replay).
+	validCode, _ := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	app.goTo(scrAccessBotReset)
+	app.screens[scrAccessBotReset].(*formScreen).submit(app, []string{validCode, "wrong-answer", "5678", "5678"})
+	if !app.messageErr {
+		t.Error("a valid 2FA code with the wrong security answer must still be refused")
+	}
+	if app.pol().Users[key].BotPINHash != oldHash {
+		t.Error("a refused reset must not change the PIN hash")
+	}
+
+	app.goTo(scrAccessBotReset)
+	app.screens[scrAccessBotReset].(*formScreen).submit(app, []string{"000000", "Rex", "5678", "5678"})
+	if !app.messageErr {
+		t.Error("a bogus 2FA code must refuse the reset even with the right answer")
+	}
+	if app.pol().Users[key].BotPINHash != oldHash {
+		t.Error("a refused reset must not change the PIN hash")
+	}
+
+	validCode2, _ := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	app.goTo(scrAccessBotReset)
+	app.screens[scrAccessBotReset].(*formScreen).submit(app, []string{validCode2, "Rex", "5678", "5678"})
+	if app.messageErr {
+		t.Fatalf("both factors correct should succeed, got error: %s", app.message)
+	}
+	if newHash := app.pol().Users[key].BotPINHash; newHash == oldHash || !auth.VerifyPartDB("5678", newHash) {
+		t.Error("the PIN should now be 5678")
 	}
 }
 

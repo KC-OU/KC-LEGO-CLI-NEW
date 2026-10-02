@@ -216,6 +216,8 @@ var screenPerm = map[string]string{
 	scrAccessHub: "access.manage", scrAccessGroups: "access.manage", scrAccessGroupNew: "access.manage", scrAccessGrid: "access.manage",
 	scrAccessUsers: "access.manage", scrAccessUserNew: "access.manage", scrAccessUserEdit: "access.manage",
 	scrAccessSettings: "access.manage", scrAccessCheckAsk: "access.manage", scrAccessCheck: "access.manage",
+	scrCustomMenu:    "access.manage",
+	scrAccessBotLink: "access.manage", scrAccessBotLinkEdit: "access.manage", scrAccessBotReset: "access.manage",
 	scrWorkshop: "lego.view", scrCompletion: "lego.view", scrSetMissing: "lego.view", scrShopLinks: "lego.view",
 	scrOrders: "orders.view", scrOrderLines: "orders.view", scrOrderEdit: "orders.manage", scrLinePrice: "orders.manage",
 	scrLineReceive: "orders.manage", scrSpend: "orders.view", scrLabels: "labels.print", scrLabelsAsk: "labels.print",

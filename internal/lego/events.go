@@ -8,11 +8,12 @@ import "time"
 const (
 	EventMessage            = "message"
 	EventAccuracyDock       = "accuracy_dock"
+	EventAccuracyCredit     = "accuracy_credit"
 	EventAccuracyEscalation = "accuracy_escalation"
 	EventMissingParts       = "missing_parts"
 	EventForcedOff          = "forced_off"
 	EventReassigned         = "reassigned"
-	EventThemeRequest       = "theme_request"
+	EventFeatureRequest     = "feature_request"
 )
 
 type AdminEvent struct {

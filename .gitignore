@@ -30,3 +30,7 @@ __pycache__/
 
 # code knowledge graph (local tool)
 graphify-out/
+
+# local n8n install (get-n8n.sh installer stack) — a runtime you build your own
+# workflows in, not WMS source; scripts/n8n/.env also holds real secrets
+/scripts/n8n/

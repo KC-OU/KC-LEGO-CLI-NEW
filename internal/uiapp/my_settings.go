@@ -1,7 +1,11 @@
 package uiapp
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -13,9 +17,11 @@ import (
 // invite someone to paste into a picker's own settings screen without a reason to.
 
 const (
-	scrMySettings    = "my_settings"
-	scrMyRebrickKey  = "my_rebrickable_key"
-	scrMyRebrickEdit = "my_rebrickable_key_edit"
+	scrMySettings     = "my_settings"
+	scrMyRebrickKey   = "my_rebrickable_key"
+	scrMyRebrickEdit  = "my_rebrickable_key_edit"
+	scrFeatureRequest = "feature_request"
+	scrMessageAdmin   = "message_admin"
 )
 
 func mySettingsScreen() screenModel {
@@ -28,11 +34,93 @@ func mySettingsScreen() screenModel {
 				{Key: "2", Label: "My loading indicator", Go: func(app *App) { app.goTo(scrMyLoading) }},
 				{Key: "3", Label: "My Rebrickable API key", Go: func(app *App) { app.goTo(scrMyRebrickKey) }},
 				{Key: "4", Label: "My Exports", Go: func(app *App) { app.goTo(scrMyExports) }, Perm: "exports.download"},
+				{Key: "5", Label: "Request a feature or improvement", Go: func(app *App) { app.goTo(scrFeatureRequest) }},
+				{Key: "6", Label: "Message an admin", Go: func(app *App) { app.goTo(scrMessageAdmin) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
 		intro: func(app *App) string {
 			return app.theme.Muted.Render("Part-DB and BrickLink credentials use the shared instance-wide keys.")
+		},
+	}
+}
+
+// logAdminNote records something a non-admin sent an admin's way — a feature
+// request, a message, anything that isn't itself a database-backed action —
+// through the same activity feed and notification routing (Discord, Slack,
+// ...) every other admin-relevant event already uses, rather than a new
+// delivery mechanism for each one.
+func logAdminNote(app *App, kind, auditAction, detail, notifyMsg string) {
+	user, role := "", ""
+	if app.session != nil {
+		user, role = app.session.Username, app.session.Role
+	}
+	_ = app.legoDB.LogEvent(kind, user, "", detail)
+	app.notifyEvent(kind, notifyMsg, "")
+	app.audit.Log(user, role, auditAction, "SUCCESS", detail)
+}
+
+// ---- Request a feature or improvement ----
+//
+// Generalizes what used to be a theme-only request (the theme picker's 'R'
+// still lands here): a theme, a feature, a fix, anything worth an admin
+// knowing about without them having to go looking for it.
+
+func featureRequestScreen() screenModel {
+	return &formScreen{
+		panelID: "FEATREQ",
+		title:   "Request a Feature",
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("A theme, a feature, a fix — anything that'd make this more useful. Tell an admin.")
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "What would you like?"}, {Label: "Details or a link (optional)"}}
+		},
+		submit: func(app *App, v []string) {
+			what, detail := strings.TrimSpace(v[0]), strings.TrimSpace(v[1])
+			if what == "" {
+				app.setMsg("Enter what you'd like.", true)
+				return
+			}
+			full := what
+			if detail != "" {
+				full += ": " + detail
+			}
+			logAdminNote(app, lego.EventFeatureRequest, "FEATURE_REQUESTED", full, fmt.Sprintf("%s requested: %s", app.userName(), full))
+			app.setMsg("Sent — an admin will see it in Recent Activity.", false)
+			app.onBack()
+		},
+	}
+}
+
+// ---- Message an admin ----
+//
+// The reverse of the admin's existing "Message a User": a picker/checker
+// explaining a delay or anything else worth flagging, with nowhere to sign
+// in and act on it themselves. There's no single "admin" account to queue
+// this to (admin is a role, not a person), so it's a Recent Activity entry
+// plus a notification, not a per-recipient inbox message.
+
+func messageAdminScreen() screenModel {
+	return &formScreen{
+		panelID: "MSGADM",
+		title:   "Message an Admin",
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("Running late, need help, anything an admin should know — it'll show up in Recent Activity.")
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Message"}}
+		},
+		submit: func(app *App, v []string) {
+			body := strings.TrimSpace(v[0])
+			if body == "" {
+				app.setMsg("Enter a message.", true)
+				return
+			}
+			detail := "to admins: " + body
+			logAdminNote(app, lego.EventMessage, "MESSAGE_TO_ADMIN", detail, fmt.Sprintf("%s: %s", app.userName(), body))
+			app.setMsg("Sent to admins.", false)
+			app.onBack()
 		},
 	}
 }
