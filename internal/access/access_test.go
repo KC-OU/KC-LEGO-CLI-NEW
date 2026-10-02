@@ -296,3 +296,35 @@ func TestValidateRefusesASecurityAnswerWithNoQuestion(t *testing.T) {
 		t.Errorf("once a question is set, Validate should pass: %v", err)
 	}
 }
+
+func TestValidateRefusesAScopeReferencingAnUnknownSubMenu(t *testing.T) {
+	p := &Policy{Groups: map[string]*Group{}, Users: map[string]*User{}, Settings: Settings{
+		MenuLayouts: map[string]ScreenMenu{
+			"hub": {Scopes: map[string][]string{"global": {"overview", "submenu:more"}}},
+		},
+	}}
+	if err := p.Validate(); err == nil {
+		t.Error("a scope referencing an unknown sub-menu should be refused")
+	}
+	p.Settings.MenuLayouts["hub"] = ScreenMenu{
+		Scopes:   map[string][]string{"global": {"overview", "submenu:more"}},
+		SubMenus: map[string][]string{"more": {"my_accuracy"}},
+	}
+	if err := p.Validate(); err != nil {
+		t.Errorf("once the sub-menu exists, Validate should pass: %v", err)
+	}
+}
+
+func TestValidateRefusesASubMenuContainingAnotherSubMenu(t *testing.T) {
+	p := &Policy{Groups: map[string]*Group{}, Users: map[string]*User{}, Settings: Settings{
+		MenuLayouts: map[string]ScreenMenu{
+			"hub": {SubMenus: map[string][]string{
+				"outer": {"submenu:inner"},
+				"inner": {"overview"},
+			}},
+		},
+	}}
+	if err := p.Validate(); err == nil {
+		t.Error("a sub-menu containing another sub-menu should be refused (one level only)")
+	}
+}

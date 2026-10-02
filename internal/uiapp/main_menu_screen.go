@@ -9,55 +9,217 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 )
 
-// Admin → Access Control → Customize the main menu: one global layout for
-// everyone (see internal/access.Settings.MainMenu and hub.go's
-// mainMenuCatalog/hubOptions), not a per-user preference — reorder what's
-// already on the top-level menu, drop tabs nobody here uses, or promote a
-// specific Admin row (Assign Work, say) straight onto it. Each viewer still
-// only ever sees what their own permissions allow; this only changes where
-// it appears, never who can reach it.
+// Admin → Access Control → Customize menus: per screen (main hub, picker/
+// checker hub, ...), per scope (everyone, a group, or one person) — reorder
+// what's on it, drop items nobody there uses, promote an Admin row onto it,
+// or group a few items into an admin-named sub-menu. Each viewer still only
+// ever sees what their own permissions allow; this only changes where it
+// appears, never who can reach it. See menu_catalog.go for the registry and
+// resolution, access.Settings.MenuLayouts for storage.
+//
+// This is a different concern from the older per-user "Menu tabs" checklist
+// (Access Control → Users → B): that one grants/denies the underlying
+// permission (can this person use Part-DB at all), this one only rearranges
+// what's already visible to them. Both stay, on purpose.
 
-const scrCustomMenu = "custom_menu"
+const (
+	scrCustomMenu    = "custom_menu"    // per-screen hub: edit a layout, or manage sub-menus
+	scrMenuEditor    = "menu_editor"    // the toggle/reorder editor itself
+	scrSubMenuManage = "submenu_manage" // list/add/delete this screen's sub-menus
+)
 
-type customMenuScreen struct {
-	base
-	row  int
-	vals []string // working copy: the chosen, ordered subset of mainMenuCatalog keys
+// menuEditDraft is what's being customized right now: always a screenKey,
+// plus either a scope (editing that scope's top-level layout) or a subMenu
+// name (editing that sub-menu's own item list) — never both at once.
+type menuEditDraft struct {
+	screenKey, scope, subMenu string
 }
 
-func (s *customMenuScreen) PanelID() string { return "MAINMENU" }
-func (s *customMenuScreen) Title() string   { return "Customize the Main Menu" }
-func (s *customMenuScreen) FKeys() [][2]string {
+func startMenuCustomize(app *App) {
+	var items []pickItem
+	for _, def := range menuRegistry {
+		items = append(items, pickItem{Key: def.screenKey, Label: def.title})
+	}
+	startPick(app, &pickState{
+		Header: "Customize which menu?",
+		Prompt: "Choose",
+		Items:  items,
+		OnPick: func(app *App, it pickItem) {
+			app.menuEdit = &menuEditDraft{screenKey: it.Key}
+			app.goTo(scrCustomMenu)
+		},
+	})
+}
+
+func customMenuHubScreen() screenModel {
+	return &menuScreen{
+		panelID: "MENUHUB",
+		title:   "Customize Menu",
+		options: func(app *App) []menuOption {
+			return []menuOption{
+				{Key: "1", Label: "Edit a layout (choose who for)", Go: startMenuScopePick},
+				{Key: "2", Label: "Manage sub-menus for this screen", Go: func(app *App) { app.goTo(scrSubMenuManage) }},
+				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
+			}
+		},
+		intro: func(app *App) string {
+			if app.menuEdit == nil {
+				return ""
+			}
+			def := menuScreenDefFor(app.menuEdit.screenKey)
+			if def == nil {
+				return ""
+			}
+			return app.theme.Muted.Render(def.title)
+		},
+	}
+}
+
+func sourceOf(system string) string {
+	if system == "Part-DB" {
+		return "partdb"
+	}
+	return "modernwms"
+}
+
+// startMenuScopePick offers who a layout applies to: everyone, one group, or
+// one person — any known account, not only ones already governed by the
+// access policy, since a menu layout lives on Settings, not on a User record.
+func startMenuScopePick(app *App) {
+	if app.menuEdit == nil {
+		app.onBack()
+		return
+	}
+	items := []pickItem{{Key: "global", Label: "Everyone (global)"}}
+	for _, name := range sortedMapKeys(app.pol().Groups) {
+		items = append(items, pickItem{Key: "group:" + name, Label: "Group: " + name})
+	}
+	rows, _ := app.users.ListAll(app.ctx())
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if r.Username == "" {
+			continue
+		}
+		key := access.Key(sourceOf(r.System), r.Username)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		items = append(items, pickItem{Key: "user:" + key, Label: "User: " + r.Username + " (" + r.System + ")"})
+	}
+	startPick(app, &pickState{
+		Header: "Customize for whom?",
+		Prompt: "Choose",
+		Items:  items,
+		OnPick: func(app *App, it pickItem) {
+			app.menuEdit.scope, app.menuEdit.subMenu = it.Key, ""
+			app.goTo(scrMenuEditor)
+		},
+	})
+}
+
+// ---- the toggle/reorder editor, shared by "edit a scope's layout" and
+// "edit one sub-menu's contents" ----
+
+type menuEditorScreen struct {
+	base
+	row  int
+	vals []string // working copy: the chosen, ordered subset of the screen's catalog (+ sub-menu pseudo-keys, top-level mode only)
+}
+
+func (s *menuEditorScreen) PanelID() string { return "MENUED" }
+func (s *menuEditorScreen) Title() string   { return "Customize Menu" }
+func (s *menuEditorScreen) FKeys() [][2]string {
 	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
 }
 
-func (s *customMenuScreen) OnEnter(app *App) {
+func (s *menuEditorScreen) def(app *App) *menuScreenDef {
+	if app.menuEdit == nil {
+		return nil
+	}
+	return menuScreenDefFor(app.menuEdit.screenKey)
+}
+
+// editingSubMenu is whether this instance is editing one named sub-menu's
+// own contents rather than a scope's top-level layout.
+func (s *menuEditorScreen) editingSubMenu(app *App) bool {
+	return app.menuEdit != nil && app.menuEdit.subMenu != ""
+}
+
+func (s *menuEditorScreen) stored(app *App) []string {
+	if app.menuEdit == nil {
+		return nil
+	}
+	m := app.pol().Settings.MenuLayouts[app.menuEdit.screenKey]
+	if s.editingSubMenu(app) {
+		return m.SubMenus[app.menuEdit.subMenu]
+	}
+	return m.Scopes[app.menuEdit.scope]
+}
+
+func (s *menuEditorScreen) OnEnter(app *App) {
 	app.loadPolicy()
 	s.row = 0
-	s.vals = append([]string(nil), app.pol().Settings.MainMenu...)
+	s.vals = append([]string(nil), s.stored(app)...)
 	if len(s.vals) == 0 {
-		s.vals = append([]string(nil), defaultMainMenuKeys...)
+		if def := s.def(app); def != nil && !s.editingSubMenu(app) {
+			s.vals = append([]string(nil), def.defaultKeys...)
+		}
 	}
 }
 
-// display is the on-screen order: chosen items first in their chosen
-// sequence, then every other catalog item (not currently chosen) after,
-// in catalog order — so nothing is ever missing from the list, just ranked.
-func (s *customMenuScreen) display() []string {
-	out := append([]string(nil), s.vals...)
-	chosen := map[string]bool{}
-	for _, k := range s.vals {
-		chosen[k] = true
+// assignable is every key this editor can toggle in: the screen's real
+// catalog items, plus — only when editing a scope's top-level layout, never
+// inside a sub-menu itself — every existing sub-menu as a "submenu:<name>"
+// pseudo-key, so one can be included/positioned exactly like a real item.
+func (s *menuEditorScreen) assignable(app *App) []string {
+	def := s.def(app)
+	if def == nil {
+		return nil
 	}
-	for _, it := range mainMenuCatalog {
-		if !chosen[it.key] {
-			out = append(out, it.key)
+	var out []string
+	for _, it := range def.catalog {
+		out = append(out, it.key)
+	}
+	if !s.editingSubMenu(app) {
+		m := app.pol().Settings.MenuLayouts[app.menuEdit.screenKey]
+		for _, name := range sortedMapKeys(m.SubMenus) {
+			out = append(out, "submenu:"+name)
 		}
 	}
 	return out
 }
 
-func (s *customMenuScreen) valIndex(key string) int {
+func (s *menuEditorScreen) itemLabel(app *App, key string) string {
+	if name, ok := strings.CutPrefix(key, "submenu:"); ok {
+		return "▸ " + name
+	}
+	if def := s.def(app); def != nil {
+		if it := catalogItemByKey(def.catalog, key); it != nil {
+			return it.labelFor(app)
+		}
+	}
+	return key
+}
+
+// display is the on-screen order: chosen items first in their chosen
+// sequence, then every other assignable key after, so nothing is ever
+// missing from the list, just ranked.
+func (s *menuEditorScreen) display(app *App) []string {
+	out := append([]string(nil), s.vals...)
+	chosen := map[string]bool{}
+	for _, k := range s.vals {
+		chosen[k] = true
+	}
+	for _, k := range s.assignable(app) {
+		if !chosen[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func (s *menuEditorScreen) valIndex(key string) int {
 	for i, k := range s.vals {
 		if k == key {
 			return i
@@ -66,41 +228,42 @@ func (s *customMenuScreen) valIndex(key string) int {
 	return -1
 }
 
-// capacity is how many rows of the (fixed, 16-item) catalog fit under this
-// screen's own header/blank/hint lines and the surrounding chrome every
-// screen gets — the same budget tableScreen's own capacity uses — so a short
-// terminal scrolls the list instead of pushing the hint line off the bottom.
-func (s *customMenuScreen) capacity(app *App) int {
+func (s *menuEditorScreen) capacity(app *App, total int) int {
 	if app.height <= 0 {
-		return len(mainMenuCatalog)
+		return total
 	}
-	chrome := 8 + 2 + 2 // header band; this screen's own title/blank + hint/blank
+	chrome := 8 + 2 + 2
 	if app.message != "" {
 		chrome++
 	}
 	return max(3, app.height-chrome)
 }
 
-func (s *customMenuScreen) Body(app *App) string {
+func (s *menuEditorScreen) Body(app *App) string {
 	t := app.theme
-	disp := s.display()
+	if app.menuEdit == nil {
+		return t.Muted.Render("Nothing to edit.")
+	}
+	disp := s.display(app)
 	s.row = min(s.row, max(0, len(disp)-1))
-	cap := s.capacity(app)
-	top, title := 0, "Everyone's top-level menu"
+	cap := s.capacity(app, len(disp))
+	top, title := 0, "for "+scopeLabel(app.menuEdit)
+	if s.editingSubMenu(app) {
+		title = "sub-menu " + app.menuEdit.subMenu
+	}
 	if len(disp) > cap {
 		top = max(0, min(s.row-cap/2, len(disp)-cap))
-		title = fmt.Sprintf("Everyone's top-level menu  (%d-%d of %d)", top+1, top+cap, len(disp))
+		title = fmt.Sprintf("%s  (%d-%d of %d)", title, top+1, top+cap, len(disp))
 	}
 	var b strings.Builder
 	b.WriteString(t.Strong.Render(title) + "\n\n")
 	for i := top; i < min(top+cap, len(disp)); i++ {
 		key := disp[i]
-		it := mainMenuItemByKey(key)
 		pos, mark, style := "  —", "off", t.Muted
 		if vi := s.valIndex(key); vi >= 0 {
 			pos, mark, style = fmt.Sprintf("%3d", vi+1), "on ", t.Success
 		}
-		cell := fmt.Sprintf("%s  %-28s %s", pos, it.label, mark)
+		cell := fmt.Sprintf("%s  %-28s %s", pos, s.itemLabel(app, key), mark)
 		if i == s.row {
 			b.WriteString(t.TitleReverse.Render(cell) + "\n")
 		} else {
@@ -111,8 +274,27 @@ func (s *customMenuScreen) Body(app *App) string {
 	return b.String()
 }
 
-func (s *customMenuScreen) HandleKey(app *App, msg tea.KeyMsg) {
-	disp := s.display()
+// scopeLabel is a friendlier form of a scope key for the editor's title —
+// "group:checker" -> "group checker", "user:partdb:dave" -> "user dave".
+func scopeLabel(d *menuEditDraft) string {
+	if d.scope == "global" {
+		return "everyone"
+	}
+	kind, rest, _ := strings.Cut(d.scope, ":")
+	if kind == "user" {
+		_, name, ok := strings.Cut(rest, ":")
+		if ok {
+			rest = name
+		}
+	}
+	return kind + " " + rest
+}
+
+func (s *menuEditorScreen) HandleKey(app *App, msg tea.KeyMsg) {
+	if app.menuEdit == nil {
+		return
+	}
+	disp := s.display(app)
 	if len(disp) == 0 {
 		return
 	}
@@ -130,23 +312,42 @@ func (s *customMenuScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		} else {
 			s.vals = append(s.vals, key)
 		}
-		s.followRow(key)
+		s.followRow(app, key)
 	case isKey(msg, ','):
 		key := disp[s.row]
 		if vi := s.valIndex(key); vi > 0 {
 			s.vals[vi-1], s.vals[vi] = s.vals[vi], s.vals[vi-1]
 		}
-		s.followRow(key)
+		s.followRow(app, key)
 	case isKey(msg, '.'):
 		key := disp[s.row]
 		if vi := s.valIndex(key); vi >= 0 && vi < len(s.vals)-1 {
 			s.vals[vi], s.vals[vi+1] = s.vals[vi+1], s.vals[vi]
 		}
-		s.followRow(key)
+		s.followRow(app, key)
 	case isKey(msg, 's'):
-		vals := append([]string(nil), s.vals...)
-		app.saveAccess("main menu customized", func(p *access.Policy) error {
-			p.Settings.MainMenu = vals
+		d, vals := *app.menuEdit, append([]string(nil), s.vals...)
+		what := "menu " + d.screenKey + " scope " + d.scope + " customized"
+		if d.subMenu != "" {
+			what = "menu " + d.screenKey + " sub-menu " + d.subMenu + " customized"
+		}
+		app.saveAccess(what, func(p *access.Policy) error {
+			if p.Settings.MenuLayouts == nil {
+				p.Settings.MenuLayouts = map[string]access.ScreenMenu{}
+			}
+			m := p.Settings.MenuLayouts[d.screenKey]
+			if d.subMenu != "" {
+				if m.SubMenus == nil {
+					m.SubMenus = map[string][]string{}
+				}
+				m.SubMenus[d.subMenu] = vals
+			} else {
+				if m.Scopes == nil {
+					m.Scopes = map[string][]string{}
+				}
+				m.Scopes[d.scope] = vals
+			}
+			p.Settings.MenuLayouts[d.screenKey] = m
 			return nil
 		})
 	}
@@ -154,11 +355,95 @@ func (s *customMenuScreen) HandleKey(app *App, msg tea.KeyMsg) {
 
 // followRow keeps the cursor on the item it was on before a toggle/move
 // changed display()'s order out from under it.
-func (s *customMenuScreen) followRow(key string) {
-	for i, k := range s.display() {
+func (s *menuEditorScreen) followRow(app *App, key string) {
+	for i, k := range s.display(app) {
 		if k == key {
 			s.row = i
 			return
 		}
+	}
+}
+
+// ---- managing a screen's sub-menus ----
+
+func subMenuManageRows(app *App) ([]string, [][]string, []string) {
+	if app.menuEdit == nil {
+		return []string{"Name", "Items"}, nil, nil
+	}
+	m := app.pol().Settings.MenuLayouts[app.menuEdit.screenKey]
+	names := sortedMapKeys(m.SubMenus)
+	rows := make([][]string, len(names))
+	for i, name := range names {
+		rows[i] = []string{name, fmt.Sprint(len(m.SubMenus[name]))}
+	}
+	return []string{"Name", "Items"}, rows, names
+}
+
+func subMenuManageKeys(app *App, name string, msg tea.KeyMsg) {
+	if app.menuEdit == nil {
+		return
+	}
+	switch {
+	case msg.Type == tea.KeyEnter && name != "":
+		app.menuEdit.subMenu, app.menuEdit.scope = name, ""
+		app.goTo(scrMenuEditor)
+	case isKey(msg, 'n'):
+		startPick(app, &pickState{
+			Header:    "New sub-menu",
+			Prompt:    "Name it",
+			AllowFree: true,
+			FreeHint:  "a short name, e.g. \"More\"",
+			OnFree: func(app *App, text string) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					app.setMsg("Enter a name.", true)
+					return
+				}
+				d := *app.menuEdit
+				app.saveAccess("menu "+d.screenKey+" sub-menu "+text+" created", func(p *access.Policy) error {
+					if p.Settings.MenuLayouts == nil {
+						p.Settings.MenuLayouts = map[string]access.ScreenMenu{}
+					}
+					m := p.Settings.MenuLayouts[d.screenKey]
+					if m.SubMenus == nil {
+						m.SubMenus = map[string][]string{}
+					}
+					if _, exists := m.SubMenus[text]; exists {
+						return fmt.Errorf("a sub-menu named %q already exists here", text)
+					}
+					m.SubMenus[text] = nil
+					p.Settings.MenuLayouts[d.screenKey] = m
+					return nil
+				})
+				app.menuEdit.subMenu, app.menuEdit.scope = text, ""
+				app.goTo(scrMenuEditor)
+			},
+		})
+	case isKey(msg, 'd') && name != "":
+		d := *app.menuEdit
+		app.saveAccess("menu "+d.screenKey+" sub-menu "+name+" deleted", func(p *access.Policy) error {
+			m := p.Settings.MenuLayouts[d.screenKey]
+			for scope, items := range m.Scopes {
+				for _, k := range items {
+					if k == "submenu:"+name {
+						return fmt.Errorf("scope %s still includes this sub-menu — remove it there first", scope)
+					}
+				}
+			}
+			delete(m.SubMenus, name)
+			p.Settings.MenuLayouts[d.screenKey] = m
+			return nil
+		})
+	}
+}
+
+func subMenuManageScreen() screenModel {
+	return &selectList{
+		panelID:   "SUBMAN",
+		title:     "Sub-menus",
+		hint:      "Enter edit its items · N new · D delete",
+		emptyHint: "No sub-menus here yet — N creates one.",
+		rows:      subMenuManageRows,
+		keys:      subMenuManageKeys,
 	}
 }

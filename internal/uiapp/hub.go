@@ -9,18 +9,6 @@ func anyModuleAllowed(app *App, modules ...string) bool {
 	return false
 }
 
-// mainMenuItem is one entry an admin can choose to show on the top-level
-// menu — either a standard hub tab or a promoted row from the Admin submenu
-// (see adminHubScreen below) — with a fixed hotkey of its own regardless of
-// where it lands in the chosen order, so G/V/toggleLego's hardcoded tab-bar
-// keys ("1" overview, "9" admin, "e" lego) keep lighting up the right tab
-// whenever that tab is actually shown.
-type mainMenuItem struct {
-	key, hotkey, label string
-	allowed            func(app *App) bool
-	open               func(app *App)
-}
-
 // open makes the chosen entry the highlighted tab (classic layout's tab bar)
 // for every screen reached from it, then navigates.
 func openTab(hotkey, target string) func(app *App) {
@@ -33,9 +21,10 @@ func openTab(hotkey, target string) func(app *App) {
 // mainMenuCatalog is every item that can appear on the top-level menu: the
 // six hub tabs, in their traditional order and hotkeys, plus every row in
 // the Admin submenu (adminHubScreen) promoted out of it — anything else
-// stays nested exactly as it already is. See internal/access.Settings.MainMenu
-// and customMenuScreen for where an admin chooses from this list.
-var mainMenuCatalog = []mainMenuItem{
+// stays nested exactly as it already is. See menu_catalog.go for how an
+// admin chooses from this (per user, per group, or globally) and
+// resolveAndRenderMenu for how a catalog becomes what's actually on screen.
+var mainMenuCatalog = []menuCatalogItem{
 	{"overview", "1", "Overview", func(app *App) bool { return app.moduleAllowed("dashboard") }, openTab("1", scrOverview)},
 	{"partdb", "2", "PartDB Hub", func(app *App) bool { return app.moduleAllowed("partdb") }, openTab("2", scrPartDBHub)},
 	{"operations", "3", "Operations", func(app *App) bool {
@@ -60,38 +49,18 @@ var mainMenuCatalog = []mainMenuItem{
 
 // defaultMainMenuKeys is today's unmodified top-level menu — what every
 // installation already showed before menu customization existed, and what a
-// cleared/never-set Settings.MainMenu still produces.
+// viewer with no override at any tier still gets.
 var defaultMainMenuKeys = []string{"overview", "partdb", "operations", "scripts", "lego", "admin"}
-
-func mainMenuItemByKey(key string) *mainMenuItem {
-	for i := range mainMenuCatalog {
-		if mainMenuCatalog[i].key == key {
-			return &mainMenuCatalog[i]
-		}
-	}
-	return nil
-}
 
 // hubOptions mirrors AVAILABLE_TABS from modernwms_tui.py by default (see
 // defaultMainMenuKeys), but an admin can reorder it, drop tabs they don't
-// want shown, or promote specific Admin rows onto it instead — see
-// internal/access.Settings.MainMenu and customMenuScreen. Every item still
-// gates on the exact same permission check it always did, so this only
-// changes navigation, never what a given item requires to open.
+// want shown, promote specific Admin rows onto it, or move items into a
+// sub-menu instead — per user, per group, or for everyone (see
+// resolveAndRenderMenu). Every item still gates on the exact same permission
+// check it always did, so this only changes navigation, never what a given
+// item requires to open.
 func hubOptions(app *App) []menuOption {
-	keys := app.pol().Settings.MainMenu
-	if len(keys) == 0 {
-		keys = defaultMainMenuKeys
-	}
-	var opts []menuOption
-	for _, key := range keys {
-		it := mainMenuItemByKey(key)
-		if it == nil || !it.allowed(app) {
-			continue
-		}
-		opts = append(opts, menuOption{Key: it.hotkey, Label: it.label, Go: it.open})
-	}
-	return opts
+	return resolveAndRenderMenu(app, scrHub, mainMenuCatalog, defaultMainMenuKeys)
 }
 
 func hubScreen() screenModel {

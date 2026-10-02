@@ -189,9 +189,23 @@ type Settings struct {
 	LinkMinutes *int `json:"link_minutes,omitempty"`
 	// NotifyRoutes sends each alert event to notify channel ids (none = every channel).
 	NotifyRoutes map[string][]string `json:"notify_routes,omitempty"`
-	// MainMenu is the ordered keys (see uiapp's mainMenuCatalog) an admin chose for
-	// everyone's top-level menu — empty means "the built-in default order/set."
-	MainMenu []string `json:"main_menu,omitempty"`
+	// MenuLayouts is per-screen menu customization: which catalog items show, in
+	// what order, and what admin-named sub-menus exist, resolved user → group →
+	// global → the screen's hard-coded default (see uiapp.resolveAndRenderMenu).
+	// Keyed by screen id (uiapp.scrHub, uiapp.scrPickerHub, ...).
+	MenuLayouts map[string]ScreenMenu `json:"menu_layouts,omitempty"`
+}
+
+// ScreenMenu is one screen's customizable layout: an ordered key list per
+// scope, plus named sub-menus those keys can reference as "submenu:<name>".
+type ScreenMenu struct {
+	// Scopes is the chosen item order per scope: "global", "group:<name>", or
+	// "user:<source:username>". An empty or missing list at any scope falls
+	// through to the next tier, same as the old single global-only setting did.
+	Scopes map[string][]string `json:"scopes,omitempty"`
+	// SubMenus is each admin-defined sub-menu's ordered item keys, drawn from
+	// the same screen's catalog. One level only — a sub-menu can't list another.
+	SubMenus map[string][]string `json:"sub_menus,omitempty"`
 }
 
 type Policy struct {
@@ -543,7 +557,42 @@ func (s Settings) validate() error {
 		check("max session hours", s.MaxHours, 0, 24*7),
 		check("export days", s.ExportDays, 1, 365),
 		check("link minutes", s.LinkMinutes, 1, 24*60),
+		s.validateMenuLayouts(),
 	)
+}
+
+// validateMenuLayouts enforces one level of sub-menu nesting: every
+// "submenu:<name>" referenced from a scope or from another sub-menu must
+// name a real sub-menu on that same screen, and a sub-menu's own item list
+// may never itself contain a "submenu:" entry.
+func (s Settings) validateMenuLayouts() error {
+	for screenKey, m := range s.MenuLayouts {
+		check := func(where string, items []string) error {
+			for _, key := range items {
+				name, ok := strings.CutPrefix(key, "submenu:")
+				if !ok {
+					continue
+				}
+				if _, ok := m.SubMenus[name]; !ok {
+					return fmt.Errorf("menu %s %s: no sub-menu named %q", screenKey, where, name)
+				}
+			}
+			return nil
+		}
+		for scope, items := range m.Scopes {
+			if err := check("scope "+scope, items); err != nil {
+				return err
+			}
+		}
+		for name, items := range m.SubMenus {
+			for _, key := range items {
+				if strings.HasPrefix(key, "submenu:") {
+					return fmt.Errorf("menu %s sub-menu %s: %q — sub-menus can't contain another sub-menu", screenKey, name, key)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // ---- sign-on ----

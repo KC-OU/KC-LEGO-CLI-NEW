@@ -55,7 +55,9 @@ func accessScreens() map[string]screenModel {
 		scrAccessSettings:    accessSettingsScreen(),
 		scrAccessCheckAsk:    accessCheckAskScreen(),
 		scrAccessCheck:       accessCheckScreen(),
-		scrCustomMenu:        &customMenuScreen{},
+		scrCustomMenu:        customMenuHubScreen(),
+		scrMenuEditor:        &menuEditorScreen{},
+		scrSubMenuManage:     subMenuManageScreen(),
 		scrAccessBotLink:     accessBotLinkScreen(),
 		scrAccessBotLinkEdit: accessBotLinkEditScreen(),
 		scrAccessBotReset:    accessBotResetScreen(),
@@ -75,7 +77,7 @@ func accessHubScreen() screenModel {
 				{Key: "3", Label: "Security settings: 2FA window, idle, session, exports", Go: func(app *App) { app.goTo(scrAccessSettings) }},
 				{Key: "4", Label: "Check a user's effective permissions", Go: func(app *App) { app.goTo(scrAccessCheckAsk) }},
 				{Key: "5", Label: "Notifications: channels and where each alert goes", Go: func(app *App) { app.goTo(scrNotify) }},
-				{Key: "6", Label: "Customize the main menu (everyone's layout)", Go: func(app *App) { app.goTo(scrCustomMenu) }},
+				{Key: "6", Label: "Customize menus (per screen, per user/group)", Go: startMenuCustomize},
 				{Key: "7", Label: "My remote bot link (Discord/Slack, PIN, security Q&A)", Go: func(app *App) { app.goTo(scrAccessBotLink) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
@@ -550,6 +552,7 @@ func (s *menuTabsScreen) Body(app *App) string {
 		}
 	}
 	b.WriteString("\n" + t.Muted.Render("↑/↓ choose · Space toggle · S save · Esc"))
+	b.WriteString("\n" + t.Muted.Render("Grants/denies access to an area — for arranging what's already visible, see Customize menus."))
 	return b.String()
 }
 

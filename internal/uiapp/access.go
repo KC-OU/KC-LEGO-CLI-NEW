@@ -217,8 +217,11 @@ var screenPerm = map[string]string{
 	scrAccessUsers: "access.manage", scrAccessUserNew: "access.manage", scrAccessUserEdit: "access.manage",
 	scrAccessSettings: "access.manage", scrAccessCheckAsk: "access.manage", scrAccessCheck: "access.manage",
 	scrCustomMenu:    "access.manage",
+	scrMenuEditor:    "access.manage",
+	scrSubMenuManage: "access.manage",
 	scrAccessBotLink: "access.manage", scrAccessBotLinkEdit: "access.manage", scrAccessBotReset: "access.manage",
-	scrWorkshop: "lego.view", scrCompletion: "lego.view", scrSetMissing: "lego.view", scrShopLinks: "lego.view",
+	scrSubMenuView: "", // gating already happened per-item when the layout was resolved
+	scrWorkshop:    "lego.view", scrCompletion: "lego.view", scrSetMissing: "lego.view", scrShopLinks: "lego.view",
 	scrOrders: "orders.view", scrOrderLines: "orders.view", scrOrderEdit: "orders.manage", scrLinePrice: "orders.manage",
 	scrLineReceive: "orders.manage", scrSpend: "orders.view", scrLabels: "labels.print", scrLabelsAsk: "labels.print",
 	scrSetInfo: "lego.edit", scrCheckAsk: "sets.check", scrNotify: "access.manage", scrNotifyRoute: "access.manage",

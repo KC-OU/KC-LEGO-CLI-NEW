@@ -102,6 +102,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 
 		scrPickerHub:       pickerHubScreen(),
 		scrQueryMenu:       queryMenuScreen(),
+		scrSubMenuView:     submenuViewScreen(),
 		scrRequest:         requestJobScreen(),
 		scrCurrentJob:      currentJobScreen(),
 		scrAssignPick:      assignPickScreen(),

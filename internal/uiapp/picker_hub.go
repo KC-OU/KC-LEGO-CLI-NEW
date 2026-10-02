@@ -12,33 +12,57 @@ const (
 	scrQueryMenu = "query_menu"
 )
 
+// pickerHubCatalog is every item that can appear on the picker/checker hub —
+// customizable the same way the main hub is (per user, per group, or for
+// everyone; see menu_catalog.go), with Log out and Exit always pinned at the
+// end (never reassignable/hideable — see pickerHubScreen below).
+var pickerHubCatalog = []menuCatalogItem{
+	{key: "overview", hotkey: "1", label: "Overview", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrOverview) }},
+	{key: "request", hotkey: "2", label: "Request a set to check", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrRequest) }},
+	{key: "current_job", hotkey: "3", label: "My Current Jobs", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrCurrentJob) }},
+	{key: "query_menu", hotkey: "4", label: "Menu for Querys", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrQueryMenu) }},
+	{key: "my_accuracy", hotkey: "5", label: "My accuracy", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrMyAccuracy) }},
+	{key: "my_exports", hotkey: "6", label: "My Exports", allowed: func(app *App) bool { return app.can("exports.download") }, open: func(app *App) { app.goTo(scrMyExports) }},
+	// checker/picker already carry lego.view/partdb.view by default (see
+	// access.go's seed()) — these only need a menu entry to be reachable
+	// without knowing Ctrl-K/the palette already has them. Perm-gated like
+	// every other item here, so an admin denying it for one person (the
+	// Users list's "b" menu-tabs checklist) hides it here too, same as anywhere else.
+	{key: "lego", hotkey: "7", label: "LEGO Collection", allowed: func(app *App) bool { return app.can("lego.view") }, open: func(app *App) { app.goTo(scrLegoHub) }},
+	{key: "partdb", hotkey: "8", label: "Part-DB Hub", allowed: func(app *App) bool { return app.can("partdb.view") }, open: func(app *App) { app.goTo(scrPartDBHub) }},
+	// Reachable to everyone, same as Overview — not gated behind My Settings'
+	// own menu (there isn't one; My Settings IS the destination).
+	{key: "my_settings", hotkey: "s", label: "My Settings", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrMySettings) }},
+}
+
+func init() {
+	// The one item whose label depends on who's looking — see
+	// catalogDynamicLabels' own doc comment (menu_catalog.go).
+	catalogDynamicLabels["request"] = func(app *App) string {
+		if roleForApp(app) == lego.AccuracyPicker {
+			return "Request an order to pick"
+		}
+		return "Request a set to check"
+	}
+}
+
+// defaultPickerHubKeys is today's unmodified picker/checker hub — every
+// catalog item above, in their original order, plus My Settings appended
+// (new: this is what actually fixes "no menu path to Message an Admin").
+var defaultPickerHubKeys = []string{
+	"overview", "request", "current_job", "query_menu", "my_accuracy", "my_exports", "lego", "partdb", "my_settings",
+}
+
 func pickerHubScreen() screenModel {
 	return &menuScreen{
 		panelID: "PIKHUB",
 		title:   "Picker / Checker",
 		options: func(app *App) []menuOption {
-			role := roleForApp(app)
-			requestLabel := "Request a set to check"
-			if role == lego.AccuracyPicker {
-				requestLabel = "Request an order to pick"
-			}
-			return []menuOption{
-				{Key: "1", Label: "Overview", Go: func(app *App) { app.goTo(scrOverview) }},
-				{Key: "2", Label: requestLabel, Go: func(app *App) { app.goTo(scrRequest) }},
-				{Key: "3", Label: "My Current Jobs", Go: func(app *App) { app.goTo(scrCurrentJob) }},
-				{Key: "4", Label: "Menu for Querys", Go: func(app *App) { app.goTo(scrQueryMenu) }},
-				{Key: "5", Label: "My accuracy", Go: func(app *App) { app.goTo(scrMyAccuracy) }},
-				{Key: "6", Label: "My Exports", Go: func(app *App) { app.goTo(scrMyExports) }, Perm: "exports.download"},
-				// checker/picker already carry lego.view/partdb.view by default (see
-				// access.go's seed()) — these only need a menu entry to be reachable
-				// without knowing Ctrl-K/the palette already has them. Perm-gated like
-				// every other option here, so an admin denying it for one person (the
-				// Users list's "b" menu-tabs checklist) hides it here too, same as anywhere else.
-				{Key: "7", Label: "LEGO Collection", Go: func(app *App) { app.goTo(scrLegoHub) }, Perm: "lego.view"},
-				{Key: "8", Label: "Part-DB Hub", Go: func(app *App) { app.goTo(scrPartDBHub) }, Perm: "partdb.view"},
-				{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},
-				{Key: "0", Label: "Exit", Go: func(app *App) { app.quitting = true }},
-			}
+			opts := resolveAndRenderMenu(app, scrPickerHub, pickerHubCatalog, defaultPickerHubKeys)
+			return append(opts,
+				menuOption{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},
+				menuOption{Key: "0", Label: "Exit", Go: func(app *App) { app.quitting = true }},
+			)
 		},
 	}
 }

@@ -168,6 +168,8 @@ type App struct {
 	toasts          []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
 	sessionID       string           // this process's own id in live_sessions (see sessions.go)
 	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
+	viewingSubmenu  *submenuView     // which admin-named sub-menu scrSubMenuView is currently showing (see menu_catalog.go)
+	menuEdit        *menuEditDraft   // the screen+scope an admin is customizing (see main_menu_screen.go)
 }
 
 func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Logger, requireTwoFA, touchMode bool) *App {
