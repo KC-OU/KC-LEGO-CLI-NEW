@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"html"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func unzipLBX(t *testing.T, b []byte) map[string]string {
@@ -77,6 +81,67 @@ func TestLBXLabelXMLHasTheRightPaperSizeAndContent(t *testing.T) {
 	}
 	if !strings.Contains(xmlBody, `protocol="CODE128"`) {
 		t.Error("expected a native CODE128 barcode object")
+	}
+}
+
+// TestLBXTextObjectHasAStringItemAfterData is the actual fix for a real
+// report: P-touch Editor rendered a generated .lbx as a completely blank
+// label. Confirmed against a real P-touch Editor export
+// (github.com/Alecto3-D/brother-p-touch-editor-format) and
+// github.com/jdlien/lbx-utils's format notes: a text:text object needs a
+// text:stringItem *after* pt:data, with a charLen exactly matching the
+// text's rune count, or P-touch Editor silently draws nothing for it.
+func TestLBXTextObjectHasAStringItemAfterData(t *testing.T) {
+	s, _ := SizeByID("38x90")
+	d := sample()
+	d.QR = ""
+	b, err := LBX([]Data{d}, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xmlBody := unzipLBX(t, b)["label.xml"]
+
+	dataIdx := strings.Index(xmlBody, "<pt:data>")
+	stringItemIdx := strings.Index(xmlBody, "<text:stringItem")
+	if dataIdx == -1 || stringItemIdx == -1 {
+		t.Fatalf("expected both <pt:data> and <text:stringItem> in:\n%s", xmlBody)
+	}
+	if stringItemIdx < dataIdx {
+		t.Error("text:stringItem must come after pt:data, not before (P-touch Editor's own required order)")
+	}
+
+	m := regexp.MustCompile(`<text:stringItem charLen="(\d+)">`).FindStringSubmatch(xmlBody)
+	if m == nil {
+		t.Fatalf("no charLen attribute found on text:stringItem in:\n%s", xmlBody)
+	}
+	charLen, _ := strconv.Atoi(m[1])
+	dataMatch := regexp.MustCompile(`(?s)<pt:data>(.*?)</pt:data>`).FindStringSubmatch(xmlBody)
+	if dataMatch == nil {
+		t.Fatal("no pt:data content found")
+	}
+	wantLen := utf8.RuneCountInString(html.UnescapeString(dataMatch[1]))
+	if charLen != wantLen {
+		t.Errorf("stringItem charLen = %d, want %d (the text's rune count) — a mismatch leaves P-touch Editor's text run short or blank", charLen, wantLen)
+	}
+}
+
+// TestLBXQRCellSizeIsNeverZero is the other half of the same blank-label
+// report: cellSize is the QR's actual per-module render size (objectStyle's
+// width/height is only the editor's selection frame) — 0pt renders nothing.
+func TestLBXQRCellSizeIsNeverZero(t *testing.T) {
+	s, _ := SizeByID("38x90")
+	d := sample()
+	d.QR = "https://rebrickable.com/sets/75192-1/"
+	b, err := LBX([]Data{d}, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xmlBody := unzipLBX(t, b)["label.xml"]
+	if strings.Contains(xmlBody, `cellSize="0pt"`) || strings.Contains(xmlBody, `cellSize="0.0pt"`) {
+		t.Errorf("cellSize must never be zero — the QR renders at zero size, invisible:\n%s", xmlBody)
+	}
+	if !strings.Contains(xmlBody, "style:backGround") {
+		t.Error("expected a style:backGround element, matching a real P-touch Editor export")
 	}
 }
 

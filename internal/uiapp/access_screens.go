@@ -49,7 +49,7 @@ func accessScreens() map[string]screenModel {
 		scrAccessGroupNew:    accessGroupNewScreen(),
 		scrAccessGrid:        &gridScreen{},
 		scrMenuTabsEdit:      &menuTabsScreen{},
-		scrAccessUsers:       &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B menu tabs  N add user  X remove entry"},
+		scrAccessUsers:       &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  P permission overrides  B menu tabs  N add user  X remove entry"},
 		scrAccessUserNew:     accessUserNewScreen(),
 		scrAccessUserEdit:    accessUserEditScreen(),
 		scrAccessSettings:    accessSettingsScreen(),
@@ -659,7 +659,7 @@ func userKeys(app *App, key string, msg tea.KeyMsg) {
 	case msg.Type == tea.KeyEnter && key != "":
 		app.accessEdit = &accessEdit{User: key}
 		app.goTo(scrAccessUserEdit)
-	case isKey(msg, 'g') && key != "":
+	case isKey(msg, 'p') && key != "":
 		app.accessEdit = &accessEdit{User: key}
 		app.goTo(scrAccessGrid)
 	case isKey(msg, 'b') && key != "":

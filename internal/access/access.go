@@ -206,6 +206,11 @@ type ScreenMenu struct {
 	// SubMenus is each admin-defined sub-menu's ordered item keys, drawn from
 	// the same screen's catalog. One level only — a sub-menu can't list another.
 	SubMenus map[string][]string `json:"sub_menus,omitempty"`
+	// Templates are named, reusable orderings an admin saved from one layout
+	// (a scope's or a sub-menu's) to apply to another via "Organise" —
+	// distinct from Scopes/SubMenus in that nothing resolves to these
+	// directly; they're only ever copied into a Scopes/SubMenus entry.
+	Templates map[string][]string `json:"templates,omitempty"`
 }
 
 type Policy struct {
@@ -581,6 +586,11 @@ func (s Settings) validateMenuLayouts() error {
 		}
 		for scope, items := range m.Scopes {
 			if err := check("scope "+scope, items); err != nil {
+				return err
+			}
+		}
+		for name, items := range m.Templates {
+			if err := check("template "+name, items); err != nil {
 				return err
 			}
 		}

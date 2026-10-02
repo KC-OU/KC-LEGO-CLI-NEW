@@ -7,6 +7,7 @@ import (
 	"html"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // LBX renders exactly one label as a Brother .lbx file — a ZIP of Brother's
@@ -75,9 +76,17 @@ func lbxLabelXML(d Data, s Size) string {
 	text := strings.Join(lines, "\n")
 
 	barcodeH := min(H*0.14, mmToPt(10))
-	qrSide := 0.0
+	qrSide, qrCellSize := 0.0, 0.0
 	if d.QR != "" {
 		qrSide = min(W-2*pad, H-barcodeH-2*pad) * 0.4
+		// Brother renders a QR at moduleCount × cellSize, not at
+		// objectStyle's width/height (that's only the editor's selection
+		// frame) — a zero/unset cellSize renders literally nothing. There's
+		// no way to predict moduleCount (Brother's own encoder picks the QR
+		// version from the data at version="auto") without reimplementing
+		// its encoder, so this is a rough fit assuming a typical short
+		// payload (~version 2-3, ~29 modules) rather than an exact one.
+		qrCellSize = max(1, qrSide/29)
 	}
 	textH := H - barcodeH - qrSide - 3*pad
 
@@ -86,16 +95,23 @@ func lbxLabelXML(d Data, s Size) string {
 	b.WriteString(`<pt:document xmlns:pt="http://schemas.brother.info/ptouch/2007/lbx/main" xmlns:style="http://schemas.brother.info/ptouch/2007/lbx/style" xmlns:text="http://schemas.brother.info/ptouch/2007/lbx/text" xmlns:draw="http://schemas.brother.info/ptouch/2007/lbx/draw" xmlns:image="http://schemas.brother.info/ptouch/2007/lbx/image" xmlns:barcode="http://schemas.brother.info/ptouch/2007/lbx/barcode" xmlns:database="http://schemas.brother.info/ptouch/2007/lbx/database" xmlns:table="http://schemas.brother.info/ptouch/2007/lbx/table" version="1.1" generator="wms-go">` + "\n")
 	b.WriteString(`<pt:body currentSheet="Sheet 1">` + "\n")
 	fmt.Fprintf(&b, `<style:sheet name="Sheet 1"><style:paper media="0" width="%.1fpt" height="%.1fpt" marginLeft="0pt" marginTop="0pt" marginRight="0pt" marginBottom="0pt" orientation="portrait" autoLength="false" monochromeDisplay="true" paperColor="#FFFFFF" paperInk="#000000" split="1" format="" backgroundTheme="0"/>`+"\n", W, H)
+	fmt.Fprintf(&b, `<style:backGround x="0pt" y="0pt" width="%.1fpt" height="%.1fpt" brushStyle="NULL" brushId="0" color="#000000" backColor="#FFFFFF"/>`+"\n", W, H)
 	b.WriteString(`<pt:objects>` + "\n")
 
-	// All the label's text as one auto-shrinking block.
-	fmt.Fprintf(&b, `<text:text><pt:objectStyle x="%.1fpt" y="%.1fpt" width="%.1fpt" height="%.1fpt" backColor="#FFFFFF" ropMode="COPYPEN" angle="0" anchor="TOPLEFT" flip="NONE"><pt:pen style="NULL" widthX="0.5pt" widthY="0.5pt" color="#000000"/><pt:brush style="NULL" color="#000000" id="0"/><pt:expanded objectName="Text1" ID="0" lock="0" templateMergeTarget="LABELLIST" templateMergeType="NONE" templateMergeID="0" dbMergeFieldStyleName="" linkStatus="NONE" linkID="0"/></pt:objectStyle><text:ptFontInfo><text:logFont name="Helsinki" width="0pt" italic="false" weight="400" charSet="0" pitchAndFamily="0"/><text:fontExt effect="NOEFFECT" underline="0" strikeout="0" size="10pt" orgSize="10pt" textColor="#000000"/></text:ptFontInfo><text:textControl control="LONGTEXTFIXED" clipFrame="false" aspectNormal="true" shrink="true" autoLF="true" avoidImage="false"/><text:textAlign horizontalAlignment="LEFT" verticalAlignment="TOP" inLineAlignment="BASELINE"/><text:textStyle vertical="false" nullBlock="false" charSpace="0" lineSpace="0" orgPoint="10pt"/><pt:data>%s</pt:data></text:text>`+"\n",
-		pad, pad, W-2*pad, textH, html.EscapeString(text))
+	// All the label's text as one auto-shrinking block. text:stringItem (one
+	// run, since this is uniformly styled) must come after pt:data with a
+	// charLen matching the text's rune count exactly, or P-touch Editor
+	// renders the whole object as blank — confirmed against a real P-touch
+	// Editor export (github.com/Alecto3-D/brother-p-touch-editor-format) and
+	// github.com/jdlien/lbx-utils's own format notes, element order (data
+	// before stringItem) matters too.
+	fmt.Fprintf(&b, `<text:text><pt:objectStyle x="%.1fpt" y="%.1fpt" width="%.1fpt" height="%.1fpt" backColor="#FFFFFF" ropMode="COPYPEN" angle="0" anchor="TOPLEFT" flip="NONE"><pt:pen style="NULL" widthX="0.5pt" widthY="0.5pt" color="#000000"/><pt:brush style="NULL" color="#000000" id="0"/><pt:expanded objectName="Text1" ID="0" lock="0" templateMergeTarget="LABELLIST" templateMergeType="NONE" templateMergeID="0" dbMergeFieldStyleName="" linkStatus="NONE" linkID="0"/></pt:objectStyle><text:ptFontInfo><text:logFont name="Helsinki" width="0pt" italic="false" weight="400" charSet="0" pitchAndFamily="0"/><text:fontExt effect="NOEFFECT" underline="0" strikeout="0" size="10pt" orgSize="10pt" textColor="#000000"/></text:ptFontInfo><text:textControl control="LONGTEXTFIXED" clipFrame="false" aspectNormal="true" shrink="true" autoLF="true" avoidImage="false"/><text:textAlign horizontalAlignment="LEFT" verticalAlignment="TOP" inLineAlignment="BASELINE"/><text:textStyle vertical="false" nullBlock="false" charSpace="0" lineSpace="0" orgPoint="10pt"/><pt:data>%s</pt:data><text:stringItem charLen="%d"><text:ptFontInfo><text:logFont name="Helsinki" width="0pt" italic="false" weight="400" charSet="0" pitchAndFamily="0"/><text:fontExt effect="NOEFFECT" underline="0" strikeout="0" size="10pt" orgSize="10pt" textColor="#000000"/></text:ptFontInfo></text:stringItem></text:text>`+"\n",
+		pad, pad, W-2*pad, textH, html.EscapeString(text), utf8.RuneCountInString(text))
 
 	y := pad + textH + pad
 	if qrSide > 0 {
-		fmt.Fprintf(&b, `<barcode:barcode><pt:objectStyle x="%.1fpt" y="%.1fpt" width="%.1fpt" height="%.1fpt" backColor="#FFFFFF" ropMode="COPYPEN" angle="0" anchor="TOPLEFT" flip="NONE"><pt:pen style="NULL" widthX="0.5pt" widthY="0.5pt" color="#000000"/><pt:brush style="NULL" color="#000000" id="0"/><pt:expanded objectName="QR1" ID="0" lock="0" templateMergeTarget="LABELLIST" templateMergeType="NONE" templateMergeID="0" dbMergeFieldStyleName="" linkStatus="NONE" linkID="0"/></pt:objectStyle><barcode:barcodeStyle protocol="QRCODE" lengths="0" zeroFill="false" barWidth="1pt" barRatio="1:3" humanReadable="false" humanReadableAlignment="LEFT" checkDigit="false" autoLengths="true" margin="false" sameLengthBar="false" bearerBar="false"/><pt:data>%s</pt:data><barcode:qrcodeStyle model="2" eccLevel="15%%" cellSize="0pt" mbcs="932" removeCharKind="0" removeCharString="" joint="1" jointSpace="8" jointVertically="false" version="auto" changeVersionDrag="false"/></barcode:barcode>`+"\n",
-			(W-qrSide)/2, y, qrSide, qrSide, html.EscapeString(d.QR))
+		fmt.Fprintf(&b, `<barcode:barcode><pt:objectStyle x="%.1fpt" y="%.1fpt" width="%.1fpt" height="%.1fpt" backColor="#FFFFFF" ropMode="COPYPEN" angle="0" anchor="TOPLEFT" flip="NONE"><pt:pen style="NULL" widthX="0.5pt" widthY="0.5pt" color="#000000"/><pt:brush style="NULL" color="#000000" id="0"/><pt:expanded objectName="QR1" ID="0" lock="0" templateMergeTarget="LABELLIST" templateMergeType="NONE" templateMergeID="0" dbMergeFieldStyleName="" linkStatus="NONE" linkID="0"/></pt:objectStyle><barcode:barcodeStyle protocol="QRCODE" lengths="0" zeroFill="false" barWidth="1pt" barRatio="1:3" humanReadable="false" humanReadableAlignment="LEFT" checkDigit="false" autoLengths="true" margin="false" sameLengthBar="false" bearerBar="false"/><pt:data>%s</pt:data><barcode:qrcodeStyle model="2" eccLevel="15%%" cellSize="%.1fpt" mbcs="932" removeCharKind="0" removeCharString="" joint="1" jointSpace="8" jointVertically="false" version="auto" changeVersionDrag="false"/></barcode:barcode>`+"\n",
+			(W-qrSide)/2, y, qrSide, qrSide, html.EscapeString(d.QR), qrCellSize)
 		y += qrSide + pad
 	}
 

@@ -328,3 +328,21 @@ func TestValidateRefusesASubMenuContainingAnotherSubMenu(t *testing.T) {
 		t.Error("a sub-menu containing another sub-menu should be refused (one level only)")
 	}
 }
+
+func TestValidateRefusesATemplateReferencingAnUnknownSubMenu(t *testing.T) {
+	p := &Policy{Groups: map[string]*Group{}, Users: map[string]*User{}, Settings: Settings{
+		MenuLayouts: map[string]ScreenMenu{
+			"hub": {Templates: map[string][]string{"mine": {"overview", "submenu:more"}}},
+		},
+	}}
+	if err := p.Validate(); err == nil {
+		t.Error("a template referencing an unknown sub-menu should be refused")
+	}
+	p.Settings.MenuLayouts["hub"] = ScreenMenu{
+		Templates: map[string][]string{"mine": {"overview", "submenu:more"}},
+		SubMenus:  map[string][]string{"more": {"my_accuracy"}},
+	}
+	if err := p.Validate(); err != nil {
+		t.Errorf("once the sub-menu exists, Validate should pass: %v", err)
+	}
+}

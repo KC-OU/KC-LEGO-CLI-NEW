@@ -93,6 +93,18 @@ the second identity the shared session above can't give you: two people (or one 
 simultaneously, neither one waiting on or seeing the other's screen. The cost is exactly what the default terminal avoids — no persistence:
 closing the tab or losing the connection ends that session for good, and reopening `/solo` is a fresh sign-on, 2FA included, every time.
 
+### `/solo` behind a reverse proxy/tunnel that can't rewrite paths
+
+`/solo` works by forwarding whatever arrives at that exact path straight to a `ttyd` backend that was itself started expecting that path —
+reaching it through anything that preserves the path (a normal reverse proxy, SSH tunnel, this gateway's own default setup) just works. Some
+tunnels (Cloudflare Tunnel among them) forward the hostname but not a path rewrite, so a second hostname pointed at the gateway's main port
+lands on `/` (the shared session above), not `/solo`, however it's typed — there's no way to make that hostname's own root resolve to a
+path-scoped backend from the tunnel side alone.
+
+Set `WMS_WEB_SOLO_DIRECT_PORT` to put a second, otherwise-identical `/solo` backend on its own port with **no** base path, so it answers
+correctly at its own root — point that second hostname's tunnel/proxy entry at `localhost:<that port>` instead of the gateway's main port.
+Off by default (no extra process, no extra port) until set. Independent of the proxied `/solo` above — neither affects the other.
+
 ## Reaching the `dev` build from elsewhere: the Live/Test picker
 
 By default, trying an in-progress `dev` build means either sitting at this machine or SSH-tunnelling to the

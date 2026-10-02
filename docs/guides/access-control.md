@@ -104,12 +104,13 @@ not a password reset.
 
 1. **Groups**: ↑/↓ choose, **Enter** opens the permission grid (arrows move, **Space** cycles allow → deny → not set, **S** saves),
    **N** new, **C** copy, **R** restricted, **D** delete (refused while users are in it).
-2. **Users**: **Enter** edits groups, 2FA, networks, channels, expiry, timeouts and a note; **G** edits that user's permission
-   overrides; **B** opens a **Menu tabs** checklist — Part-DB Hub, Operations (view-level), Script Hub and LEGO Collection
-   toggle on/off for just this person (`checker`/`picker` already grant LEGO Collection and Part-DB Hub by default — see
-   Starter groups below — so this is mainly for turning one *off* for someone, or on for a group that doesn't carry it).
+2. **Users**: **Enter** edits groups, 2FA, networks, channels, expiry, timeouts and a note; **P** edits that user's permission
+   overrides (not **G** — that's the global LEGO Collection jump everywhere else in the app, so this screen uses a different
+   key to avoid the clash); **B** opens a **Menu tabs** checklist — Part-DB Hub, Operations (view-level), Script Hub and LEGO
+   Collection toggle on/off for just this person (`checker`/`picker` already grant LEGO Collection and Part-DB Hub by default —
+   see Starter groups below — so this is mainly for turning one *off* for someone, or on for a group that doesn't carry it).
    **Admin** is the one row this screen can only turn *off* — it reflects whichever admin-ish permission the person already
-   has (role, group, or an override), but granting real admin access back stays a deliberate choice via **G** or Groups,
+   has (role, group, or an override), but granting real admin access back stays a deliberate choice via **P** or Groups,
    never a single checkbox; **N** adds a user; **X** removes the entry (back to their ModernWMS role).
 3. **Security settings**: the global timings above.
 4. **Check a user's effective permissions**: every permission with *why* ("allowed by group exporter", "denied by user override").

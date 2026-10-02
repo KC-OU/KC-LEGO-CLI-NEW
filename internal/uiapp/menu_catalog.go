@@ -8,11 +8,11 @@ import (
 )
 
 // menuCatalogItem is one entry an admin can choose to show on a customizable
-// menu — a real target (open) with a fixed hotkey of its own regardless of
-// where it lands in the chosen order, so hardcoded tab-bar jumps like
-// toggleLego/toggleAdminView keep lighting up the right tab whenever that
-// tab is actually shown. See menuRegistry for which screens are customizable
-// and resolveAndRenderMenu for how a catalog turns into what's on screen.
+// menu. hotkey is only a best-effort identity tag for toggleLego/
+// toggleAdminView's hardcoded tab-bar jumps to match against — the key a
+// viewer actually presses is assigned by position (see resolveAndRenderMenu),
+// since items renumber as a layout is reordered, same as any other numbered
+// list in this app. See menuRegistry for which screens are customizable.
 type menuCatalogItem struct {
 	key, hotkey, label string
 	allowed            func(app *App) bool
@@ -105,11 +105,43 @@ func resolveMenuKeys(p *access.Policy, screenKey, userKey string, groups []strin
 	return defaultKeys
 }
 
+// keyPool is every single key a rendered menu item can be numbered with, in
+// assignment order: 1-9 then safe letters (q/u/l/g/v skipped — those are
+// intercepted globally before any menu ever sees them, see handleGlobalKey),
+// then 0 last, since 0 is "Return"/"Exit" everywhere by convention.
+const keyPool = "123456789abcdefhijkmnoprstwxyz0"
+
+// keyAssigner hands out keys from keyPool in order, skipping the global
+// single-letter mnemonics and anything the caller already reserved — shared
+// by resolveAndRenderMenu and the sub-menu viewer so both number their items
+// the same way.
+func keyAssigner(reserved ...string) func() string {
+	used := map[string]bool{"q": true, "u": true, "l": true, "g": true, "v": true}
+	for _, r := range reserved {
+		used[r] = true
+	}
+	pos := 0
+	return func() string {
+		for pos < len(keyPool) {
+			c := string(keyPool[pos])
+			pos++
+			if !used[c] {
+				return c
+			}
+		}
+		return "?"
+	}
+}
+
 // resolveAndRenderMenu is every customizable screen's options func: resolve
-// this viewer's layout, then turn keys into menuOptions, expanding
-// "submenu:<name>" into a synthetic entry that opens the shared sub-menu
-// viewer (submenu_screen.go) instead of a catalog target directly.
-func resolveAndRenderMenu(app *App, screenKey string, catalog []menuCatalogItem, defaultKeys []string) []menuOption {
+// this viewer's layout, then render it — each item numbered by its position
+// in that layout (1, 2, 3, ... from keyPool), not by a fixed per-item key,
+// so reordering a layout renumbers it the way reordering any other numbered
+// list would. reserved excludes keys a caller has already spoken for (the
+// picker hub pins "9"/"0" to Log out/Exit — see pickerHubScreen). A
+// "submenu:<name>" entry renders as a synthetic item opening the shared
+// sub-menu viewer (submenu_screen.go) instead of a catalog target.
+func resolveAndRenderMenu(app *App, screenKey string, catalog []menuCatalogItem, defaultKeys []string, reserved ...string) []menuOption {
 	userKey, groups := "", []string(nil)
 	if app.session != nil {
 		userKey = access.Key(app.session.Source, app.session.Username)
@@ -118,48 +150,22 @@ func resolveAndRenderMenu(app *App, screenKey string, catalog []menuCatalogItem,
 		}
 	}
 	keys := resolveMenuKeys(app.pol(), screenKey, userKey, groups, defaultKeys)
+	nextKey := keyAssigner(reserved...)
 
-	// Catalog items keep their own fixed hotkey; a sub-menu entry gets one
-	// assigned from whatever's left over, so it can never collide with a
-	// real item or with the global single-letter mnemonics (q/u/l/g/v are
-	// intercepted before any menu ever sees them — see handleGlobalKey).
-	used := map[string]bool{"q": true, "u": true, "l": true, "g": true, "v": true}
-	type pending struct {
-		idx  int
-		name string
-	}
 	var opts []menuOption
-	var subs []pending
 	for _, key := range keys {
 		if name, ok := strings.CutPrefix(key, "submenu:"); ok {
-			subs = append(subs, pending{idx: len(opts), name: name})
-			opts = append(opts, menuOption{})
+			opts = append(opts, menuOption{Key: nextKey(), Label: name, Go: func(app *App) {
+				app.viewingSubmenu = &submenuView{screenKey: screenKey, name: name}
+				app.goTo(scrSubMenuView)
+			}})
 			continue
 		}
 		it := catalogItemByKey(catalog, key)
 		if it == nil || !it.allowed(app) {
 			continue
 		}
-		used[it.hotkey] = true
-		opts = append(opts, menuOption{Key: it.hotkey, Label: it.labelFor(app), Go: it.open})
-	}
-	pool := "abcdefhijkmnoprstwxyz0123456789"
-	next := 0
-	for _, s := range subs {
-		hotkey := ""
-		for next < len(pool) {
-			c := string(pool[next])
-			next++
-			if !used[c] {
-				hotkey = c
-				break
-			}
-		}
-		name := s.name
-		opts[s.idx] = menuOption{Key: hotkey, Label: name, Go: func(app *App) {
-			app.viewingSubmenu = &submenuView{screenKey: screenKey, name: name}
-			app.goTo(scrSubMenuView)
-		}}
+		opts = append(opts, menuOption{Key: nextKey(), Label: it.labelFor(app), Go: it.open})
 	}
 	return opts
 }

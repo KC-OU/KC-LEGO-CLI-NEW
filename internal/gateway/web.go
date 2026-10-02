@@ -99,13 +99,14 @@ func soloCommand(wmsBinaryPath string) []string {
 
 // RunWebGateway starts two ttyd instances (already installed on this box) — the
 // default shared-session terminal at "/", and a second, always-independent one at
-// soloBasePath — behind one Go-native reverse proxy, and runs them until ctx is
-// done. httputil.ReverseProxy (rather than the original's hand-rolled byte-pipe)
-// forwards WebSocket upgrade requests correctly for a same-process HTTP/1.1
-// target since it streams the hijacked connection rather than buffering it. All
-// three processes (proxy, both ttyd instances) are torn down together, mirroring
-// start_webtui.sh's kill-all-on-any-exit.
-func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath, testBinaryPath string, testEnv []string) error {
+// soloBasePath — behind one Go-native reverse proxy, plus two optional extra ttyd
+// instances (the dev-build "Test" terminal, and a base-path-free clone of /solo —
+// see soloDirectPort), and runs them until ctx is done. httputil.ReverseProxy
+// (rather than the original's hand-rolled byte-pipe) forwards WebSocket upgrade
+// requests correctly for a same-process HTTP/1.1 target since it streams the
+// hijacked connection rather than buffering it. Every process started here is
+// torn down together, mirroring start_webtui.sh's kill-all-on-any-exit.
+func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath, testBinaryPath string, testEnv []string, soloDirectPort string) error {
 	// A tmux session outlives ttyd (tmux has its own background server), so without
 	// this a gateway restart — every deploy — would silently keep running whatever
 	// binary was already inside the persisted session instead of picking up the new
@@ -178,6 +179,23 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 
 	mux.Handle("/", proxy)
 
+	// /solo reached via its own path (above) needs the gateway's own proxy
+	// to forward that exact path, which only works because the backend
+	// itself was started with -b soloBasePath. A reverse proxy or tunnel
+	// that can't rewrite the request path before forwarding (some can't)
+	// has no way to make a bare "/" request reach that path-scoped backend
+	// — so when configured, this starts a second, otherwise-identical solo
+	// backend on its own port with no base path, reachable at its own root.
+	// Independent of the proxied /solo above; nothing is shared between
+	// them beyond both exec'ing the same wmsBinaryPath per connection.
+	var soloDirectCmd *exec.Cmd
+	if soloDirectPort != "" {
+		soloDirectCmd = exec.CommandContext(ctx, "ttyd",
+			append([]string{"-W", "-i", "lo", "-p", soloDirectPort,
+				"-t", "fontSize=18", "-t", "disableLeaveAlert=true"}, soloCommand(wmsBinaryPath)...)...)
+		soloDirectCmd.Env = env
+	}
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(listenHost, strconv.Itoa(gatewayPort)),
 		Handler:           mux,
@@ -194,13 +212,19 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 		if testCmd != nil && testCmd.Process != nil {
 			_ = testCmd.Process.Kill()
 		}
+		if soloDirectCmd != nil && soloDirectCmd.Process != nil {
+			_ = soloDirectCmd.Process.Kill()
+		}
 	}
 
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	go func() { errCh <- ttydCmd.Run() }()
 	go func() { errCh <- soloCmd.Run() }()
 	if testCmd != nil {
 		go func() { errCh <- testCmd.Run() }()
+	}
+	if soloDirectCmd != nil {
+		go func() { errCh <- soloDirectCmd.Run() }()
 	}
 	go func() { errCh <- srv.ListenAndServe() }()
 

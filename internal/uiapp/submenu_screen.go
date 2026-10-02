@@ -32,12 +32,13 @@ func submenuViewScreen() screenModel {
 			def := menuScreenDefFor(v.screenKey)
 			var opts []menuOption
 			if def != nil {
+				nextKey := keyAssigner("0") // 0 stays reserved for Return, below
 				for _, key := range app.pol().Settings.MenuLayouts[v.screenKey].SubMenus[v.name] {
 					it := catalogItemByKey(def.catalog, key)
 					if it == nil || !it.allowed(app) {
 						continue
 					}
-					opts = append(opts, menuOption{Key: it.hotkey, Label: it.labelFor(app), Go: it.open})
+					opts = append(opts, menuOption{Key: nextKey(), Label: it.labelFor(app), Go: it.open})
 				}
 			}
 			opts = append(opts, menuOption{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }})

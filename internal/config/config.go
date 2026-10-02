@@ -38,6 +38,7 @@ const (
 	GatewayPort                = "GATEWAY_PORT"
 	GatewayListenHost          = "GATEWAY_LISTEN_HOST"
 	TTYDPort                   = "TTYD_PORT"
+	WebSoloDirectPort          = "WMS_WEB_SOLO_DIRECT_PORT"
 	MetricsPort                = "WMS_METRICS_PORT"
 	BotAPIPort                 = "WMS_BOT_API_PORT"
 	PartDBURL                  = "PARTDB_URL"
@@ -100,6 +101,7 @@ func Defaults() map[string]string {
 		TTYDPort:                "7682",
 		MetricsPort:             "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
 		BotAPIPort:              "", // empty: the remote-bot webhook (internal/botapi) is off until set, and always loopback-only when it is
+		WebSoloDirectPort:       "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:         "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:       "/root/docker-server/partdb-sync/config/link_overrides.json",
 		TwoFAFile:               "/root/docker-server/wms/2fa.json",

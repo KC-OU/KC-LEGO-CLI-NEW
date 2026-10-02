@@ -58,7 +58,7 @@ func pickerHubScreen() screenModel {
 		panelID: "PIKHUB",
 		title:   "Picker / Checker",
 		options: func(app *App) []menuOption {
-			opts := resolveAndRenderMenu(app, scrPickerHub, pickerHubCatalog, defaultPickerHubKeys)
+			opts := resolveAndRenderMenu(app, scrPickerHub, pickerHubCatalog, defaultPickerHubKeys, "9", "0")
 			return append(opts,
 				menuOption{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},
 				menuOption{Key: "0", Label: "Exit", Go: func(app *App) { app.quitting = true }},

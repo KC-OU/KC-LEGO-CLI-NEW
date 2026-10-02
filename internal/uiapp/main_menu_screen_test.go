@@ -8,6 +8,10 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 )
 
+// TestHubOptionsUsesDefaultWhenMenuLayoutsUnset also covers the
+// auto-numbered-by-position scheme: items are keyed "1","2","3"... in
+// display order, not by each catalog item's own fixed (now cosmetic-only)
+// hotkey — see keyAssigner.
 func TestHubOptionsUsesDefaultWhenMenuLayoutsUnset(t *testing.T) {
 	app := newTestApp(t)
 	opts := hubOptions(app)
@@ -16,8 +20,9 @@ func TestHubOptionsUsesDefaultWhenMenuLayoutsUnset(t *testing.T) {
 	}
 	for i, key := range defaultMainMenuKeys {
 		it := catalogItemByKey(mainMenuCatalog, key)
-		if opts[i].Key != it.hotkey || opts[i].Label != it.label {
-			t.Errorf("opts[%d] = %q/%q, want %q/%q", i, opts[i].Key, opts[i].Label, it.hotkey, it.label)
+		wantKey := string(keyPool[i])
+		if opts[i].Key != wantKey || opts[i].Label != it.label {
+			t.Errorf("opts[%d] = %q/%q, want %q/%q", i, opts[i].Key, opts[i].Label, wantKey, it.label)
 		}
 	}
 }
@@ -156,10 +161,218 @@ func TestMenuEditorToggleMoveAndSave(t *testing.T) {
 	}
 }
 
+// pickItemByKey finds a pick item by its Key, so a test can drive a specific
+// choice out of a startPick list (via app.pick.OnPick) without depending on
+// its on-screen order.
+func pickItemByKey(t *testing.T, st *pickState, key string) pickItem {
+	t.Helper()
+	for _, it := range st.Items {
+		if it.Key == key {
+			return it
+		}
+	}
+	t.Fatalf("no pick item with key %q in %+v", key, st.Items)
+	return pickItem{}
+}
+
+// TestOrganiseSaveApplyAndResetTemplate drives the whole "O" flow: save the
+// current order as a named template, reset to the built-in default, then
+// apply the saved template back — covering both halves of "a most
+// appropriate order, or an order I set."
+func TestOrganiseSaveApplyAndResetTemplate(t *testing.T) {
+	app := newTestApp(t)
+	scr := menuEditorFor(app, scrHub, "global")
+
+	// Turn "Script Hub" off, then save this as a template.
+	scr.row = 3
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeySpace})
+	customized := append([]string(nil), scr.vals...)
+
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	app.pick.OnPick(app, pickItemByKey(t, app.pick, "save"))
+	app.pick.OnFree(app, "My order")
+
+	if app.cur != scrMenuEditor {
+		t.Fatalf("saving a template should return to the editor, cur = %q", app.cur)
+	}
+	saved := app.pol().Settings.MenuLayouts[scrHub].Templates["My order"]
+	if len(saved) != len(customized) || saved[0] != customized[0] {
+		t.Fatalf("saved template = %v, want %v", saved, customized)
+	}
+
+	// Reset to the built-in default — "Script Hub" comes back.
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	app.pick.OnPick(app, pickItemByKey(t, app.pick, "default"))
+	if len(scr.vals) != len(defaultMainMenuKeys) || scr.valIndex("scripts") == -1 {
+		t.Fatalf("after reset, vals = %v, want the default set (scripts included)", scr.vals)
+	}
+
+	// Apply the saved template back — "Script Hub" is gone again.
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	app.pick.OnPick(app, pickItemByKey(t, app.pick, "apply:My order"))
+	if scr.valIndex("scripts") != -1 {
+		t.Fatalf("after applying the template, vals = %v, scripts should be gone again", scr.vals)
+	}
+	if !auditHas(t, "template My order saved") {
+		t.Error("expected an audit log entry for saving the template")
+	}
+}
+
+// TestHubOptionsNumbersByPositionNotByFixedIdentity confirms the key
+// assigned to each item follows where it sits in the chosen order, not a
+// per-catalog-item fixed key: promoting "Admin: Assign Work" to the front
+// gives it "1", not its old cosmetic-only hotkey "h".
+func TestHubOptionsNumbersByPositionNotByFixedIdentity(t *testing.T) {
+	app := newTestApp(t)
+	setGlobalLayout(t, scrHub, []string{"admin_assign", "overview", "partdb"})
+	app.loadPolicy()
+
+	opts := hubOptions(app)
+	want := []struct{ key, label string }{
+		{"1", "Admin: Assign Work"}, {"2", "Overview"}, {"3", "PartDB Hub"},
+	}
+	for i, w := range want {
+		if opts[i].Key != w.key || opts[i].Label != w.label {
+			t.Errorf("opts[%d] = %q/%q, want %q/%q", i, opts[i].Key, opts[i].Label, w.key, w.label)
+		}
+	}
+}
+
+// TestPickerHubNumberingNeverCollidesWithPinnedLogOutExit confirms a full
+// layout (enough items to reach "9" under plain sequential numbering) still
+// skips the two keys Log out/Exit already pin.
+func TestPickerHubNumberingNeverCollidesWithPinnedLogOutExit(t *testing.T) {
+	app := newTestApp(t)
+	setGlobalLayout(t, scrPickerHub, defaultPickerHubKeys) // 9 items: would reach key "9" unreserved
+	app.loadPolicy()
+
+	scr := pickerHubScreen().(*menuScreen)
+	opts := scr.options(app)
+	seen := map[string]int{}
+	for _, o := range opts {
+		seen[o.Key]++
+	}
+	for key, n := range seen {
+		if n > 1 {
+			t.Fatalf("key %q used %d times: %+v", key, n, opts)
+		}
+	}
+	logOut, exit := opts[len(opts)-2], opts[len(opts)-1]
+	if logOut.Key != "9" || exit.Key != "0" {
+		t.Fatalf("Log out/Exit should keep their pinned keys, got %q=%q, %q=%q", logOut.Label, logOut.Key, exit.Label, exit.Key)
+	}
+	for _, o := range opts[:len(opts)-2] {
+		if o.Key == "9" || o.Key == "0" {
+			t.Errorf("a regular item took a pinned key: %+v", o)
+		}
+	}
+}
+
+// TestSubMenuRenameUpdatesStorageAndScopeReferences covers both halves of a
+// rename: the SubMenus key itself, and every scope that had "submenu:<old>"
+// included — those must keep pointing at the sub-menu under its new name,
+// not silently stop resolving.
+func TestSubMenuRenameUpdatesStorageAndScopeReferences(t *testing.T) {
+	app := newTestApp(t)
+	app.menuEdit = &menuEditDraft{screenKey: scrPickerHub}
+	app.goTo(scrSubMenuManage)
+	subMenuManageKeys(app, "", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	app.pick.OnFree(app, "More")
+	sub := app.screens[scrMenuEditor].(*menuEditorScreen)
+	for i, k := range sub.display(app) {
+		if k == "my_accuracy" {
+			sub.row = i
+			break
+		}
+	}
+	sub.HandleKey(app, tea.KeyMsg{Type: tea.KeySpace})
+	sub.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+
+	top := menuEditorFor(app, scrPickerHub, "global")
+	for i, k := range top.display(app) {
+		if k == "submenu:More" {
+			top.row = i
+			break
+		}
+	}
+	top.HandleKey(app, tea.KeyMsg{Type: tea.KeySpace})
+	top.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+
+	app.menuEdit = &menuEditDraft{screenKey: scrPickerHub}
+	app.goTo(scrSubMenuManage)
+	subMenuManageKeys(app, "More", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	app.pick.OnFree(app, "Extras")
+
+	m := app.pol().Settings.MenuLayouts[scrPickerHub]
+	if _, stillThere := m.SubMenus["More"]; stillThere {
+		t.Error("the old sub-menu name should be gone")
+	}
+	if items := m.SubMenus["Extras"]; len(items) != 1 || items[0] != "my_accuracy" {
+		t.Fatalf("renamed sub-menu's items = %v, want [my_accuracy]", items)
+	}
+	global := m.Scopes["global"]
+	found := false
+	for _, k := range global {
+		if k == "submenu:More" {
+			t.Error("global scope still references the old sub-menu name")
+		}
+		if k == "submenu:Extras" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("global scope should now reference submenu:Extras, got %v", global)
+	}
+}
+
 // TestSubMenuCreateIncludeAndExpand drives the whole "move items into a
 // sub-menu" flow end to end: create one, put two items in it, include it in
 // the global layout, then confirm it actually renders as a navigable entry
 // showing exactly those two items — the user's literal ask this session.
+// TestSavingASubMenuRemovesItsItemsFromEveryTopLevelScope is the fix for a
+// real reported gap: putting an item in a sub-menu used to leave it also
+// still "on" at the top level (a copy, not a move) — now saving a sub-menu's
+// membership immediately strips those same keys out of every scope for that
+// screen, not just the one being edited at the time.
+func TestSavingASubMenuRemovesItsItemsFromEveryTopLevelScope(t *testing.T) {
+	app := newTestApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Settings.MenuLayouts = map[string]access.ScreenMenu{
+			scrPickerHub: {Scopes: map[string][]string{
+				"group:checker":  {"overview", "my_accuracy", "my_exports"},
+				"group:pickers2": {"my_accuracy", "overview"},
+			}},
+		}
+	})
+	app.loadPolicy()
+
+	app.menuEdit = &menuEditDraft{screenKey: scrPickerHub}
+	app.goTo(scrSubMenuManage)
+	subMenuManageKeys(app, "", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	app.pick.OnFree(app, "More")
+	sub := app.screens[scrMenuEditor].(*menuEditorScreen)
+	for i, k := range sub.display(app) {
+		if k == "my_accuracy" {
+			sub.row = i
+			break
+		}
+	}
+	sub.HandleKey(app, tea.KeyMsg{Type: tea.KeySpace})
+	sub.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+
+	m := app.pol().Settings.MenuLayouts[scrPickerHub]
+	for scope, items := range m.Scopes {
+		for _, k := range items {
+			if k == "my_accuracy" {
+				t.Errorf("scope %s still lists my_accuracy directly after it moved into a sub-menu: %v", scope, items)
+			}
+		}
+	}
+	if items := m.Scopes["group:checker"]; len(items) != 2 || items[0] != "overview" || items[1] != "my_exports" {
+		t.Errorf("group:checker = %v, want [overview my_exports] (order preserved, duplicate removed)", items)
+	}
+}
+
 func TestSubMenuCreateIncludeAndExpand(t *testing.T) {
 	app := newTestApp(t)
 	app.menuEdit = &menuEditDraft{screenKey: scrPickerHub}

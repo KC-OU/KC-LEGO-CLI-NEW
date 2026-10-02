@@ -325,6 +325,8 @@ func (s *menuEditorScreen) HandleKey(app *App, msg tea.KeyMsg) {
 			s.vals[vi], s.vals[vi+1] = s.vals[vi+1], s.vals[vi]
 		}
 		s.followRow(app, key)
+	case isKey(msg, 'o'):
+		s.openOrganise(app)
 	case isKey(msg, 's'):
 		d, vals := *app.menuEdit, append([]string(nil), s.vals...)
 		what := "menu " + d.screenKey + " scope " + d.scope + " customized"
@@ -347,6 +349,25 @@ func (s *menuEditorScreen) HandleKey(app *App, msg tea.KeyMsg) {
 				}
 				m.Scopes[d.scope] = vals
 			}
+			// An item lives in exactly one place: once it's in a sub-menu,
+			// it comes off every scope's top-level list — otherwise "move
+			// this into a sub-menu" would leave a duplicate behind instead
+			// of actually moving it.
+			inAnySubMenu := map[string]bool{}
+			for _, items := range m.SubMenus {
+				for _, k := range items {
+					inAnySubMenu[k] = true
+				}
+			}
+			for scope, items := range m.Scopes {
+				cleaned := make([]string, 0, len(items))
+				for _, k := range items {
+					if !inAnySubMenu[k] {
+						cleaned = append(cleaned, k)
+					}
+				}
+				m.Scopes[scope] = cleaned
+			}
 			p.Settings.MenuLayouts[d.screenKey] = m
 			return nil
 		})
@@ -362,6 +383,74 @@ func (s *menuEditorScreen) followRow(app *App, key string) {
 			return
 		}
 	}
+}
+
+// openOrganise is "O": reset the working copy to the screen's built-in
+// default order, apply a previously-saved template, or save the current
+// working copy as a new named template — none of these save on their own,
+// same as every other edit here; S still commits it.
+func (s *menuEditorScreen) openOrganise(app *App) {
+	if app.menuEdit == nil {
+		return
+	}
+	d := *app.menuEdit
+	templates := app.pol().Settings.MenuLayouts[d.screenKey].Templates
+
+	var items []pickItem
+	if !s.editingSubMenu(app) {
+		items = append(items, pickItem{Key: "default", Label: "Reset to the default order"})
+	}
+	for _, name := range sortedMapKeys(templates) {
+		items = append(items, pickItem{Key: "apply:" + name, Label: "Apply template: " + name})
+	}
+	items = append(items, pickItem{Key: "save", Label: "Save the current order as a new template"})
+
+	startPick(app, &pickState{
+		Header: "Organise",
+		Prompt: "Choose",
+		Items:  items,
+		OnPick: func(app *App, it pickItem) {
+			switch {
+			case it.Key == "default":
+				if def := s.def(app); def != nil {
+					s.vals = append([]string(nil), def.defaultKeys...)
+				}
+				app.popTo(scrMenuEditor)
+			case it.Key == "save":
+				startPick(app, &pickState{
+					Header:    "Save as template",
+					Prompt:    "Name it",
+					AllowFree: true,
+					FreeHint:  "a short name",
+					OnFree: func(app *App, text string) {
+						text = strings.TrimSpace(text)
+						if text == "" {
+							app.setMsg("Enter a name.", true)
+							return
+						}
+						vals := append([]string(nil), s.vals...)
+						app.saveAccess("menu "+d.screenKey+" template "+text+" saved", func(p *access.Policy) error {
+							if p.Settings.MenuLayouts == nil {
+								p.Settings.MenuLayouts = map[string]access.ScreenMenu{}
+							}
+							mm := p.Settings.MenuLayouts[d.screenKey]
+							if mm.Templates == nil {
+								mm.Templates = map[string][]string{}
+							}
+							mm.Templates[text] = vals
+							p.Settings.MenuLayouts[d.screenKey] = mm
+							return nil
+						})
+						app.popTo(scrMenuEditor)
+					},
+				})
+			default:
+				name := strings.TrimPrefix(it.Key, "apply:")
+				s.vals = append([]string(nil), templates[name]...)
+				app.popTo(scrMenuEditor)
+			}
+		},
+	})
 }
 
 // ---- managing a screen's sub-menus ----
@@ -434,6 +523,50 @@ func subMenuManageKeys(app *App, name string, msg tea.KeyMsg) {
 			p.Settings.MenuLayouts[d.screenKey] = m
 			return nil
 		})
+	case isKey(msg, 'r') && name != "":
+		oldName := name
+		startPick(app, &pickState{
+			Header:    "Rename sub-menu " + oldName,
+			Prompt:    "New name",
+			AllowFree: true,
+			FreeHint:  "a short name",
+			OnFree: func(app *App, text string) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					app.setMsg("Enter a name.", true)
+					return
+				}
+				if text == oldName {
+					app.onBack()
+					return
+				}
+				d := *app.menuEdit
+				app.saveAccess("menu "+d.screenKey+" sub-menu "+oldName+" renamed to "+text, func(p *access.Policy) error {
+					m := p.Settings.MenuLayouts[d.screenKey]
+					if _, exists := m.SubMenus[text]; exists {
+						return fmt.Errorf("a sub-menu named %q already exists here", text)
+					}
+					items, ok := m.SubMenus[oldName]
+					if !ok {
+						return fmt.Errorf("sub-menu %q no longer exists", oldName)
+					}
+					m.SubMenus[text] = items
+					delete(m.SubMenus, oldName)
+					// Every scope that had this sub-menu included keeps pointing at it.
+					for scope, scopeItems := range m.Scopes {
+						for i, k := range scopeItems {
+							if k == "submenu:"+oldName {
+								scopeItems[i] = "submenu:" + text
+							}
+						}
+						m.Scopes[scope] = scopeItems
+					}
+					p.Settings.MenuLayouts[d.screenKey] = m
+					return nil
+				})
+				app.onBack()
+			},
+		})
 	}
 }
 
@@ -441,7 +574,7 @@ func subMenuManageScreen() screenModel {
 	return &selectList{
 		panelID:   "SUBMAN",
 		title:     "Sub-menus",
-		hint:      "Enter edit its items · N new · D delete",
+		hint:      "Enter edit its items · N new · R rename · D delete",
 		emptyHint: "No sub-menus here yet — N creates one.",
 		rows:      subMenuManageRows,
 		keys:      subMenuManageKeys,

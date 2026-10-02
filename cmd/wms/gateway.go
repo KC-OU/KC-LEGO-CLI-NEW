@@ -94,7 +94,7 @@ func newGatewayServeCmd() *cobra.Command {
 				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv)
 			})
 			g.Go(func() error {
-				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv)
+				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv, strings.TrimSpace(config.Get(config.WebSoloDirectPort)))
 			})
 			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
 				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })

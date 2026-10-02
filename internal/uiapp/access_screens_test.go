@@ -20,9 +20,54 @@ func adminApp(t *testing.T) *App {
 	return app
 }
 
+// TestUsersListPermissionOverridesUsesPNotG locks in a real fix: G is the
+// global LEGO Collection jump (handleGlobalKey, intercepted before any
+// screen ever sees it), so the Users list's "permission overrides" action
+// was unreachable on G — pressing it always jumped to LEGO Collection
+// instead. It lives on P now, and G still behaves exactly like the global
+// jump everywhere else.
+func TestUsersListPermissionOverridesUsesPNotG(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:exportbot"] = &access.User{Groups: []string{"exporter"}}
+	})
+	app.goTo(scrAccessUsers)
+	scr := app.screens[scrAccessUsers].(*selectList)
+	_, _, keys := scr.rows(app)
+	for i, k := range keys {
+		if k == "partdb:exportbot" {
+			scr.sel = i
+			break
+		}
+	}
+
+	press(app, "g")
+	if app.cur != scrLegoHub {
+		t.Fatalf("G on the Users list should still be the global LEGO Collection jump, cur = %q", app.cur)
+	}
+
+	app.cur, app.stack = scrHub, nil
+	app.goTo(scrAccessUsers)
+	scr = app.screens[scrAccessUsers].(*selectList)
+	_, _, keys = scr.rows(app)
+	for i, k := range keys {
+		if k == "partdb:exportbot" {
+			scr.sel = i
+			break
+		}
+	}
+	press(app, "p")
+	if app.cur != scrAccessGrid || app.accessEdit == nil || app.accessEdit.User != "partdb:exportbot" {
+		t.Fatalf("P should open permission overrides for partdb:exportbot, cur = %q, accessEdit = %+v", app.cur, app.accessEdit)
+	}
+}
+
 func TestAdminEditsAGroupGrid(t *testing.T) {
 	app := adminApp(t)
-	press(app, "9")
+	// Reach Admin directly rather than via its hub hotkey: since menu items
+	// are now numbered by position (see menu_catalog.go), which key reaches
+	// Admin depends on the layout, not a fixed digit.
+	app.goTo(scrAdminHub)
 	press(app, "4")
 	if app.cur != scrAccessHub {
 		t.Fatalf("Admin → 4 should open Access Control, on %q", app.cur)
