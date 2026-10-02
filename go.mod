@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	filippo.io/age v1.3.2
-	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc
+	github.com/boombuler/barcode v1.1.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.10.1
