@@ -12,6 +12,7 @@ const (
 	EventMissingParts       = "missing_parts"
 	EventForcedOff          = "forced_off"
 	EventReassigned         = "reassigned"
+	EventThemeRequest       = "theme_request"
 )
 
 type AdminEvent struct {

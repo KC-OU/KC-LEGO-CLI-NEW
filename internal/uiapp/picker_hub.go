@@ -33,7 +33,7 @@ func pickerHubScreen() screenModel {
 				// access.go's seed()) — these only need a menu entry to be reachable
 				// without knowing Ctrl-K/the palette already has them. Perm-gated like
 				// every other option here, so an admin denying it for one person (the
-				// Users list's "b" browse toggle) hides it here too, same as anywhere else.
+				// Users list's "b" menu-tabs checklist) hides it here too, same as anywhere else.
 				{Key: "7", Label: "LEGO Collection", Go: func(app *App) { app.goTo(scrLegoHub) }, Perm: "lego.view"},
 				{Key: "8", Label: "Part-DB Hub", Go: func(app *App) { app.goTo(scrPartDBHub) }, Perm: "partdb.view"},
 				{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},

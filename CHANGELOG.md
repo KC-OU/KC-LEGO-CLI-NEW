@@ -18,8 +18,26 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ### Added
 - **LEGO Collection/Part-DB browsing on the picker/checker hub**: both now show there for
   searching and looking things up (never editing) — `checker`/`picker` already carried the read
-  permissions by default, they just had no menu path to them before. *Admin → Access Control →
-  Users → B* turns it off for one person, or on for someone in a different group.
+  permissions by default, they just had no menu path to them before.
+- **Menu tabs checklist** (*Admin → Access Control → Users → B*): per-user on/off for Part-DB Hub,
+  Operations (view-level), Script Hub and LEGO Collection — real access control, not cosmetic
+  hiding, each backed by the exact permissions that already gate the tab. **Admin** is the one row
+  this screen can only turn *off*, reflecting whatever admin-ish permission a person already has
+  from their role/group/overrides — fixes a real report of a `checker` account showing `9=Admin`
+  with no admin permission named anywhere; granting admin back stays a deliberate choice via the
+  permission grid or Groups, never a single checkbox. Replaces the narrower LEGO/Part-DB-only
+  browse toggle shipped a few commits ago.
+- **Request a new theme** (*My display theme → R*): send an admin a theme you found (name + a
+  link/description) — reaches *Admin → Recent Activity* and any configured notification channel
+  (Discord, Slack, ...), the same infrastructure every other admin-relevant event already uses.
+- **More label export formats**: `--format png` (a pixel-exact rasterized image — sidesteps the
+  PDF-viewer "Fit to page" scaling mismatch that caused a real print failure), `--format zpl`
+  (Zebra Printer Language, for Zebra-style hardware), and `--format lbx` (a real Brother P-touch
+  Editor file — native QR/Code128 objects, not a rasterized image, so Brother's own software
+  trusts the dimensions completely; lower confidence than the others since Brother has never
+  published a spec for it, built from community reverse-engineering — test-print before trusting
+  it). `png`/`zpl`/`lbx` are one label at a time, no sheet stock; picking exactly one set at a
+  non-sheet size in the terminal now saves all three automatically alongside the usual PDF/HTML.
 - **Brother QL-600, 38mm** (`--size 38x90`) alongside the existing 62mm label sizes.
 - **Live/Test picker on the gateway**: with `WMS_TEST_BINARY_PATH`/`WMS_TEST_ENV_FILE` set (off by
   default, and never on the test instance itself), the already-exposed telnet/web gateway offers a

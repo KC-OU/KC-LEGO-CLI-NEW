@@ -143,68 +143,85 @@ func indexOfArea(name string) int {
 	return -1
 }
 
-// TestBrowseToggleGrantsAndRevokesLegoAndPartDBViewOnly covers the "b" hotkey
-// on the Users list: it should grant exactly the three read permissions that
-// already gate LEGO Collection/Part-DB browsing (see hub.go's hubOptions and
-// access.go's screenPerm), together, and nothing else; pressing it again
-// takes it away again. An explicit allow/deny each time, not "set vs.
-// delete-to-inherit" — a group (checker, picker) can already grant this by
-// default (access.go's seed()), so merely deleting an override would fall
-// back to the group's own "allow" and fail to turn it off (see
-// TestBrowseToggleWithdrawsItForOnePerson for that exact case). This user
-// has no group at all, so it genuinely starts off.
-func TestBrowseToggleGrantsAndRevokesLegoAndPartDBViewOnly(t *testing.T) {
+// menuTabRow finds a tab's index in menuTabs by key, for tests that need to
+// drive the cursor to a specific row.
+func menuTabRow(t *testing.T, key string) int {
+	t.Helper()
+	for i, tab := range menuTabs {
+		if tab.Key == key {
+			return i
+		}
+	}
+	t.Fatalf("no menu tab %q", key)
+	return -1
+}
+
+func toggleMenuTab(t *testing.T, app *App, scr *menuTabsScreen, key string) {
+	t.Helper()
+	row := menuTabRow(t, key)
+	for scr.row < row {
+		scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	for scr.row > row {
+		scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyUp})
+	}
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeySpace})
+}
+
+// TestMenuTabsScreenTogglesOneTabAtATime covers the "b" hotkey on the Users
+// list: each row grants/denies exactly its own permissions (see hub.go's
+// hubOptions and access.go's screenPerm), independently of every other row —
+// toggling LEGO Collection must never also touch Part-DB Hub. An explicit
+// allow/deny each time, not "set vs. delete-to-inherit" — a group (checker,
+// picker) can already grant several of these by default, so merely deleting
+// an override would fall back to the group's own "allow" and fail to turn it
+// off (see TestMenuTabsScreenWithdrawsOneTabForOnePerson for that exact
+// case). This user has no group at all, so everything genuinely starts off.
+func TestMenuTabsScreenTogglesOneTabAtATime(t *testing.T) {
 	app := adminApp(t)
 	setPolicy(t, func(p *access.Policy) {
 		p.Users["partdb:restricted1"] = &access.User{}
 	})
-	app.loadPolicy()
-
-	if browseGranted(app.pol(), "partdb:restricted1") {
-		t.Fatal("browse should start off for a user in no group")
-	}
 
 	userKeys(app, "partdb:restricted1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if app.cur != scrMenuTabsEdit {
+		t.Fatalf("cur = %q, want the menu tabs screen", app.cur)
+	}
+	scr := app.screens[scrMenuTabsEdit].(*menuTabsScreen)
+	for _, tab := range menuTabs {
+		if scr.vals[tab.Key] {
+			t.Fatalf("tab %q should start off for a user in no group", tab.Key)
+		}
+	}
+
+	toggleMenuTab(t, app, scr, "lego")
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 
 	p, _ := access.Load()
 	u := p.Users["partdb:restricted1"]
 	if u == nil {
 		t.Fatal("expected a policy entry for the user")
 	}
-	for _, perm := range []string{"lego.view", "lego.search", "partdb.view"} {
+	for _, perm := range []string{"lego.view", "lego.search"} {
 		if u.Perms[perm] != access.Allow {
 			t.Errorf("Perms[%q] = %q, want allow", perm, u.Perms[perm])
 		}
 	}
+	if u.Perms["partdb.view"] == access.Allow {
+		t.Error("toggling LEGO Collection must not also grant Part-DB Hub")
+	}
 	for _, perm := range []string{"lego.edit", "stock.adjust", "orders.manage"} {
 		if u.Perms[perm] != "" {
-			t.Errorf("the browse toggle must never set %q, got %q", perm, u.Perms[perm])
+			t.Errorf("the menu tabs screen must never set %q, got %q", perm, u.Perms[perm])
 		}
-	}
-	app.loadPolicy()
-	if !browseGranted(app.pol(), "partdb:restricted1") {
-		t.Error("browseGranted should now report on")
-	}
-
-	userKeys(app, "partdb:restricted1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	p, _ = access.Load()
-	u = p.Users["partdb:restricted1"]
-	for _, perm := range []string{"lego.view", "lego.search", "partdb.view"} {
-		if u.Perms[perm] != access.Deny {
-			t.Errorf("pressing b again should explicitly deny %q, got %q", perm, u.Perms[perm])
-		}
-	}
-	app.loadPolicy()
-	if browseGranted(app.pol(), "partdb:restricted1") {
-		t.Error("browseGranted should now report off")
 	}
 }
 
-// TestBrowseToggleCreatesAnEntryForAnUngovernedUser mirrors the existing "g"
-// permission-grid save path (access_screens.go's gridScreen HandleKey, the
-// 's' case): toggling browse for a user with no Users[] entry yet creates a
-// bare one, same precedent, not something new this hotkey invents.
-func TestBrowseToggleCreatesAnEntryForAnUngovernedUser(t *testing.T) {
+// TestMenuTabsScreenCreatesAnEntryForAnUngovernedUser mirrors the existing
+// "g" permission-grid save path (access_screens.go's gridScreen HandleKey,
+// the 's' case): saving for a user with no Users[] entry yet creates a bare
+// one, same precedent, not something new this screen invents.
+func TestMenuTabsScreenCreatesAnEntryForAnUngovernedUser(t *testing.T) {
 	app := adminApp(t)
 	app.loadPolicy()
 	if p := app.pol(); p.Users["partdb:freshuser"] != nil {
@@ -212,21 +229,123 @@ func TestBrowseToggleCreatesAnEntryForAnUngovernedUser(t *testing.T) {
 	}
 
 	userKeys(app, "partdb:freshuser", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	scr := app.screens[scrMenuTabsEdit].(*menuTabsScreen)
+	toggleMenuTab(t, app, scr, "partdb")
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 
 	p, _ := access.Load()
 	u := p.Users["partdb:freshuser"]
-	if u == nil || u.Perms["lego.view"] != access.Allow {
-		t.Fatalf("expected a new entry with browse granted, got %+v", u)
+	if u == nil || u.Perms["partdb.view"] != access.Allow {
+		t.Fatalf("expected a new entry with Part-DB Hub granted, got %+v", u)
 	}
 }
 
-// TestBrowseToggleActuallyUnlocksLegoAndPartDBReadOnly is the end-to-end
-// proof behind the design decision not to add any new access-control
-// plumbing for the browse toggle. The "checker" group already carries
-// lego.view/lego.search/partdb.view by default (see access.go's seed()) —
-// what was actually missing was a menu path to them (picker_hub.go now has
-// one, Perm-gated like every other entry there), and an admin's way to
-// override the default per person, which is what the "b" toggle is for.
+// TestMenuTabsScreenRefusesToGrantAdmin: unlike every other row, Admin can
+// only be turned off from this screen — real admin capability stays a
+// deliberate decision via the permission grid (G) or Groups, never a single
+// checkbox here.
+func TestMenuTabsScreenRefusesToGrantAdmin(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:restricted1"] = &access.User{}
+	})
+	userKeys(app, "partdb:restricted1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	scr := app.screens[scrMenuTabsEdit].(*menuTabsScreen)
+	toggleMenuTab(t, app, scr, "admin")
+	if scr.vals["admin"] {
+		t.Error("Admin must never be toggled on from this screen")
+	}
+	if !app.messageErr {
+		t.Error("expected a refusal message")
+	}
+}
+
+// TestMenuTabsScreenAdminReflectsAnyAdminPermAndCanBeTurnedOff is the direct
+// fix for the reported bug: an "operator" group member carries
+// containers.view (one of the four permissions that shows "9=Admin" —
+// hub.go's anyModuleAllowed is an OR across them), even though nothing named
+// them an admin. The Admin row must show as on (OR, not AND, across its
+// perms) and the admin can turn it off, denying all four together.
+func TestMenuTabsScreenAdminReflectsAnyAdminPermAndCanBeTurnedOff(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:operator1"] = &access.User{Groups: []string{"operator"}}
+	})
+	app.loadPolicy()
+	if !app.pol().Effective("partdb", "operator1").Can("containers.view") {
+		t.Fatal("test setup: expected the operator group to carry containers.view")
+	}
+
+	userKeys(app, "partdb:operator1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	scr := app.screens[scrMenuTabsEdit].(*menuTabsScreen)
+	if !scr.vals["admin"] {
+		t.Fatal("Admin should show as on: containers.view is one of its OR'd permissions")
+	}
+
+	toggleMenuTab(t, app, scr, "admin") // on -> off
+	if scr.vals["admin"] {
+		t.Fatal("Space should have turned Admin off")
+	}
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+
+	p, _ := access.Load()
+	u := p.Users["partdb:operator1"]
+	for _, perm := range []string{"users.view", "settings.view", "containers.view", "access.manage"} {
+		if u.Perms[perm] != access.Deny {
+			t.Errorf("Perms[%q] = %q, want deny", perm, u.Perms[perm])
+		}
+	}
+	app.loadPolicy()
+	if app.pol().Effective("partdb", "operator1").Can("containers.view") {
+		t.Error("containers.view should now be denied")
+	}
+}
+
+// TestMenuTabsScreenWithdrawsOneTabForOnePerson is the toggle's real-world
+// use: an admin turning one specific tab back off for one specific checker,
+// overriding the group default, without touching any other tab.
+func TestMenuTabsScreenWithdrawsOneTabForOnePerson(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:checker3"] = &access.User{Groups: []string{"checker"}, TwoFA: access.TwoFAExempt}
+	})
+	app.loadPolicy()
+	if !menuTabs[menuTabRow(t, "lego")].granted(app.pol(), "partdb:checker3") {
+		t.Fatal("expected LEGO Collection to start on, inherited from the checker group")
+	}
+
+	userKeys(app, "partdb:checker3", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	scr := app.screens[scrMenuTabsEdit].(*menuTabsScreen)
+	toggleMenuTab(t, app, scr, "lego") // on -> off
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+
+	signOn(app, "checker3", "")
+	if app.moduleAllowed("lego") {
+		t.Fatal("after the toggle, this one checker should no longer see LEGO Collection")
+	}
+	if !app.moduleAllowed("partdb") {
+		t.Error("Part-DB Hub should be untouched — only the LEGO Collection row was toggled")
+	}
+	app.cur, app.stack = scrPickerHub, nil
+	menu := app.screens[scrPickerHub].Body(app)
+	if strings.Contains(menu, "LEGO Collection") {
+		t.Errorf("the LEGO Collection entry must disappear once denied, got:\n%s", menu)
+	}
+	if !strings.Contains(menu, "Part-DB Hub") {
+		t.Error("Part-DB Hub should still be listed")
+	}
+	app.goTo(scrLegoHub)
+	if app.cur == scrLegoHub {
+		t.Error("goTo must also deny it directly, not just hide the menu entry")
+	}
+}
+
+// TestPickerHubShowsLegoAndPartDBForAPlainCheckerByDefault confirms the
+// "checker" group already carries lego.view/lego.search/partdb.view by
+// default (see access.go's seed()) — what was actually missing was a menu
+// path to them (picker_hub.go now has one, Perm-gated like every other entry
+// there), and an admin's way to override the default per person, which is
+// what the menu tabs screen above is for.
 func TestPickerHubShowsLegoAndPartDBForAPlainCheckerByDefault(t *testing.T) {
 	app := adminApp(t)
 	setPolicy(t, func(p *access.Policy) {
@@ -251,35 +370,5 @@ func TestPickerHubShowsLegoAndPartDBForAPlainCheckerByDefault(t *testing.T) {
 	app.goTo(scrLegoSetAdd)
 	if app.cur == scrLegoSetAdd {
 		t.Error("browsing must never reach a write screen like Add a Set")
-	}
-}
-
-// TestBrowseToggleWithdrawsItForOnePerson is the toggle's actual real-world
-// use: an admin turning LEGO/Part-DB browsing back OFF for one specific
-// checker, overriding the group default.
-func TestBrowseToggleWithdrawsItForOnePerson(t *testing.T) {
-	app := adminApp(t)
-	setPolicy(t, func(p *access.Policy) {
-		p.Users["partdb:checker3"] = &access.User{Groups: []string{"checker"}, TwoFA: access.TwoFAExempt}
-	})
-	app.loadPolicy()
-	if !browseGranted(app.pol(), "partdb:checker3") {
-		t.Fatal("expected browse to start on, inherited from the checker group")
-	}
-
-	userKeys(app, "partdb:checker3", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // on -> off
-	signOn(app, "checker3", "")
-
-	if app.moduleAllowed("lego") || app.moduleAllowed("partdb") {
-		t.Fatal("after the toggle, this one checker should no longer see LEGO/Part-DB")
-	}
-	app.cur, app.stack = scrPickerHub, nil
-	menu := app.screens[scrPickerHub].Body(app)
-	if strings.Contains(menu, "LEGO Collection") || strings.Contains(menu, "Part-DB Hub") {
-		t.Errorf("the menu entries must disappear once denied, got:\n%s", menu)
-	}
-	app.goTo(scrLegoHub)
-	if app.cur == scrLegoHub {
-		t.Error("goTo must also deny it directly, not just hide the menu entry")
 	}
 }

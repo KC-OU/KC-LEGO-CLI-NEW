@@ -50,7 +50,7 @@ func (s *labelsScreen) Body(app *App) string {
 	for i, sz := range labels.Sizes {
 		fmt.Fprintf(&b, "  %s  %s\n", t.Accent.Render(fmt.Sprint(i+1)), t.Text.Render(sz.Name))
 	}
-	b.WriteString("\n" + t.Muted.Render("Each label: set, name, year, pieces, missing, who checked it and when,\nlocation, QR code and barcode. PDF + web page: print at 100%, no margins."))
+	b.WriteString("\n" + t.Muted.Render("Each label: set, name, year, pieces, missing, who checked it and when,\nlocation, QR code and barcode. PDF + web page: print at 100%, no margins.\nOne set, a non-sheet size: also saved as PNG, Zebra ZPL and Brother .lbx."))
 	return b.String()
 }
 
@@ -81,7 +81,29 @@ func (s *labelsScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		return
 	}
 	pdfPath := strings.TrimSuffix(htmlPath, ".html") + ".pdf"
-	res := &exportResult{Path: pdfPath, Warnings: []string{"The web page version is " + exports.Describe(htmlPath)}}
+	warnings := []string{"The web page version is " + exports.Describe(htmlPath)}
+
+	// PNG/ZPL/.lbx are one-label-at-a-time formats (see their own doc
+	// comments in internal/labels) — only offered here for the matching
+	// request, so they're never silently skipped without explanation.
+	if len(items) == 1 && !size.Sheet() {
+		if png, err := labels.PNG(items, size); err == nil {
+			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "png", png); err == nil {
+				warnings = append(warnings, "Also saved as a PNG image: "+exports.Describe(p))
+			}
+		}
+		if zpl, err := labels.ZPL(items, size); err == nil {
+			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "zpl", zpl); err == nil {
+				warnings = append(warnings, "Also saved as Zebra ZPL: "+exports.Describe(p))
+			}
+		}
+		if lbx, err := labels.LBX(items, size); err == nil {
+			if p, err := exports.Save(dir, user, "labels-"+size.ID, name, "lbx", lbx); err == nil {
+				warnings = append(warnings, "Also saved as a Brother .lbx (test-print before trusting it): "+exports.Describe(p))
+			}
+		}
+	}
+	res := &exportResult{Path: pdfPath, Warnings: warnings}
 	if exports.URL("x") != "" && app.can("exports.download") {
 		if tok, err := exports.NewLink(dir, pdfPath, app.userKey()); err == nil {
 			res.URL = exports.URL(tok)

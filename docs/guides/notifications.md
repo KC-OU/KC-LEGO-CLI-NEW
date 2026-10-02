@@ -50,6 +50,11 @@ archive libraries with vulnerabilities that have no fixed release, which a gatew
 | `order_shipped` / `order_received` | an order moves along |
 | `low_stock`, `price_drop`, `backup`, `export_done` | as before |
 
+The admin activity feed's own events (`message`, `accuracy_dock`, `accuracy_escalation`, `missing_parts`, `forced_off`,
+`reassigned`, `theme_request` — see [Recent Activity](assigned-work.md) and [theme requests](keys-and-accessibility.md))
+reach every configured channel the same way, just not individually routable here (they're left off the table above to
+keep it short) — a Slack `provider-config.yaml` entry like the one above gets all of them, theme requests included.
+
 Every event goes to every channel until you route it:
 
 ```bash

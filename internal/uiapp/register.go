@@ -64,6 +64,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrSettingsPartDB:      settingsPartDBScreen(),
 		scrSettingsTheme:       &themeScreen{admin: true},
 		scrMyTheme:             &themeScreen{},
+		scrThemeRequest:        themeRequestScreen(),
 		scrMyLoading:           loadingPrefScreen(),
 		scrMySettings:          mySettingsScreen(),
 		scrMyRebrickKey:        myRebrickableKeyScreen(),

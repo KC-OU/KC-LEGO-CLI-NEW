@@ -46,7 +46,8 @@ func accessScreens() map[string]screenModel {
 		scrAccessGroups:   &selectList{panelID: "ACCGRP", title: "Groups", rows: groupRows, keys: groupKeys, hint: "↑/↓ choose  Enter permissions  N new  C copy  R restricted  D delete"},
 		scrAccessGroupNew: accessGroupNewScreen(),
 		scrAccessGrid:     &gridScreen{},
-		scrAccessUsers:    &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B toggle LEGO/Part-DB browse  N add user  X remove entry"},
+		scrMenuTabsEdit:   &menuTabsScreen{},
+		scrAccessUsers:    &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B menu tabs  N add user  X remove entry"},
 		scrAccessUserNew:  accessUserNewScreen(),
 		scrAccessUserEdit: accessUserEditScreen(),
 		scrAccessSettings: accessSettingsScreen(),
@@ -431,6 +432,162 @@ func (s *gridScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	}
 }
 
+// ---- menu tabs: which top-level hub tabs a user sees ----
+//
+// Generalizes what used to be a single "LEGO/Part-DB browse" toggle to every
+// hub tab that can meaningfully be toggled (see hub.go's hubOptions and
+// access.go's modulePerm/screenPerm) — Overview is left out entirely since
+// it needs no permission at all (modulePerm["dashboard"] is "", meaning
+// "anyone signed in"). Each row grants or denies its Perms together, as an
+// explicit override either direction (never delete-to-inherit: a group like
+// checker/picker can already grant several of these by default, so clearing
+// an override alone would silently fall back to the group's "allow" instead
+// of actually turning it off). Operations only covers its four view-level
+// items (ops.view/ops.asn/stock.view), deliberately excluding Warehouse
+// Ops' write permission (ops.edit) — same "toggle = browse, grid = write"
+// split LEGO/Part-DB already had. Admin is the one exception: this screen
+// can only ever turn it off, never grant it — real admin capability stays a
+// deliberate decision made through the permission grid (G) or Groups, not a
+// single checkbox; this is also what the checklist's on/off state reflects
+// with OR instead of AND (hub.go's own anyModuleAllowed is an OR across
+// these four — any one of them already shows "9=Admin").
+type menuTab struct {
+	Key, Label string
+	Perms      []string
+	DenyOnly   bool
+}
+
+var menuTabs = []menuTab{
+	{Key: "partdb", Label: "Part-DB Hub", Perms: []string{"partdb.view"}},
+	{Key: "ops", Label: "Operations (browse)", Perms: []string{"ops.view", "ops.asn", "stock.view"}},
+	{Key: "scripts", Label: "Script Hub", Perms: []string{"scripts.run"}},
+	{Key: "lego", Label: "LEGO Collection", Perms: []string{"lego.view", "lego.search"}},
+	{Key: "admin", Label: "Admin", Perms: []string{"users.view", "settings.view", "containers.view", "access.manage"}, DenyOnly: true},
+}
+
+// granted checks the user's EFFECTIVE permission (group membership included
+// — "checker"/"picker" already grant several of these by default), not just
+// their own override map.
+func (t menuTab) granted(p *access.Policy, key string) bool {
+	source, username, ok := strings.Cut(key, ":")
+	if !ok {
+		return false
+	}
+	eff := p.Effective(source, username)
+	if t.DenyOnly {
+		for _, perm := range t.Perms {
+			if eff.Can(perm) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, perm := range t.Perms {
+		if !eff.Can(perm) {
+			return false
+		}
+	}
+	return true
+}
+
+const scrMenuTabsEdit = "menu_tabs_edit"
+
+type menuTabsScreen struct {
+	base
+	row  int
+	vals map[string]bool // tab key -> desired on/off (working copy)
+	user string
+}
+
+func (s *menuTabsScreen) PanelID() string { return "MENTAB" }
+func (s *menuTabsScreen) Title() string   { return "Menu Tabs" }
+func (s *menuTabsScreen) FKeys() [][2]string {
+	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
+}
+
+func (s *menuTabsScreen) OnEnter(app *App) {
+	app.loadPolicy()
+	s.row, s.vals, s.user = 0, map[string]bool{}, ""
+	e := app.accessEdit
+	if e == nil || e.User == "" {
+		return
+	}
+	s.user = e.User
+	p := app.pol()
+	for _, t := range menuTabs {
+		s.vals[t.Key] = t.granted(p, e.User)
+	}
+}
+
+func (s *menuTabsScreen) Body(app *App) string {
+	t := app.theme
+	if s.user == "" {
+		return t.Muted.Render("Nothing to edit.")
+	}
+	var b strings.Builder
+	b.WriteString(t.Strong.Render("Menu tabs for "+s.user) + "\n\n")
+	for i, tab := range menuTabs {
+		mark, style := "off", t.Muted
+		if s.vals[tab.Key] {
+			mark, style = "on ", t.Success
+		}
+		cell := fmt.Sprintf("%-20s %s", tab.Label, mark)
+		if tab.DenyOnly {
+			cell += "  (off only here — grant via G)"
+		}
+		if i == s.row {
+			b.WriteString(t.TitleReverse.Render(cell) + "\n")
+		} else {
+			b.WriteString(style.Render(cell) + "\n")
+		}
+	}
+	b.WriteString("\n" + t.Muted.Render("↑/↓ choose · Space toggle · S save · Esc"))
+	return b.String()
+}
+
+func (s *menuTabsScreen) HandleKey(app *App, msg tea.KeyMsg) {
+	if s.user == "" {
+		return
+	}
+	switch {
+	case msg.Type == tea.KeyUp && s.row > 0:
+		s.row--
+	case msg.Type == tea.KeyDown && s.row < len(menuTabs)-1:
+		s.row++
+	case msg.Type == tea.KeySpace || isKey(msg, ' '):
+		tab := menuTabs[s.row]
+		if tab.DenyOnly && !s.vals[tab.Key] {
+			app.setMsg("Admin can only be turned off here — use G to grant specific admin permissions.", true)
+			return
+		}
+		s.vals[tab.Key] = !s.vals[tab.Key]
+	case isKey(msg, 's'):
+		key, vals := s.user, s.vals
+		if app.saveAccess("user "+key+" menu tabs updated", func(p *access.Policy) error {
+			u := p.Users[key]
+			if u == nil {
+				u = &access.User{}
+				p.Users[key] = u
+			}
+			if u.Perms == nil {
+				u.Perms = map[string]string{}
+			}
+			for _, tab := range menuTabs {
+				want := access.Deny
+				if vals[tab.Key] {
+					want = access.Allow
+				}
+				for _, perm := range tab.Perms {
+					u.Perms[perm] = want
+				}
+			}
+			return nil
+		}) {
+			app.onBack()
+		}
+	}
+}
+
 // permDiff is "lego.edit inherit→allow, ops.* …" for the audit log.
 func permDiff(before, after map[string]string) string {
 	var out []string
@@ -475,40 +632,15 @@ func userRows(app *App) ([]string, [][]string, []string) {
 		if len(u.Channels) > 0 {
 			ch = strings.Join(u.Channels, ",")
 		}
-		browse := "off"
-		if browseGranted(p, k) {
-			browse = "on"
+		on := 0
+		for _, t := range menuTabs {
+			if t.granted(p, k) {
+				on++
+			}
 		}
-		rows[i] = []string{k, orDash(strings.Join(u.Groups, ",")), twofa, ch, orDash(u.Expires), browse}
+		rows[i] = []string{k, orDash(strings.Join(u.Groups, ",")), twofa, ch, orDash(u.Expires), fmt.Sprintf("%d/%d", on, len(menuTabs))}
 	}
-	return []string{"User", "Groups", "2FA", "Channels", "Expires", "Browse"}, rows, keys
-}
-
-// browseLegoPartDBPerms are granted together by the "b" browse toggle below —
-// exactly the read-only permissions hubOptions (hub.go) and screenPerm
-// (access.go) already require to show and open LEGO Collection/Part-DB for
-// searching, with every write screen underneath (lego.edit, stock.adjust,
-// orders.manage, ...) staying separately gated, so this can never unlock
-// editing.
-var browseLegoPartDBPerms = []string{"lego.view", "lego.search", "partdb.view"}
-
-// browseGranted checks the user's EFFECTIVE permission (group membership
-// included — "checker" and "picker" already grant this by default, see
-// access.go's seed()), not just their own override map; a per-user Perms
-// entry alone would wrongly read as "off" for anyone who already has it
-// purely from their group.
-func browseGranted(p *access.Policy, key string) bool {
-	source, username, ok := strings.Cut(key, ":")
-	if !ok {
-		return false
-	}
-	eff := p.Effective(source, username)
-	for _, perm := range browseLegoPartDBPerms {
-		if !eff.Can(perm) {
-			return false
-		}
-	}
-	return true
+	return []string{"User", "Groups", "2FA", "Channels", "Expires", "Menu"}, rows, keys
 }
 
 func userKeys(app *App, key string, msg tea.KeyMsg) {
@@ -520,29 +652,8 @@ func userKeys(app *App, key string, msg tea.KeyMsg) {
 		app.accessEdit = &accessEdit{User: key}
 		app.goTo(scrAccessGrid)
 	case isKey(msg, 'b') && key != "":
-		on := browseGranted(app.pol(), key)
-		app.saveAccess(fmt.Sprintf("user %s LEGO/Part-DB browse %s", key, map[bool]string{true: "off", false: "on"}[on]), func(p *access.Policy) error {
-			u := p.Users[key]
-			if u == nil {
-				u = &access.User{}
-				p.Users[key] = u
-			}
-			if u.Perms == nil {
-				u.Perms = map[string]string{}
-			}
-			// An explicit deny, not just removing an override: a group (checker,
-			// picker) can already grant this by default, so clearing the override
-			// alone would fall back to the group's "allow" and silently fail to
-			// turn it off.
-			want := access.Allow
-			if on {
-				want = access.Deny
-			}
-			for _, perm := range browseLegoPartDBPerms {
-				u.Perms[perm] = want
-			}
-			return nil
-		})
+		app.accessEdit = &accessEdit{User: key}
+		app.goTo(scrMenuTabsEdit)
 	case isKey(msg, 'n'):
 		app.goTo(scrAccessUserNew)
 	case isKey(msg, 'x') && key != "":

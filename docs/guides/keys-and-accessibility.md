@@ -31,6 +31,10 @@ through the same navigation as the menus, so a screen your role may not use boun
   the highlighted theme **everyone's default** (`MODERNWMS_TUI_THEME`). The themes: `green` (default), `amber`, `high-contrast` (nothing
   dimmed, reverse video for problems), `colorblind` (blue and orange instead of green and red), `dracula`, `half-life` (matches the zsh
   theme), `nord`, `gruvbox`, `catppuccin`, `tokyo-night`, `ibm-3270`, `matrix` and `lego`.
+- **Found a theme you'd like added?** On *My display theme*, press **R** — name it, and a link or description, and it reaches an
+  admin via [Recent Activity](assigned-work.md#admin-activity-feed) (and [any configured notification channel](notifications.md),
+  Slack included) straight away. Adding it for real is still a code change (themes are a fixed base-16-ANSI palette, not arbitrary
+  colours loaded at runtime) — once an admin adds it, it shows up here for everyone, same as the existing list.
 - After sign-on a short **themed animation** plays (an HEV boot for half-life, a brick for lego, falling glyphs for matrix); any key
   skips it and `MODERNWMS_TUI_SPLASH=0` turns it off.
 - **My loading indicator** (also in the palette, next to *My display theme*): a spinner on the message line for calls that actually

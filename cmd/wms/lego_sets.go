@@ -482,8 +482,20 @@ func newLegoLabelsCmd() *cobra.Command {
 				body = labels.PDF(items, s)
 			case "html":
 				body = labels.HTML(items, s)
+			case "png":
+				if body, err = labels.PNG(items, s); err != nil {
+					return usageError("%v", err)
+				}
+			case "zpl":
+				if body, err = labels.ZPL(items, s); err != nil {
+					return usageError("%v", err)
+				}
+			case "lbx":
+				if body, err = labels.LBX(items, s); err != nil {
+					return usageError("%v", err)
+				}
 			default:
-				return usageError("--format must be pdf or html")
+				return usageError("--format must be pdf, html, png, zpl or lbx")
 			}
 			if outPath == "" {
 				_, _ = os.Stdout.Write(body)
@@ -498,7 +510,7 @@ func newLegoLabelsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&size, "size", "4x6", "label stock (see above)")
-	cmd.Flags().StringVar(&format, "format", "pdf", "pdf or html")
+	cmd.Flags().StringVar(&format, "format", "pdf", "pdf, html, png, zpl or lbx (png/zpl/lbx: one label at a time, no sheet stock)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "output file (default: print it)")
 	return cmd
 }
