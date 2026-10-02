@@ -11,6 +11,7 @@ scanner mode reads.
 | `4x6` | 4 × 6 in thermal labels — **Labelnize PM260**, Zebra, Rollo, MUNBYN and most shipping-label printers |
 | `100x150` | 100 × 150 mm thermal |
 | `62x100`, `62x29` | **Brother QL** 62 mm continuous roll (DK-22205) |
+| `38x90` | **Brother QL-600** 38 mm continuous roll |
 | `50x30`, `40x30` | small thermal labels for bags and bins |
 | `a4` | A4 sheet, 21 labels (Avery L7160) — HP, Canon, Brother inkjet / laser |
 | `letter` | US Letter sheet, 30 labels (Avery 5160) |

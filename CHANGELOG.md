@@ -4,7 +4,41 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Security
+- **Web terminal: tmux prefix-key escape to a root shell.** The shared web terminal (`/`) runs
+  inside a `tmux` session for persistence across reconnects; tmux's own prefix key (Ctrl-B by
+  default) was still live inside that session, so anyone with the web terminal open could press
+  Ctrl-B then `c` and get a brand-new tmux window running a root shell — tmux handles its own key
+  bindings before `wms tui` ever sees the keystroke, so none of the app's permission checks were
+  ever in that path. Fixed by disabling the prefix key (and tmux's own mouse handling) scoped to
+  just that one session (`set-option -t wms-web`, never `-g`/global, so an admin's own unrelated
+  tmux sessions on the same box are untouched). `/solo` and telnet were never affected — neither
+  ever wraps in tmux. See [Telnet and the web terminal](docs/guides/telnet-and-web.md).
+
 ### Added
+- **LEGO Collection/Part-DB browsing on the picker/checker hub**: both now show there for
+  searching and looking things up (never editing) — `checker`/`picker` already carried the read
+  permissions by default, they just had no menu path to them before. *Admin → Access Control →
+  Users → B* turns it off for one person, or on for someone in a different group.
+- **Brother QL-600, 38mm** (`--size 38x90`) alongside the existing 62mm label sizes.
+- **Live/Test picker on the gateway**: with `WMS_TEST_BINARY_PATH`/`WMS_TEST_ENV_FILE` set (off by
+  default, and never on the test instance itself), the already-exposed telnet/web gateway offers a
+  second, dev-build session reading the test instance's own data — no new network port. See
+  [Telnet and the web terminal](docs/guides/telnet-and-web.md#reaching-the-dev-build-from-elsewhere-the-livetest-picker).
+- **Force off a job** (*Admin → Assign Work*): take a claimed ticket away from whoever has it —
+  to the open queue or straight to a named person — and always send a reassurance message (a
+  default quick-pick, or your own). Never touches accuracy; the underlying check/order draft is
+  untouched. If the person's mid-job right now, their own screen notices within ~15s and returns
+  them to their hub with the message waiting.
+- **Admin → Recent Activity**: a scannable feed (last 50) of messages sent, accuracy docked or
+  escalated, missing-parts, and forced-off/reassigned jobs — separate from the tamper-evident
+  audit log, and (when configured) also routed to the existing notification channels.
+- **Shelf-order pick lists**: a check/order's lines now display in Part-DB shelf-location order
+  instead of catalog order.
+- **Fix**: the shared "type to narrow" picker (Assign Work, Message a User, Dock Accuracy, …)
+  couldn't be searched by a numeric username — any parseable number was always read as a row
+  choice, not a search term. Typing a numeric id now falls back to a label search when it isn't a
+  valid row number.
 - **`/solo`, a second web terminal**: the default web terminal (`/`) is one shared session for
   every tab/device on purpose (see its own doc section) — that's what was actually behind "two
   people can't use it at once without slowing each other down," not the gateway or the database.

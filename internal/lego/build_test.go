@@ -105,7 +105,7 @@ func TestCanBuildIsFastAtScale(t *testing.T) {
 	if err != nil || len(got) == 0 {
 		t.Fatalf("%v %v", got, err)
 	}
-	if el := time.Since(start); el > 3*time.Second {
-		t.Errorf("took %v for 3,000 sets x 60 parts and 400 owned lines", el)
+	if el := time.Since(start); el > canBuildBudget {
+		t.Errorf("took %v (budget %v) for 3,000 sets x 60 parts and 400 owned lines", el, canBuildBudget)
 	}
 }

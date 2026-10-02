@@ -25,6 +25,9 @@ const (
 	scrScanClaim    = "scan_claim"
 	scrQuitJob      = "quit_job"
 	scrAbandonAuth  = "abandon_auth"
+
+	scrForceOffPick    = "force_off_pick"
+	scrForceOffMessage = "force_off_message"
 )
 
 // roleForApp is which accuracy/ticket role the signed-in user works as, decided by
@@ -189,6 +192,7 @@ func assignPickScreen() screenModel {
 				{Key: "1", Label: "Assign a set to check", Go: func(app *App) { startAssign(app, lego.TicketCheck) }},
 				{Key: "2", Label: "Assign an order to pick", Go: func(app *App) { startAssign(app, lego.TicketOrder) }},
 				{Key: "3", Label: "Open queue (who's on what)", Go: func(app *App) { app.goTo(scrJobQueue) }},
+				{Key: "4", Label: "Force off a job", Go: func(app *App) { app.goTo(scrForceOffPick) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -296,6 +300,153 @@ func jobQueueScreen() screenModel {
 			return rows, fmt.Sprintf("%d open assignment(s)", len(rows)), err
 		},
 	}
+}
+
+// ---- Admin: force someone off a job ----
+//
+// Unlike Abandon (the holder's own choice, needing admin sign-off), forcing
+// someone off is an admin decision from the start: no sign-off, and the
+// person taken off it isn't asked — they're told, via the reassurance message
+// this flow always sends. The underlying check/order draft is untouched (see
+// ForceOffTicket), and this never touches accuracy — matches finishAbandon's
+// "conduct record, not a score hit" precedent.
+
+type forceOffDraft struct {
+	ticketID        int64
+	label, from, to string
+}
+
+func forceOffRows(app *App) ([]string, [][]string, []string) {
+	ts, err := app.legoDB.AllOpenTickets()
+	if err != nil {
+		app.setMsg(err.Error(), true)
+	}
+	var rows [][]string
+	var keys []string
+	for _, t := range ts {
+		if t.Status != lego.TicketClaimed {
+			continue
+		}
+		rows = append(rows, []string{t.Kind, t.Label, t.AssignedTo})
+		keys = append(keys, strconv.FormatInt(t.ID, 10))
+	}
+	return []string{"Kind", "Target", "Claimed By"}, rows, keys
+}
+
+func forceOffKeys(app *App, key string, msg tea.KeyMsg) {
+	if msg.Type != tea.KeyEnter || key == "" {
+		return
+	}
+	id, _ := strconv.ParseInt(key, 10, 64)
+	ts, _ := app.legoDB.AllOpenTickets()
+	for _, t := range ts {
+		if t.ID == id {
+			app.forceOff = &forceOffDraft{ticketID: t.ID, label: t.Label, from: t.AssignedTo}
+			startPick(app, forceOffTargetPick(app))
+			return
+		}
+	}
+}
+
+func forceOffPickScreen() screenModel {
+	return &selectList{
+		panelID:   "FOFPIK",
+		title:     "Force Off a Job",
+		hint:      "Enter picks who's currently claimed — you'll choose where it goes next",
+		emptyHint: "Nobody has a job claimed right now.",
+		rows:      forceOffRows,
+		keys:      forceOffKeys,
+	}
+}
+
+// forceOffTargetPick offers every known user plus "leave open for anyone",
+// same as assignWhoPick.
+func forceOffTargetPick(app *App) *pickState {
+	rows, _ := app.users.ListAll(app.ctx())
+	items := []pickItem{{Key: "", Label: "(open queue — first qualified person to claim it)"}}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		if r.Username == "" || seen[r.Username] {
+			continue
+		}
+		seen[r.Username] = true
+		items = append(items, pickItem{Key: r.Username, Label: r.Username + "  (id " + r.ID + ", " + r.RoleOrGroup + ")"})
+	}
+	return &pickState{
+		Header: "Take " + app.forceOff.label + " off " + app.forceOff.from + " — send it to:",
+		Prompt: "Choose",
+		Items:  items,
+		OnPick: func(app *App, it pickItem) {
+			app.forceOff.to = it.Key
+			app.goTo(scrForceOffMessage)
+		},
+	}
+}
+
+var forceOffQuickMessages = []pickItem{
+	{Key: "reassigned", Label: "We've assigned you another task — don't worry, your accuracy won't be affected."},
+}
+
+func forceOffMessageScreen() screenModel {
+	return &menuScreen{
+		panelID: "FOFMSG",
+		title:   "Message to whoever's coming off it",
+		options: func(app *App) []menuOption {
+			var opts []menuOption
+			for i, q := range forceOffQuickMessages {
+				body := q.Label
+				opts = append(opts, menuOption{Key: strconv.Itoa(i + 1), Label: body, Go: func(app *App) { finishForceOff(app, body) }})
+			}
+			opts = append(opts, menuOption{Key: "w", Label: "Write your own…", Go: func(app *App) {
+				startPick(app, &pickState{
+					Header:    "Message",
+					Prompt:    "Type it",
+					AllowFree: true,
+					FreeHint:  "your message",
+					OnFree:    func(app *App, text string) { finishForceOff(app, text) },
+				})
+			}})
+			return opts
+		},
+		intro: func(app *App) string {
+			if app.forceOff == nil {
+				return ""
+			}
+			return app.theme.Muted.Render(fmt.Sprintf("Taking %s off %s.", app.forceOff.from, app.forceOff.label))
+		},
+	}
+}
+
+func finishForceOff(app *App, body string) {
+	fo := app.forceOff
+	if fo == nil {
+		app.onBack()
+		return
+	}
+	if err := app.legoDB.ForceOffTicket(fo.ticketID, fo.to); err != nil {
+		app.setMsg(err.Error(), true)
+		app.forceOff = nil
+		app.stack = nil
+		app.cur = scrAdminHub
+		return
+	}
+	kind := lego.EventForcedOff
+	dest := "the open queue"
+	if fo.to != "" {
+		kind = lego.EventReassigned
+		dest = fo.to
+	}
+	detail := fmt.Sprintf("%s: %s -> %s", fo.label, fo.from, orDash(fo.to))
+	_ = app.legoDB.LogEvent(kind, app.userName(), fo.from, detail)
+	app.notifyEvent(kind, fmt.Sprintf("%s taken off %s by %s — sent to %s", fo.from, fo.label, app.userName(), dest), "")
+	app.audit.Log(app.userName(), "", "TICKET_FORCED_OFF", "SUCCESS", detail)
+	if fo.from != "" && body != "" {
+		_ = app.legoDB.SendMessage(app.userName(), fo.from, body)
+	}
+	app.forceOff = nil
+	app.setMsg(fmt.Sprintf("Took %s off %s — sent to %s.", fo.from, fo.label, dest), false)
+	app.stack = nil
+	app.cur = scrAdminHub
 }
 
 // ---- Leave this job: save / finish / abandon ----

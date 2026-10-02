@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +20,12 @@ import (
 
 // RunTelnetServer listens on every port in listenPorts, dropping each
 // accepted connection straight into a `<wmsBinaryPath> tui` session over a
-// PTY, mirroring telnet_server.py's handle_telnet_session.
-func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, wmsBinaryPath string) error {
+// PTY, mirroring telnet_server.py's handle_telnet_session. testBinaryPath
+// and testEnv are "" and nil unless an admin has deliberately turned on the
+// Live/Test picker (see WMS_TEST_BINARY_PATH/WMS_TEST_ENV_FILE,
+// docs/guides/telnet-and-web.md) — the common, unconfigured case is
+// unaffected: no prompt, no behaviour change.
+func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, wmsBinaryPath, testBinaryPath string, testEnv []string) error {
 	var wg sync.WaitGroup
 	th := NewThrottle()
 
@@ -31,7 +37,7 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 		wg.Add(1)
 		go func(ln net.Listener) {
 			defer wg.Done()
-			acceptLoop(ctx, ln, wmsBinaryPath, th)
+			acceptLoop(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th)
 		}(ln)
 
 		go func(ln net.Listener) {
@@ -44,7 +50,7 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 	return nil
 }
 
-func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath string, th *Throttle) {
+func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle) {
 	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
@@ -68,8 +74,40 @@ func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath string, th *
 			continue
 		}
 		backoff = 0
-		go handleTelnetSession(ctx, conn, wmsBinaryPath, th)
+		go handleTelnetSession(ctx, conn, wmsBinaryPath, testBinaryPath, testEnv, th)
 	}
+}
+
+// promptLiveOrTest asks a freshly-connected session whether to open the
+// normal (live) session or the dev-build "Test" one — only ever called when
+// an admin has configured WMS_TEST_BINARY_PATH/WMS_TEST_ENV_FILE. Reuses the
+// same IACState/FilterIAC machinery as the main read loop below so telnet
+// protocol bytes (option negotiation, a NAWS window-size report) already in
+// the raw stream can't be mistaken for the answer. Anything other than a
+// clean "2" — a bare Enter, garbage, a timeout, a dropped connection — means
+// Live, same as if this prompt did not exist.
+func promptLiveOrTest(conn net.Conn) string {
+	_, _ = conn.Write([]byte("1) Live  2) Test (dev build)  [1]: "))
+	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	defer conn.SetReadDeadline(time.Time{})
+
+	st := &IACState{}
+	buf := make([]byte, 64)
+	var answer []byte
+	for len(answer) < 8 {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			answer = append(answer, FilterIAC(buf[:n], st)...)
+			if bytes.ContainsAny(answer, "\r\n") {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	_, _ = conn.Write([]byte("\r\n"))
+	return strings.TrimSpace(string(bytes.Trim(answer, "\r\n")))
 }
 
 // childEnv is the environment the spawned `<wms> tui` process runs under.
@@ -118,7 +156,7 @@ func clampDim(v, max uint16) uint16 {
 // runs forever.
 const telnetIdleTimeout = 30 * time.Minute
 
-func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath string, th *Throttle) {
+func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle) {
 	defer conn.Close()
 
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
@@ -135,8 +173,13 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath strin
 		return
 	}
 
-	cmd := exec.CommandContext(ctx, wmsBinaryPath, "tui")
-	cmd.Env = append(childEnv(), "WMS_TRANSPORT=telnet")
+	binaryPath, extraEnv := wmsBinaryPath, []string(nil)
+	if testBinaryPath != "" && promptLiveOrTest(conn) == "2" {
+		binaryPath, extraEnv = testBinaryPath, testEnv
+	}
+
+	cmd := exec.CommandContext(ctx, binaryPath, "tui")
+	cmd.Env = append(mergeEnv(childEnv(), extraEnv), "WMS_TRANSPORT=telnet")
 	if host != "" {
 		// Lets the TUI pin a 2FA grace window to this client's address.
 		cmd.Env = append(cmd.Env, "WMS_REMOTE_ADDR="+host)

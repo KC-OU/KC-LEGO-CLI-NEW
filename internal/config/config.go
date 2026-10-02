@@ -5,8 +5,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func Env(key, fallback string) string {
@@ -77,6 +79,8 @@ const (
 	DiscordBotToken            = "WMS_DISCORD_BOT_TOKEN"
 	DiscordBotUserID           = "WMS_DISCORD_BOT_USER_ID"
 	ArchiveDir                 = "WMS_ARCHIVE_DIR"
+	TestBinaryPath             = "WMS_TEST_BINARY_PATH"
+	TestEnvFile                = "WMS_TEST_ENV_FILE"
 )
 
 func Defaults() map[string]string {
@@ -132,6 +136,14 @@ func Defaults() map[string]string {
 		DiscordBotToken:            "", // from Discord's Developer Portal (discord.com/developers/applications): create an app, add a Bot, copy its token
 		DiscordBotUserID:           "", // the recipient's Discord user ID (Discord: enable Developer Mode, right-click your name, Copy User ID)
 		ArchiveDir:                 "/root/docker-server/wms/archive",
+		// Both empty by default: the telnet/web gateway only offers a "connect to the dev
+		// build instead" picker when an admin has deliberately set both, on the LIVE
+		// gateway's own env — never on the test instance itself (see docs/guides/
+		// telnet-and-web.md). TestBinaryPath is the dev-built binary (e.g.
+		// /usr/local/bin/wms-go-test); TestEnvFile is that instance's own EnvironmentFile
+		// (e.g. /root/.config/wms-go/test.env), read the same way systemd would.
+		TestBinaryPath: "",
+		TestEnvFile:    "",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's
@@ -182,4 +194,30 @@ func SetOverride(key, value string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
+}
+
+// ReadEnvFile reads a systemd EnvironmentFile-style file: one KEY=VALUE per
+// line, blank lines and lines starting with # ignored, no quoting or
+// variable expansion — the same shape every systemd unit in this project
+// already uses (e.g. /root/.config/wms-go/test.env). Used to hand a second
+// instance's whole environment to a child process started by a different
+// one (see WMS_TEST_ENV_FILE, internal/gateway's Live/Test picker) without
+// re-implementing systemd's own parsing beyond this.
+func ReadEnvFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			return nil, fmt.Errorf("%s: invalid line %q (want KEY=VALUE)", path, line)
+		}
+		out = append(out, line)
+	}
+	return out, nil
 }

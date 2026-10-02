@@ -163,6 +163,7 @@ type App struct {
 	dock            *dockDraft       // an admin's in-progress "dock accuracy" flow (see accuracy_screens.go)
 	message2        *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
 	abandonAdmin    string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
+	forceOff        *forceOffDraft   // an admin's in-progress "force off a job" flow (see tickets_screens.go)
 	toasts          []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
 	sessionID       string           // this process's own id in live_sessions (see sessions.go)
 	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
@@ -308,6 +309,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if a.pollMessages() && a.cur != scrMessagesFull {
 				a.goTo(scrMessagesFull)
 			}
+			a.checkTicketStillMine()
 			a.heartbeat()
 		}
 		return a, idleTick()
@@ -603,6 +605,29 @@ func (a *App) onBack() {
 		a.resetSession()
 	default:
 		a.back()
+	}
+}
+
+// checkTicketStillMine notices when an admin has force-taken this session's
+// claimed job away (see lego.DB.ForceOffTicket) — the idle tick is how a
+// separate process finds out, same as pollMessages. It only clears local UI
+// state and, when still on the check/order screen itself, navigates away;
+// the underlying draft in the database is untouched either way, so the next
+// person to open it (or this same person, on a different job) finds it
+// exactly as it was left.
+func (a *App) checkTicketStillMine() {
+	if a.currentTicketID == 0 {
+		return
+	}
+	t, err := a.legoDB.CurrentTicket(a.userName())
+	if err != nil || (t != nil && t.ID == a.currentTicketID) {
+		return
+	}
+	a.currentTicketID = 0
+	a.checking = nil
+	if a.cur == scrSetCheck || a.cur == scrOrderLines {
+		a.stack = nil
+		a.cur = a.landingScreen()
 	}
 }
 

@@ -46,7 +46,7 @@ func accessScreens() map[string]screenModel {
 		scrAccessGroups:   &selectList{panelID: "ACCGRP", title: "Groups", rows: groupRows, keys: groupKeys, hint: "↑/↓ choose  Enter permissions  N new  C copy  R restricted  D delete"},
 		scrAccessGroupNew: accessGroupNewScreen(),
 		scrAccessGrid:     &gridScreen{},
-		scrAccessUsers:    &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  N add user  X remove entry"},
+		scrAccessUsers:    &selectList{panelID: "ACCUSR", title: "Users", rows: userRows, keys: userKeys, hint: "↑/↓ choose  Enter edit  G permission overrides  B toggle LEGO/Part-DB browse  N add user  X remove entry"},
 		scrAccessUserNew:  accessUserNewScreen(),
 		scrAccessUserEdit: accessUserEditScreen(),
 		scrAccessSettings: accessSettingsScreen(),
@@ -475,9 +475,40 @@ func userRows(app *App) ([]string, [][]string, []string) {
 		if len(u.Channels) > 0 {
 			ch = strings.Join(u.Channels, ",")
 		}
-		rows[i] = []string{k, orDash(strings.Join(u.Groups, ",")), twofa, ch, orDash(u.Expires)}
+		browse := "off"
+		if browseGranted(p, k) {
+			browse = "on"
+		}
+		rows[i] = []string{k, orDash(strings.Join(u.Groups, ",")), twofa, ch, orDash(u.Expires), browse}
 	}
-	return []string{"User", "Groups", "2FA", "Channels", "Expires"}, rows, keys
+	return []string{"User", "Groups", "2FA", "Channels", "Expires", "Browse"}, rows, keys
+}
+
+// browseLegoPartDBPerms are granted together by the "b" browse toggle below —
+// exactly the read-only permissions hubOptions (hub.go) and screenPerm
+// (access.go) already require to show and open LEGO Collection/Part-DB for
+// searching, with every write screen underneath (lego.edit, stock.adjust,
+// orders.manage, ...) staying separately gated, so this can never unlock
+// editing.
+var browseLegoPartDBPerms = []string{"lego.view", "lego.search", "partdb.view"}
+
+// browseGranted checks the user's EFFECTIVE permission (group membership
+// included — "checker" and "picker" already grant this by default, see
+// access.go's seed()), not just their own override map; a per-user Perms
+// entry alone would wrongly read as "off" for anyone who already has it
+// purely from their group.
+func browseGranted(p *access.Policy, key string) bool {
+	source, username, ok := strings.Cut(key, ":")
+	if !ok {
+		return false
+	}
+	eff := p.Effective(source, username)
+	for _, perm := range browseLegoPartDBPerms {
+		if !eff.Can(perm) {
+			return false
+		}
+	}
+	return true
 }
 
 func userKeys(app *App, key string, msg tea.KeyMsg) {
@@ -488,6 +519,30 @@ func userKeys(app *App, key string, msg tea.KeyMsg) {
 	case isKey(msg, 'g') && key != "":
 		app.accessEdit = &accessEdit{User: key}
 		app.goTo(scrAccessGrid)
+	case isKey(msg, 'b') && key != "":
+		on := browseGranted(app.pol(), key)
+		app.saveAccess(fmt.Sprintf("user %s LEGO/Part-DB browse %s", key, map[bool]string{true: "off", false: "on"}[on]), func(p *access.Policy) error {
+			u := p.Users[key]
+			if u == nil {
+				u = &access.User{}
+				p.Users[key] = u
+			}
+			if u.Perms == nil {
+				u.Perms = map[string]string{}
+			}
+			// An explicit deny, not just removing an override: a group (checker,
+			// picker) can already grant this by default, so clearing the override
+			// alone would fall back to the group's "allow" and silently fail to
+			// turn it off.
+			want := access.Allow
+			if on {
+				want = access.Deny
+			}
+			for _, perm := range browseLegoPartDBPerms {
+				u.Perms[perm] = want
+			}
+			return nil
+		})
 	case isKey(msg, 'n'):
 		app.goTo(scrAccessUserNew)
 	case isKey(msg, 'x') && key != "":

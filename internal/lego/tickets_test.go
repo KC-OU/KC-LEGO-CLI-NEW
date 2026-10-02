@@ -70,6 +70,47 @@ func TestTicketAbandonReturnsToOpenQueue(t *testing.T) {
 	}
 }
 
+func TestForceOffTicketReleasesOrReassigns(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	tk, err := db.AssignTicket(TicketCheck, "75192-1", "Falcon", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ForceOffTicket(tk.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	open, err := db.OpenTickets(TicketCheck, "sam")
+	if err != nil || len(open) != 1 || open[0].AssignedTo != "" {
+		t.Fatalf("force-off to the open queue: %+v, %v", open, err)
+	}
+	if cur, _ := db.CurrentTicket("dave"); cur != nil {
+		t.Errorf("dave must no longer have this as their current ticket: %+v", cur)
+	}
+
+	if err := db.ClaimTicket(tk.ID, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ForceOffTicket(tk.ID, "pat"); err != nil {
+		t.Fatal(err)
+	}
+	open, err = db.OpenTickets(TicketCheck, "pat")
+	if err != nil || len(open) != 1 || open[0].AssignedTo != "pat" {
+		t.Fatalf("force-off reassigned to pat: %+v, %v", open, err)
+	}
+
+	if err := db.ForceOffTicket(tk.ID, ""); err == nil {
+		t.Error("force-off on a ticket nobody currently has claimed should error")
+	}
+}
+
 func TestTicketByToken(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
 	if err != nil {

@@ -28,6 +28,35 @@ func TestPickerChoosesByNumberExactNameOrUniqueSubstring(t *testing.T) {
 	}
 }
 
+// TestPickerSearchesNumericLabelsById guards the bug behind a real report: a
+// warehouse whose usernames are themselves numbers (e.g. "10932") couldn't be
+// searched at all, because any text that parsed as an integer was always read
+// as a row number — even one far out of range — instead of falling back to a
+// label search.
+func TestPickerSearchesNumericLabelsById(t *testing.T) {
+	items := []pickItem{
+		{Key: "admin", Label: "admin  (id 1, Admin)"},
+		{Key: "10932", Label: "10932  (id 2, Picker)"},
+		{Key: "7354", Label: "7354  (id 3, Admin)"},
+	}
+	app, got := testPick(t, items, false, "")
+
+	// Narrowing as you type: with only 3 rows, "1" is still a plausible row
+	// number so the list stays unfiltered; "10" no longer is, so it narrows.
+	if idx := pickMatches(app.pick, "1"); len(idx) != 3 {
+		t.Errorf("typing \"1\" (a valid row number) should not filter yet: %v", idx)
+	}
+	if idx := pickMatches(app.pick, "10"); len(idx) != 1 || items[idx[0]].Key != "10932" {
+		t.Errorf("typing \"10\" (past the row count) should narrow to the matching id: %v", idx)
+	}
+
+	pickSubmit(app, "10932")
+	pickSubmit(app, "7354")
+	if want := "pick:10932 pick:7354"; strings.Join(*got, " ") != want {
+		t.Errorf("got %v, want %s", *got, want)
+	}
+}
+
 func TestPickerRejectsBadNumbersAndAmbiguity(t *testing.T) {
 	items := []pickItem{{Key: "a", Label: "Dark Red"}, {Key: "b", Label: "Dark Blue"}}
 	app, got := testPick(t, items, false, "")

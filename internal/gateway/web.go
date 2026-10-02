@@ -22,6 +22,11 @@ const webSessionName = "wms-web"
 // RunWebGateway and soloCommand.
 const soloBasePath = "/solo"
 
+// testBasePath is the dev-build "Test" web terminal — see RunWebGateway's
+// testBinaryPath/testEnv params and WMS_TEST_BINARY_PATH/WMS_TEST_ENV_FILE
+// (docs/guides/telnet-and-web.md). Only ever started when both are set.
+const testBasePath = "/test"
+
 // webCommand is the argv ttyd spawns per websocket connection. Without tmux this is a
 // fresh `<wmsBinaryPath> tui` every time — a new process with no way to prove "this is
 // the same browser that already signed in," so 2FA is asked on every reconnect and the
@@ -40,11 +45,43 @@ const soloBasePath = "/solo"
 // This is one shared screen for every device that opens the web terminal (not one
 // per browser) — the simplest option, with no new trust boundary: nothing about who
 // you are is inferred from the connection, only "an already-verified session exists."
+//
+// webSessionLockdown chains two more commands onto every webCommand invocation,
+// scoped to this one session (`-t webSessionName`, never `-g`) — a security
+// boundary, not a feature. Without it, anyone attached to the shared session
+// (just by opening the web terminal in a browser) can press tmux's own prefix
+// key (Ctrl-B by default) and issue a tmux command directly: "c" opens a
+// brand-new window running whatever shell this process itself runs under —
+// root, per the gateway's systemd unit — a straight escape from the wrapped
+// `wms tui` app to a root shell, with none of the app's own permission
+// checks ever in the path. tmux handles its own key bindings before the
+// wrapped program ever sees the keystroke, so this can't be fixed inside
+// uiapp; it has to be fixed at the multiplexer.
+//
+// This is deliberately NOT a `tmux -f <config>` flag: that only takes effect
+// when tmux is starting a brand-new server process — if any other tmux
+// session already exists on the box for an unrelated reason (an admin's own
+// interactive session, say), the gateway's own client is attaching to that
+// SAME already-running server, and -f is silently ignored, leaving the
+// prefix key live. A `-t`-scoped set-option, chained onto the same
+// invocation and run as its own command after the session is created or
+// attached, works regardless of server history and touches only this one
+// session — never any other session already on that server. "None" is
+// tmux's own special value for "no key bound to this"; with no prefix key
+// and tmux's own mouse handling (which has its own bound actions) also off,
+// there is no way into tmux's command layer at all — every keystroke and
+// click goes straight through to `wms tui`, exactly how /solo and telnet
+// (which never wrap in tmux at all) already behave.
+var webSessionLockdown = []string{
+	";", "set-option", "-t", webSessionName, "prefix", "None",
+	";", "set-option", "-t", webSessionName, "mouse", "off",
+}
+
 func webCommand(wmsBinaryPath string) []string {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return []string{wmsBinaryPath, "tui"} // no tmux: today's behaviour, one process per connection
 	}
-	return []string{"tmux", "new-session", "-A", "-s", webSessionName, wmsBinaryPath, "tui"}
+	return append([]string{"tmux", "new-session", "-A", "-s", webSessionName, wmsBinaryPath, "tui"}, webSessionLockdown...)
 }
 
 // soloCommand is the independent web terminal's command: always a fresh process
@@ -68,7 +105,7 @@ func soloCommand(wmsBinaryPath string) []string {
 // target since it streams the hijacked connection rather than buffering it. All
 // three processes (proxy, both ttyd instances) are torn down together, mirroring
 // start_webtui.sh's kill-all-on-any-exit.
-func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath string) error {
+func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath, testBinaryPath string, testEnv []string) error {
 	// A tmux session outlives ttyd (tmux has its own background server), so without
 	// this a gateway restart — every deploy — would silently keep running whatever
 	// binary was already inside the persisted session instead of picking up the new
@@ -119,6 +156,26 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 	mux.Handle("/share/", share)
 	mux.Handle("/SHARE/", share)
 	mux.Handle(soloBasePath+"/", soloProxy) // more specific than "/", ServeMux prefers it
+
+	// The dev-build "Test" terminal: a third ttyd, same independent-process
+	// shape as /solo, exec'ing testBinaryPath with the test instance's own
+	// env layered on top — only started when an admin has configured both
+	// (see cmd/wms/gateway.go). Left out entirely otherwise: no third
+	// process, no third path, today's exact behaviour.
+	var testCmd *exec.Cmd
+	if testBinaryPath != "" {
+		testPort := ttydPort + 2
+		testCmd = exec.CommandContext(ctx, "ttyd",
+			append([]string{"-W", "-i", "lo", "-p", fmt.Sprintf("%d", testPort), "-b", testBasePath,
+				"-t", "fontSize=18", "-t", "disableLeaveAlert=true"}, soloCommand(testBinaryPath)...)...)
+		testCmd.Env = mergeEnv(env, testEnv)
+		testTarget, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", testPort))
+		if err != nil {
+			return err
+		}
+		mux.Handle(testBasePath+"/", httputil.NewSingleHostReverseProxy(testTarget))
+	}
+
 	mux.Handle("/", proxy)
 
 	srv := &http.Server{
@@ -134,11 +191,17 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 		if soloCmd.Process != nil {
 			_ = soloCmd.Process.Kill()
 		}
+		if testCmd != nil && testCmd.Process != nil {
+			_ = testCmd.Process.Kill()
+		}
 	}
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() { errCh <- ttydCmd.Run() }()
 	go func() { errCh <- soloCmd.Run() }()
+	if testCmd != nil {
+		go func() { errCh <- testCmd.Run() }()
+	}
 	go func() { errCh <- srv.ListenAndServe() }()
 
 	select {

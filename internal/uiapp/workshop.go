@@ -658,7 +658,7 @@ func orderLineRows(app *App) ([]string, [][]string, []string) {
 	}
 	var rows [][]string
 	var keys []string
-	for _, l := range o.Lines {
+	for _, l := range app.sortedOrderLines(o.Lines) {
 		rows = append(rows, []string{orDash(l.SetNum), l.PartNum, orDash(l.ColorName), l.PartName, strconv.Itoa(l.Qty), fmt.Sprintf("%.3f", l.UnitPrice),
 			fmt.Sprintf("%.2f", float64(l.Qty)*l.UnitPrice), fmt.Sprintf("%d/%d", l.ReceivedQty, l.Qty)})
 		keys = append(keys, strconv.FormatInt(l.ID, 10))

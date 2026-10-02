@@ -79,6 +79,12 @@ at (and driving) the same session — the right model for one person using sever
 reports whether `tmux` is installed; without it, the web terminal falls back to today's per-connection behaviour (a fresh sign-in and 2FA prompt
 every time).
 
+**tmux's own prefix key (Ctrl-B by default) is disabled inside this session** — `set-option -t wms-web prefix None` is chained onto the same
+command that creates/attaches it, scoped to just that one session, never `-g`/global (so it never touches an admin's own unrelated tmux
+sessions on the same box). Without this, anyone with the web terminal open could press Ctrl-B then `c` and get a brand-new tmux window running
+a root shell — tmux handles its own key bindings before `wms tui` ever sees the keystroke, so none of the app's permission checks are in that
+path at all. `/solo` and telnet were never affected (neither ever wraps in tmux).
+
 ## `/solo`: a second, independent web terminal
 
 Open `http://<host>:7681/solo` (or `/solo` after whatever path your reverse proxy uses) for a **completely separate** web terminal — its own
@@ -86,3 +92,30 @@ Open `http://<host>:7681/solo` (or `/solo` after whatever path your reverse prox
 the second identity the shared session above can't give you: two people (or one person testing as two accounts) on the web terminal
 simultaneously, neither one waiting on or seeing the other's screen. The cost is exactly what the default terminal avoids — no persistence:
 closing the tab or losing the connection ends that session for good, and reopening `/solo` is a fresh sign-on, 2FA included, every time.
+
+## Reaching the `dev` build from elsewhere: the Live/Test picker
+
+By default, trying an in-progress `dev` build means either sitting at this machine or SSH-tunnelling to the
+[test instance](test-instance.md), which is deliberately `127.0.0.1`-only. An admin who'd rather reach it from a browser or telnet client on
+another machine, without opening a second port, can turn on a picker on **this already-exposed gateway** instead:
+
+```bash
+# On the LIVE gateway's own env file only — never on the test instance itself:
+WMS_TEST_BINARY_PATH=/usr/local/bin/wms-go-test
+WMS_TEST_ENV_FILE=/root/.config/wms-go/test.env
+```
+
+Both unset (the default) means no change at all — no prompt, no extra path. Set both, and:
+
+- **Telnet** asks `1) Live  2) Test (dev build)` right after connecting; anything but a clean "2" (a bare Enter, garbage, a dropped
+  connection) means Live, same as today.
+- **Web** gets a third path, `/test`, next to `/` and `/solo` — same independent-per-connection shape as `/solo`, just pointed at the dev
+  build and the test instance's own data instead.
+
+Choosing Test really does run `wms-go-test` (whatever's actually on `dev` right now), reading `WMS_TEST_ENV_FILE`'s paths — the same
+scratch LEGO collection and separate access/audit files the test instance itself uses.
+
+**Worth knowing before turning it on**: this exposes the *test* (scratch) collection through the live gateway's existing public reach —
+behind the exact same real login and 2FA everything else there already requires, no weaker, but also no stronger. Anyone who can already
+sign in to the live instance can also reach the dev build this way. If that's not a trade-off you want, leave both variables unset and keep
+using the SSH tunnel documented in [the test instance guide](test-instance.md).

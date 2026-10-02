@@ -31,6 +31,10 @@ ssh -L 7691:127.0.0.1:7691 <this box>                    # then open http://127.
 The sign-on screen shows a message-of-the-day banner saying it's the test instance, so it's never mistaken for the
 real one.
 
+Reaching it from a browser or telnet client on a **different** machine needs either that SSH tunnel, or an admin turning on the
+[Live/Test picker](telnet-and-web.md#reaching-the-dev-build-from-elsewhere-the-livetest-picker) on the live gateway instead — this
+instance stays `127.0.0.1`-only either way; nothing here opens a new port.
+
 ## Redeploying it
 
 ```bash

@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
 // A one-way admin note, shown as a full-screen page — the same "read it, press a
@@ -184,6 +186,8 @@ func sendAdminMessage(app *App, body string) {
 		return
 	}
 	app.audit.Log(app.userName(), "", "MESSAGE_SENT", "SUCCESS", "to="+app.message2.to)
+	_ = app.legoDB.LogEvent(lego.EventMessage, app.userName(), app.message2.to, body)
+	app.notifyEvent(lego.EventMessage, fmt.Sprintf("%s -> %s: %s", app.userName(), app.message2.to, body), "")
 	app.setMsg("Sent to "+app.message2.to+".", false)
 	app.message2 = nil
 	app.stack = nil

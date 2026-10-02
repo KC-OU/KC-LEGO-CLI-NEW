@@ -148,7 +148,7 @@ func TestGatewayBlocksAnAddressWhoseSessionsKeepFailingSignIn(t *testing.T) {
 	th.KeepLoopback = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go acceptLoop(ctx, ln, fake, th)
+	go acceptLoop(ctx, ln, fake, "", nil, th)
 
 	dial := func() string {
 		c, err := net.Dial("tcp", ln.Addr().String())

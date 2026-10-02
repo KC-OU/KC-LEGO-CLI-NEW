@@ -94,6 +94,7 @@ func adminHubScreen() screenModel {
 		{"7", "user_mgmt", "Dock Accuracy", scrAccuracyWho},
 		{"8", "user_mgmt", "Live Sessions", scrLiveSessions},
 		{"9", "user_mgmt", "Shift Handover Note", scrHandover},
+		{"a", "user_mgmt", "Recent Activity", scrAdminEvents},
 	})
 }
 

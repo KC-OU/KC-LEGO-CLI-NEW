@@ -136,6 +136,8 @@ func accuracyDockScreen() screenModel {
 				return
 			}
 			app.audit.Log(app.userName(), "", "ACCURACY_DOCKED", "SUCCESS", fmt.Sprintf("%s (%s) -%.1f%%: %s", d.username, d.role, amount, values[1]))
+			_ = app.legoDB.LogEvent(lego.EventAccuracyDock, app.userName(), d.username, fmt.Sprintf("%s -%.1f%%: %s", d.role, amount, values[1]))
+			app.notifyEvent(lego.EventAccuracyDock, fmt.Sprintf("%s's %s accuracy docked %.1f%% by %s: %s", d.username, d.role, amount, app.userName(), values[1]), "")
 			_ = app.legoDB.SendMessage(app.userName(), d.username, fmt.Sprintf("Your %s accuracy was docked %.1f%% by an admin: %s", d.role, amount, values[1]))
 			app.dock = nil
 			app.setMsg("Docked.", false)

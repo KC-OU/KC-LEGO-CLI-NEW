@@ -142,3 +142,144 @@ func indexOfArea(name string) int {
 	}
 	return -1
 }
+
+// TestBrowseToggleGrantsAndRevokesLegoAndPartDBViewOnly covers the "b" hotkey
+// on the Users list: it should grant exactly the three read permissions that
+// already gate LEGO Collection/Part-DB browsing (see hub.go's hubOptions and
+// access.go's screenPerm), together, and nothing else; pressing it again
+// takes it away again. An explicit allow/deny each time, not "set vs.
+// delete-to-inherit" — a group (checker, picker) can already grant this by
+// default (access.go's seed()), so merely deleting an override would fall
+// back to the group's own "allow" and fail to turn it off (see
+// TestBrowseToggleWithdrawsItForOnePerson for that exact case). This user
+// has no group at all, so it genuinely starts off.
+func TestBrowseToggleGrantsAndRevokesLegoAndPartDBViewOnly(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:restricted1"] = &access.User{}
+	})
+	app.loadPolicy()
+
+	if browseGranted(app.pol(), "partdb:restricted1") {
+		t.Fatal("browse should start off for a user in no group")
+	}
+
+	userKeys(app, "partdb:restricted1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+
+	p, _ := access.Load()
+	u := p.Users["partdb:restricted1"]
+	if u == nil {
+		t.Fatal("expected a policy entry for the user")
+	}
+	for _, perm := range []string{"lego.view", "lego.search", "partdb.view"} {
+		if u.Perms[perm] != access.Allow {
+			t.Errorf("Perms[%q] = %q, want allow", perm, u.Perms[perm])
+		}
+	}
+	for _, perm := range []string{"lego.edit", "stock.adjust", "orders.manage"} {
+		if u.Perms[perm] != "" {
+			t.Errorf("the browse toggle must never set %q, got %q", perm, u.Perms[perm])
+		}
+	}
+	app.loadPolicy()
+	if !browseGranted(app.pol(), "partdb:restricted1") {
+		t.Error("browseGranted should now report on")
+	}
+
+	userKeys(app, "partdb:restricted1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	p, _ = access.Load()
+	u = p.Users["partdb:restricted1"]
+	for _, perm := range []string{"lego.view", "lego.search", "partdb.view"} {
+		if u.Perms[perm] != access.Deny {
+			t.Errorf("pressing b again should explicitly deny %q, got %q", perm, u.Perms[perm])
+		}
+	}
+	app.loadPolicy()
+	if browseGranted(app.pol(), "partdb:restricted1") {
+		t.Error("browseGranted should now report off")
+	}
+}
+
+// TestBrowseToggleCreatesAnEntryForAnUngovernedUser mirrors the existing "g"
+// permission-grid save path (access_screens.go's gridScreen HandleKey, the
+// 's' case): toggling browse for a user with no Users[] entry yet creates a
+// bare one, same precedent, not something new this hotkey invents.
+func TestBrowseToggleCreatesAnEntryForAnUngovernedUser(t *testing.T) {
+	app := adminApp(t)
+	app.loadPolicy()
+	if p := app.pol(); p.Users["partdb:freshuser"] != nil {
+		t.Fatal("test setup: expected no existing entry")
+	}
+
+	userKeys(app, "partdb:freshuser", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+
+	p, _ := access.Load()
+	u := p.Users["partdb:freshuser"]
+	if u == nil || u.Perms["lego.view"] != access.Allow {
+		t.Fatalf("expected a new entry with browse granted, got %+v", u)
+	}
+}
+
+// TestBrowseToggleActuallyUnlocksLegoAndPartDBReadOnly is the end-to-end
+// proof behind the design decision not to add any new access-control
+// plumbing for the browse toggle. The "checker" group already carries
+// lego.view/lego.search/partdb.view by default (see access.go's seed()) —
+// what was actually missing was a menu path to them (picker_hub.go now has
+// one, Perm-gated like every other entry there), and an admin's way to
+// override the default per person, which is what the "b" toggle is for.
+func TestPickerHubShowsLegoAndPartDBForAPlainCheckerByDefault(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:checker3"] = &access.User{Groups: []string{"checker"}, TwoFA: access.TwoFAExempt}
+	})
+	signOn(app, "checker3", "")
+
+	if !app.moduleAllowed("lego") || !app.moduleAllowed("partdb") {
+		t.Fatal("the checker group already grants lego.view/partdb.view by default")
+	}
+	app.cur, app.stack = scrPickerHub, nil
+	menu := app.screens[scrPickerHub].Body(app)
+	if !strings.Contains(menu, "LEGO Collection") || !strings.Contains(menu, "Part-DB Hub") {
+		t.Errorf("the picker/checker hub should list both by default, got:\n%s", menu)
+	}
+
+	app.goTo(scrLegoHub)
+	if app.cur != scrLegoHub {
+		t.Errorf("a plain checker should be able to open LEGO Collection, cur = %q (%s)", app.cur, app.message)
+	}
+	app.cur, app.stack = scrPickerHub, nil
+	app.goTo(scrLegoSetAdd)
+	if app.cur == scrLegoSetAdd {
+		t.Error("browsing must never reach a write screen like Add a Set")
+	}
+}
+
+// TestBrowseToggleWithdrawsItForOnePerson is the toggle's actual real-world
+// use: an admin turning LEGO/Part-DB browsing back OFF for one specific
+// checker, overriding the group default.
+func TestBrowseToggleWithdrawsItForOnePerson(t *testing.T) {
+	app := adminApp(t)
+	setPolicy(t, func(p *access.Policy) {
+		p.Users["partdb:checker3"] = &access.User{Groups: []string{"checker"}, TwoFA: access.TwoFAExempt}
+	})
+	app.loadPolicy()
+	if !browseGranted(app.pol(), "partdb:checker3") {
+		t.Fatal("expected browse to start on, inherited from the checker group")
+	}
+
+	userKeys(app, "partdb:checker3", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // on -> off
+	signOn(app, "checker3", "")
+
+	if app.moduleAllowed("lego") || app.moduleAllowed("partdb") {
+		t.Fatal("after the toggle, this one checker should no longer see LEGO/Part-DB")
+	}
+	app.cur, app.stack = scrPickerHub, nil
+	menu := app.screens[scrPickerHub].Body(app)
+	if strings.Contains(menu, "LEGO Collection") || strings.Contains(menu, "Part-DB Hub") {
+		t.Errorf("the menu entries must disappear once denied, got:\n%s", menu)
+	}
+	app.goTo(scrLegoHub)
+	if app.cur == scrLegoHub {
+		t.Error("goTo must also deny it directly, not just hide the menu entry")
+	}
+}

@@ -26,7 +26,14 @@ func recordDelivery(err error) {
 	metrics.NotifyDeliveries.WithLabelValues(outcome).Inc()
 }
 
-// Events are the alerts that can be routed.
+// Events are the alerts that can be routed and individually configured on the
+// Admin → Notifications screen. The newer activity-feed events (message,
+// accuracy_dock, accuracy_escalation, missing_parts, forced_off, reassigned —
+// see uiapp's LogEvent call sites) are deliberately left off this list: Route
+// already sends any event with no explicit policy override to every
+// configured channel, and that screen's row list has to fit an 80x25
+// terminal with no scrolling, so this catalog stays the ones worth routing
+// individually rather than growing with every new internal event name.
 var Events = []string{"security", "set_incomplete", "set_complete", "order_shipped", "order_received", "low_stock", "price_drop", "backup", "export_done"}
 
 func tagFor(event string) string {
@@ -35,7 +42,7 @@ func tagFor(event string) string {
 		return "rotating_light"
 	case "set_complete", "order_received":
 		return "tada"
-	case "set_incomplete", "low_stock":
+	case "set_incomplete", "low_stock", "accuracy_escalation", "missing_parts", "forced_off", "reassigned":
 		return "warning"
 	}
 	return "bell"

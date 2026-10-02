@@ -242,6 +242,13 @@ func ensureSchema(db *sql.DB) error {
 		// overwritten by whoever last saved it.
 		`CREATE TABLE IF NOT EXISTS handover_note (
 			id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '')`,
+		// A structured feed of admin-relevant events (see events.go) for the
+		// "Recent Activity" screen — deliberately separate from the tamper-evident
+		// audit log (internal/audit), which stays a hash-chained security record.
+		`CREATE TABLE IF NOT EXISTS admin_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, actor TEXT NOT NULL DEFAULT '',
+			target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(id)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

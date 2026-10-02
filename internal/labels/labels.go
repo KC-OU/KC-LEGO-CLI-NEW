@@ -61,6 +61,7 @@ var Sizes = []Size{
 	{ID: "100x150", Name: "100 x 150 mm thermal", W: 100, H: 150},
 	{ID: "62x100", Name: "Brother QL 62 mm, 100 mm long", W: 62, H: 100},
 	{ID: "62x29", Name: "Brother QL 62 x 29 mm", W: 62, H: 29},
+	{ID: "38x90", Name: "Brother QL 38 mm, 90 mm long", W: 38, H: 90},
 	{ID: "50x30", Name: "50 x 30 mm thermal", W: 50, H: 30},
 	{ID: "40x30", Name: "40 x 30 mm thermal", W: 40, H: 30},
 	{ID: "a4", Name: "A4 sheet, 21 labels (Avery L7160, 63.5 x 38.1 mm)", W: 63.5, H: 38.1, PageW: 210, PageH: 297, Left: 7.2, Top: 15.1, PitchX: 66.04, PitchY: 38.1, Cols: 3, Rows: 7},

@@ -29,6 +29,13 @@ func pickerHubScreen() screenModel {
 				{Key: "4", Label: "Menu for Querys", Go: func(app *App) { app.goTo(scrQueryMenu) }},
 				{Key: "5", Label: "My accuracy", Go: func(app *App) { app.goTo(scrMyAccuracy) }},
 				{Key: "6", Label: "My Exports", Go: func(app *App) { app.goTo(scrMyExports) }, Perm: "exports.download"},
+				// checker/picker already carry lego.view/partdb.view by default (see
+				// access.go's seed()) — these only need a menu entry to be reachable
+				// without knowing Ctrl-K/the palette already has them. Perm-gated like
+				// every other option here, so an admin denying it for one person (the
+				// Users list's "b" browse toggle) hides it here too, same as anywhere else.
+				{Key: "7", Label: "LEGO Collection", Go: func(app *App) { app.goTo(scrLegoHub) }, Perm: "lego.view"},
+				{Key: "8", Label: "Part-DB Hub", Go: func(app *App) { app.goTo(scrPartDBHub) }, Perm: "partdb.view"},
 				{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},
 				{Key: "0", Label: "Exit", Go: func(app *App) { app.quitting = true }},
 			}

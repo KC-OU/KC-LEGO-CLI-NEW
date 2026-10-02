@@ -60,11 +60,15 @@ func pickScreen() screenModel {
 }
 
 // pickMatches returns the items whose label contains typed (all of them when
-// typed is empty or a number), keeping each item's fixed list position.
+// typed is empty, or is still a row number someone could be about to press
+// Enter on), keeping each item's fixed list position. A number that's too big
+// to be a row (e.g. a numeric username like 10932 typed into a list of 9
+// items) falls through to the same label search as any other text — labels
+// carry the username, so an id search works without a separate search field.
 func pickMatches(st *pickState, typed string) []int {
 	typed = strings.ToLower(strings.TrimSpace(typed))
 	var out []int
-	if _, err := strconv.Atoi(typed); typed == "" || err == nil {
+	if n, err := strconv.Atoi(typed); typed == "" || (err == nil && n >= 1 && n <= len(st.Items)) {
 		for i := range st.Items {
 			out = append(out, i)
 		}
@@ -133,11 +137,7 @@ func pickSubmit(app *App, text string) {
 		app.setMsg("Type a number from the list, or part of a name.", true)
 		return
 	}
-	if n, err := strconv.Atoi(text); err == nil {
-		if n < 1 || n > len(st.Items) {
-			app.setMsg(fmt.Sprintf("There is no item %d — choose 1 to %d.", n, len(st.Items)), true)
-			return
-		}
+	if n, err := strconv.Atoi(text); err == nil && n >= 1 && n <= len(st.Items) {
 		st.OnPick(app, st.Items[n-1])
 		return
 	}

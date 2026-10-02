@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
@@ -74,10 +75,26 @@ func newGatewayServeCmd() *cobra.Command {
 				go retirementAutoRefresh(ctx, time.Duration(hours)*time.Hour)
 			}
 
+			testBinaryPath := config.Get(config.TestBinaryPath)
+			var testEnv []string
+			if testBinaryPath != "" {
+				if envFile := config.Get(config.TestEnvFile); envFile != "" {
+					if testEnv, err = config.ReadEnvFile(envFile); err != nil {
+						return fmt.Errorf("reading WMS_TEST_ENV_FILE: %w", err)
+					}
+				} else {
+					testBinaryPath = "" // both or neither — see docs/guides/telnet-and-web.md
+				}
+			}
+
 			g, gctx := errgroup.WithContext(ctx)
 			host := config.Get(config.GatewayListenHost)
-			g.Go(func() error { return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath) })
-			g.Go(func() error { return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath) })
+			g.Go(func() error {
+				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv)
+			})
+			g.Go(func() error {
+				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv)
+			})
 			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
 				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })
 			}

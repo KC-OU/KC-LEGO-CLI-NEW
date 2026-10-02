@@ -68,6 +68,7 @@ func startCheck(app *App, setNum, kind string) {
 	} else if s, _ := app.legoDB.GetSetByNum(collectionSetNum(setNum)); s != nil {
 		name = s.Name
 	}
+	app.sortCheckLinesByLocation(c.Lines)
 	app.checking = &checkState{check: c, setName: name}
 	app.checking.findSpares(app)
 	app.goTo(scrSetCheck)
@@ -494,6 +495,7 @@ func finishCheck(app *App) {
 		app.currentTicketID = 0
 		if _, escalate, err := app.legoDB.RecordCheckOutcome(user, lego.AccuracyChecker, lego.TicketCheck, c.SetNum, pieces, missing); err == nil && escalate {
 			app.notifyEvent("accuracy_escalation", fmt.Sprintf("%s is missing %d parts on %s — accuracy needs a manual review, not an automatic deduction.", user, missing, c.SetNum), "")
+			_ = app.legoDB.LogEvent(lego.EventAccuracyEscalation, user, c.SetNum, fmt.Sprintf("missing %d on %s — needs manual review", missing, c.SetNum))
 		}
 	}
 	msg := fmt.Sprintf("%s: checked by %s — ", c.SetNum, user)
@@ -502,6 +504,7 @@ func finishCheck(app *App) {
 		app.emit("set_incomplete", map[string]any{"set": c.SetNum, "name": st.setName, "missing": missing, "by": user})
 		app.notifyEvent("set_incomplete", fmt.Sprintf("Set %s %s is missing %d part(s)", c.SetNum, st.setName, missing), "")
 		app.queueAlert("Missing parts", fmt.Sprintf("Set %s is missing %d part(s).", c.SetNum, missing))
+		_ = app.legoDB.LogEvent(lego.EventMissingParts, user, c.SetNum, fmt.Sprintf("missing %d part(s)", missing))
 	} else {
 		msg += "COMPLETE."
 		app.emit("set_complete", map[string]any{"set": c.SetNum, "name": st.setName, "by": user})

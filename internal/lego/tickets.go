@@ -162,6 +162,23 @@ func (d *DB) FinishTicket(kind, target, by string) error {
 	return err
 }
 
+// ForceOffTicket takes a claimed ticket away from whoever has it — an admin
+// action, not the holder's own choice, so unlike AbandonTicket there's no
+// ownership check. reassignTo "" releases it to the open queue; otherwise it
+// goes straight to that person, same as a fresh AssignTicket target. The
+// underlying check/order draft is untouched either way (see openTicket).
+func (d *DB) ForceOffTicket(id int64, reassignTo string) error {
+	res, err := d.Exec(`UPDATE job_tickets SET status = ?, assigned_to = ?, claimed_at = '' WHERE id = ? AND status = ?`,
+		TicketQueued, reassignTo, id, TicketClaimed)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("that ticket isn't claimed by anyone right now")
+	}
+	return nil
+}
+
 // AbandonTicket releases a claimed ticket back to the open queue (unassigned) —
 // "abandon without saving": the underlying check/order's own progress is a
 // separate decision (see set_check.go's abandon path), this only frees the ticket.

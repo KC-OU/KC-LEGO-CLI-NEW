@@ -2,9 +2,15 @@
 
 A picker or checker signs on to a dedicated, tight hub — Overview, a Request screen, My Current
 Jobs, a Query submenu (a set/part search folded into one line, Owned Parts, Owned Sets), My
-accuracy, My Exports, Log out, Exit — instead of the general ModernWMS/Part-DB hub, since their
-day genuinely doesn't touch most of it. Anyone whose permissions go beyond that (an operator,
-an admin) keeps the general hub even if they also hold `sets.check`/`orders.manage`.
+accuracy, My Exports, LEGO Collection, Part-DB Hub, Log out, Exit — instead of the general
+ModernWMS/Part-DB hub, since their day genuinely doesn't touch most of it. Anyone whose
+permissions go beyond that (an operator, an admin) keeps the general hub even if they also hold
+`sets.check`/`orders.manage`.
+
+LEGO Collection and Part-DB Hub are there for **browsing** — searching, checking what's missing,
+looking something up — not editing; both `checker` and `picker` already carry the read
+permissions that show them by default, and an admin can turn that off for one person (or on for
+someone in a different group) from [Access Control's Users list](access-control.md#in-the-terminal).
 
 ## Roles
 
@@ -57,6 +63,19 @@ Pressing your usual back key (Esc/F3/F12) while a ticket-backed check or order i
   own text) — the admin is notified and it's all audited. It's a conduct/process record, kept
   completely separate from accuracy.
 
+## Forcing someone off a job
+
+*Admin → Assign Work → Force off a job* takes a claimed ticket away from whoever has it — for
+when a job needs to be redirected, not because anyone did anything wrong. Pick the claimed
+ticket, choose where it goes next (the open queue, or straight to a named person), then send a
+message — the default is *"We've assigned you another task — don't worry, your accuracy won't be
+affected,"* or write your own. It never touches accuracy (same "conduct record, not a score hit"
+rule as Abandon), and the underlying check/order draft is untouched — whatever was tallied so far
+is exactly where the next person (or the same person, on a different job) finds it. If the person
+taken off it is mid-check or mid-order right now, their own screen notices within about 15 seconds
+(the same background check that delivers messages) and returns them to their hub with the message
+waiting.
+
 ## Accuracy
 
 *My Accuracy* (also in the palette) shows today's percentage and the last 7 days, per role — a
@@ -82,6 +101,15 @@ every 15 seconds (sessions are separate processes, so this is a poll, not a push
 once page through one at a time ("1 of 3" …), **Enter** for the next, **Q** to dismiss all of
 them at once.
 
+## Admin activity feed
+
+*Admin → Recent Activity* is a scannable log of the last 50 admin-relevant events — messages sent
+(who to whom), accuracy docked or escalated, sets short on parts, and jobs forced off or
+reassigned. It's separate from the tamper-evident audit log (still the record of everything, for
+security review): this is a quick "what happened while I was away" screen, and — when a
+[notification channel](discord-notifications.md) is configured — the same events are pushed there
+too.
+
 ## A few extras
 
 - **My Exports** (My Settings, or the palette): your own recent export files, with a one-key
@@ -90,6 +118,9 @@ them at once.
 - **Shift handover note** (*Admin → Shift Handover Note*): one free-text note anyone leaves for
   whoever's on next, shown full-screen (alongside any pending messages) the next time a
   picker/checker signs on.
+- **Shelf order**: a check or order's lines are listed in Part-DB shelf-location order rather than
+  catalog order (parts with no known location yet sort last), so working through one is a single
+  pass instead of back and forth.
 - **My Rebrickable API key** (My Settings): use your own personal key instead of the shared one,
   or switch back with "Use the shared/global key" — a personal key that stops working isn't
   detected automatically (it just fails like any other Rebrickable error would); switch back
