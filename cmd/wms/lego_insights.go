@@ -1162,6 +1162,65 @@ func newLegoRestoreCmd() *cobra.Command {
 	return cmd
 }
 
+func newLegoResetCmd() *cobra.Command {
+	var yes, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Clear every set, owned part and check/order/ticket history to start fresh",
+		Long: "Deletes every set, owned part, check, order, ticket, accuracy record and journal entry — everything\n" +
+			"this file tracks about what you have and what happened to it. The offline Rebrickable catalog\n" +
+			"(wms lego catalog refresh re-downloads that anyway), BrickLink/BrickOwl price caches, and your\n" +
+			"users/access/2FA settings are untouched. A full backup is taken first automatically (see\n" +
+			"`wms lego backup`) — undo by stopping the gateway and copying that file over lego.db.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			t := ui.New()
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			counts, err := db.CollectionCounts()
+			if err != nil {
+				return err
+			}
+			total := 0
+			for _, n := range counts {
+				total += n
+			}
+			say(ui.Fact(t, "Sets", strconv.Itoa(counts["sets"])))
+			say(ui.Fact(t, "Owned part rows", strconv.Itoa(counts["owned_parts"])))
+			say(ui.Fact(t, "Checks", strconv.Itoa(counts["set_checks"])))
+			say(ui.Fact(t, "Orders", strconv.Itoa(counts["orders"])))
+			if total == 0 {
+				say(ui.Status(t, true, "Already empty: nothing to do."))
+				return emit(map[string]any{"reset": false})
+			}
+			if dryRun {
+				return planned("reset the collection", map[string]any{"counts": counts})
+			}
+			if err := confirm(fmt.Sprintf("Permanently clear %d set(s) and %d owned part row(s), plus all check/order/ticket history? A backup is taken first.", counts["sets"], counts["owned_parts"]), yes); err != nil {
+				return err
+			}
+			path, err := db.BackupCollection(filepath.Join(config.Get(config.ModernWMSBackupDir), "lego"))
+			if err != nil {
+				return fmt.Errorf("backing up before reset: %w", err)
+			}
+			if err := db.ResetCollection(context.Background(), "wms lego reset ("+cliActor()+")"); err != nil {
+				return err
+			}
+			say(ui.Status(t, true, "Collection cleared. Catalog and settings untouched."))
+			say(ui.Fact(t, "Backup", path))
+			return emit(map[string]any{"reset": true, "backup": path, "cleared": counts})
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "don't ask for confirmation")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be cleared and stop")
+	return cmd
+}
+
 func newLegoExportCmd() *cobra.Command {
 	var format, outPath, set string
 	var copies int

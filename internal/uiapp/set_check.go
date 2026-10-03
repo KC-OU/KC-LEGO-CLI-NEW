@@ -10,6 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/labels"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -41,6 +43,7 @@ type setCheckScreen struct {
 	scanner       bool
 	scanBuf       string
 	flash         string
+	guided        bool // W: one line at a time with a "GO TO: <location>" banner, instead of the full table — see guidedBody
 }
 
 // startCheck opens the check for a set (resuming a saved draft).
@@ -102,7 +105,7 @@ func (s *setCheckScreen) PanelID() string { return "SETCHK" }
 func (s *setCheckScreen) Title() string   { return "Parts Check" }
 func (s *setCheckScreen) capturing() bool { return true } // every letter is a command here
 func (s *setCheckScreen) OnEnter(app *App) {
-	s.sel, s.top, s.filter, s.filtering, s.prompt, s.input, s.scanner, s.scanBuf, s.flash = 0, 0, "", false, "", "", false, "", ""
+	s.sel, s.top, s.filter, s.filtering, s.prompt, s.input, s.scanner, s.scanBuf, s.flash, s.guided = 0, 0, "", false, "", "", false, "", "", false
 }
 func (s *setCheckScreen) FKeys() [][2]string {
 	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
@@ -129,11 +132,22 @@ func (s *setCheckScreen) rows(app *App) int {
 	return max(3, h-15)
 }
 
+// promptFoot is the "How many are missing: 3_" line shown while a number
+// prompt is open — shared by the table and guided bodies so the question
+// looks identical in either view.
+func (s *setCheckScreen) promptFoot(t ui.Theme) string {
+	return t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares"}[s.prompt], s.input)) +
+		t.Muted.Render("   Enter ok · Esc cancel")
+}
+
 func (s *setCheckScreen) Body(app *App) string {
 	t := app.theme
 	st := app.checking
 	if st == nil {
 		return t.Muted.Render("Nothing to check — open a set first.")
+	}
+	if s.guided {
+		return s.guidedBody(app)
 	}
 	c := st.check
 	pieces, have, missing, extra, missLines := c.Totals()
@@ -196,15 +210,14 @@ func (s *setCheckScreen) Body(app *App) string {
 	var foot string
 	switch {
 	case s.prompt != "":
-		foot = t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares"}[s.prompt], s.input)) +
-			t.Muted.Render("   Enter ok · Esc cancel")
+		foot = s.promptFoot(t)
 	case s.filtering:
 		foot = t.Accent.Render("Filter: "+s.filter+"_") + t.Muted.Render("   part, colour, name, category, 'missing' or 'extra' · Enter done")
 	case s.scanner:
 		foot = t.Accent.Render("SCANNER MODE — scan or type a part number + Enter adds one: "+s.scanBuf+"_") + t.Muted.Render("   Z/Esc leaves")
 	default:
 		foot = t.Muted.Render("H have all · M missing · E extra · 0-9 count · A all have · T take spare") + "\n" +
-			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional")
+			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional · W guided walk · P print barcode sheet")
 	}
 	if s.flash != "" {
 		foot = s.flash + "\n" + foot
@@ -214,6 +227,73 @@ func (s *setCheckScreen) Body(app *App) string {
 		fl = append(fl, ansi.Truncate(l, t.W(), "…"))
 	}
 	return head + "\n" + ansi.Truncate(sum, t.W(), "…") + "\n" + table + "\n" + strings.Join(fl, "\n")
+}
+
+// guidedBody is the W-toggled alternate view: one line at a time with a big
+// "GO TO: <location>" banner and a peek at what's next, instead of the full
+// table — same walk order (visible/sel), same keys, just a different way to
+// look at it. Modelled on sentry-wms's "pick walk" screen, adapted to data
+// this project already computes (pick_route.go's shelf-order sort and
+// per-part location lookup) rather than anything borrowed from its code.
+func (s *setCheckScreen) guidedBody(app *App) string {
+	t := app.theme
+	st := app.checking
+	c := st.check
+	vis := s.visible(app)
+	if len(vis) == 0 {
+		return t.Muted.Render("Nothing to check.") + "\n" + t.Muted.Render("W table view · Esc leave")
+	}
+	s.sel = min(s.sel, len(vis)-1)
+	cur := vis[s.sel]
+	l := c.Lines[cur]
+
+	goTo := app.locationFor(l.PartNum, l.ColorID, l.ColorName)
+	if goTo == "" {
+		goTo = "unknown — check manually"
+	}
+
+	head := t.Strong.Render(fmt.Sprintf("Guided walk: %s %s", c.SetNum, st.setName))
+	progress := t.Muted.Render(fmt.Sprintf("Item %d of %d", s.sel+1, len(vis)))
+	banner := t.Accent.Render("GO TO: " + goTo)
+
+	miss := ""
+	if m := l.Missing(); m > 0 {
+		miss = t.Danger.Render(fmt.Sprintf("  MISSING %d", m))
+	}
+	item := fmt.Sprintf("%s  %s  %s\nNeed %d · Have %d%s", l.PartNum, orDash(l.ColorName), l.PartName, l.Need, l.Have, miss)
+	if note := st.spares[cur]; note != "" {
+		item += "\n" + t.Warning.Render(note)
+	}
+
+	next := t.Muted.Render("Last item in this walk.")
+	if s.sel+1 < len(vis) {
+		nl := c.Lines[vis[s.sel+1]]
+		nloc := app.locationFor(nl.PartNum, nl.ColorID, nl.ColorName)
+		if nloc == "" {
+			nloc = "unknown"
+		}
+		next = t.Muted.Render(fmt.Sprintf("Next: %s (%s) — %s", nl.PartNum, nl.PartName, nloc))
+	}
+
+	var foot string
+	switch {
+	case s.prompt != "":
+		foot = s.promptFoot(t)
+	default:
+		foot = t.Muted.Render("H have all · M missing · E extra · 0-9 count · ↑/↓ step") + "\n" +
+			t.Muted.Render("T take spare · U undo · F finish · W table view · P barcode sheet · Esc leave")
+	}
+	if s.flash != "" {
+		foot = s.flash + "\n" + foot
+	}
+
+	var lines []string
+	for _, block := range []string{head, progress, "", banner, "", item, "", next, "", foot} {
+		for _, l := range strings.Split(block, "\n") {
+			lines = append(lines, ansi.Truncate(l, t.W(), "…"))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
@@ -315,6 +395,10 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		s.filtering = true
 	case r == 'z' || r == 'Z':
 		s.scanner, s.scanBuf = true, ""
+	case r == 'w' || r == 'W':
+		s.guided = !s.guided
+	case r == 'p' || r == 'P':
+		printPartsSheet(app, st)
 	case r == 's' || r == 'S':
 		if err := app.legoDB.SaveCheck(st.check); err != nil {
 			app.setMsg(err.Error(), true)
@@ -338,6 +422,39 @@ func (s *setCheckScreen) leave(app *App) {
 	app.setMsg("Check not saved (S saves it for later, F finishes).", false)
 	app.checking = nil
 	app.onBack()
+}
+
+// printPartsSheet generates a printable A4 barcode sheet for every line in
+// the check, same walk order the guided view uses (sortCheckLinesByLocation
+// already sorted them at check-open time) — so scanning stays optional:
+// pick/check normally by eye, or scan from the printed sheet when it's
+// faster, without needing each part's own retail packaging as a barcode
+// source.
+func printPartsSheet(app *App, st *checkState) {
+	lines := make([]labels.PartSheetLine, len(st.check.Lines))
+	for i, l := range st.check.Lines {
+		lines[i] = labels.PartSheetLine{
+			PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
+			Location: app.locationFor(l.PartNum, l.ColorID, l.ColorName), Need: l.Need,
+		}
+	}
+	pdf := labels.PartsSheet(lines)
+	path, err := exports.Save(exports.Dir(), app.userName(), "parts-sheet", st.check.SetNum, "pdf", pdf)
+	if err != nil {
+		app.setMsg(err.Error(), true)
+		return
+	}
+	app.audit.Log(app.userName(), "", "PARTS_SHEET_PRINTED", "SUCCESS", st.check.SetNum)
+	if !app.can("exports.download") {
+		app.setMsg("Parts sheet saved (ask an admin with export access for the download link).", false)
+		return
+	}
+	tok, err := exports.NewLink(exports.Dir(), path, app.userName())
+	if err != nil {
+		app.setMsg(err.Error(), true)
+		return
+	}
+	app.setMsg("Parts barcode sheet: "+exports.URL(tok), false)
 }
 
 func (s *setCheckScreen) promptKey(app *App, msg tea.KeyMsg, cur int) {

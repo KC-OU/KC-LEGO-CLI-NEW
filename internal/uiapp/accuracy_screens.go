@@ -67,6 +67,7 @@ func accuracyWhoScreen() screenModel {
 			return []menuOption{
 				{Key: "1", Label: "Dock someone's accuracy…", Go: func(app *App) { startDockPick(app, false) }},
 				{Key: "2", Label: "Credit someone's accuracy…", Go: func(app *App) { startDockPick(app, true) }},
+				{Key: "3", Label: "View accuracy reports…", Go: startAccuracyReportsPick},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},

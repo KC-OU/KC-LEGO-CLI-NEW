@@ -41,20 +41,29 @@ const (
 	sessionMaxAge  = 20 * time.Minute // matches uiapp's own live-session window
 )
 
-type server struct {
+// Server holds the dependencies every bot action needs — exported, unlike
+// the rest of this package's internals, so internal/gateway can also drive
+// Dispatch directly from the Discord Interactions Endpoint (see
+// discord_interactions.go), without a second copy of the action logic.
+type Server struct {
 	legoDB *lego.DB
 	audit  *audit.Logger
+}
+
+func NewServer(legoDB *lego.DB, auditLog *audit.Logger) *Server {
+	return &Server{legoDB: legoDB, audit: auditLog}
 }
 
 // Serve runs the webhook until ctx is cancelled. addr must be loopback
 // (127.0.0.1:<port>) — refused otherwise, not just defaulted, since this is
 // a brand-new credentialed surface and the n8n workflow calling it is
-// expected to run on the same box.
-func Serve(ctx context.Context, addr string, legoDB *lego.DB, auditLog *audit.Logger) error {
+// expected to run on the same box. s is shared with InteractionsHandler when
+// Discord slash commands are also configured (see cmd/wms/gateway.go), so
+// both paths dispatch through the exact same Server.
+func Serve(ctx context.Context, addr string, s *Server) error {
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		return fmt.Errorf("botapi: addr must be loopback (127.0.0.1:<port>), got %q", addr)
 	}
-	s := &server{legoDB: legoDB, audit: auditLog}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /bot/action", s.handleAction)
 	mux.HandleFunc("POST /bot/reset-pin", s.handleResetPIN)
@@ -116,7 +125,10 @@ func checkPIN(key, pin string) (ok, locked bool, err error) {
 	return ok, locked, err
 }
 
-type actionRequest struct {
+// ActionRequest is one bot action call — exported so both the HTTP
+// /bot/action body (JSON-decoded) and the Discord Interactions handler
+// (built from a slash command's options) can construct the same shape.
+type ActionRequest struct {
 	Platform string          `json:"platform"`
 	ID       string          `json:"id"`
 	PIN      string          `json:"pin"`
@@ -124,60 +136,65 @@ type actionRequest struct {
 	Params   json.RawMessage `json:"params"`
 }
 
-// handleAction resolves platform+id to a linked admin, verifies the PIN
-// (collapsing "unknown id" and "wrong PIN" into the same 401 so a caller
-// can't enumerate which IDs are linked), checks that admin's real
-// permission, then dispatches to one of the explicit actions below.
-func (s *server) handleAction(w http.ResponseWriter, r *http.Request) {
-	var req actionRequest
+// handleAction decodes the request body and reports Dispatch's result as
+// this endpoint's own JSON reply.
+func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
+	var req ActionRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed JSON"})
 		return
 	}
+	status, body := s.Dispatch(req)
+	writeJSON(w, status, body)
+}
+
+// Dispatch resolves platform+id to a linked admin, verifies the PIN
+// (collapsing "unknown id" and "wrong PIN" into the same 401 so a caller
+// can't enumerate which IDs are linked), checks that admin's real
+// permission, then runs one of the explicit actions below — every caller
+// (the HTTP /bot/action route and the Discord Interactions handler) goes
+// through this exact same check, so neither can reach anything the other
+// can't.
+func (s *Server) Dispatch(req ActionRequest) (int, map[string]any) {
 	p, err := access.Load()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "policy unreadable"})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": "policy unreadable"}
 	}
 	key, ok := p.FindByBotID(req.Platform, req.ID)
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
+		return http.StatusUnauthorized, map[string]any{"error": "unauthorized"}
 	}
 	good, locked, err := checkPIN(key, req.PIN)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": "internal error"}
 	}
 	if locked {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "locked"})
-		return
+		return http.StatusTooManyRequests, map[string]any{"error": "locked"}
 	}
 	if !good {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
+		return http.StatusUnauthorized, map[string]any{"error": "unauthorized"}
 	}
 	p, err = access.Load() // fresh: checkPIN's Update may have just cleared BotPINFails
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "policy unreadable"})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": "policy unreadable"}
 	}
 	src, name, _ := strings.Cut(key, ":")
 	if !p.Effective(src, name).Can(botActionPerm) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
-		return
+		return http.StatusForbidden, map[string]any{"error": "forbidden"}
 	}
 	switch req.Action {
 	case "reassign_ticket":
-		s.reassignTicket(w, name, req.Params)
+		return s.reassignTicket(name, req.Params)
 	case "message_user":
-		s.messageUser(w, name, req.Params)
+		return s.messageUser(name, req.Params)
 	case "kick_session":
-		s.kickSession(w, name, req.Params)
+		return s.kickSession(name, req.Params)
 	case "list_open_tickets":
-		s.listOpenTickets(w)
+		return s.listOpenTickets()
+	case "list_alerts":
+		return s.listAlerts()
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown action"})
+		return http.StatusBadRequest, map[string]any{"error": "unknown action"}
 	}
 }
 
@@ -189,16 +206,14 @@ type reassignParams struct {
 // reassignTicket mirrors internal/uiapp/tickets_screens.go's finishForceOff:
 // the same DB call, activity-feed event, notification, audit line, and
 // reassurance message to whoever was taken off it.
-func (s *server) reassignTicket(w http.ResponseWriter, actor string, raw json.RawMessage) {
+func (s *Server) reassignTicket(actor string, raw json.RawMessage) (int, map[string]any) {
 	var p reassignParams
 	if err := json.Unmarshal(raw, &p); err != nil || p.TicketID == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket_id is required"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "ticket_id is required"}
 	}
 	tickets, err := s.legoDB.AllOpenTickets()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	var from, label string
 	found := false
@@ -209,12 +224,10 @@ func (s *server) reassignTicket(w http.ResponseWriter, actor string, raw json.Ra
 		}
 	}
 	if !found {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no such open ticket"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "no such open ticket"}
 	}
 	if err := s.legoDB.ForceOffTicket(p.TicketID, p.To); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	kind, dest := lego.EventForcedOff, "the open queue"
 	if p.To != "" {
@@ -227,7 +240,7 @@ func (s *server) reassignTicket(w http.ResponseWriter, actor string, raw json.Ra
 	if from != "" {
 		_ = s.legoDB.SendMessage(actor, from, "We've assigned you another task — don't worry, your accuracy won't be affected.")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "detail": detail})
+	return http.StatusOK, map[string]any{"ok": true, "detail": detail}
 }
 
 type messageParams struct {
@@ -236,20 +249,18 @@ type messageParams struct {
 }
 
 // messageUser mirrors internal/uiapp/messages.go's sendAdminMessage.
-func (s *server) messageUser(w http.ResponseWriter, actor string, raw json.RawMessage) {
+func (s *Server) messageUser(actor string, raw json.RawMessage) (int, map[string]any) {
 	var p messageParams
 	if err := json.Unmarshal(raw, &p); err != nil || p.Username == "" || p.Body == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and body are required"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "username and body are required"}
 	}
 	if err := s.legoDB.SendMessage(actor, p.Username, p.Body); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	_ = s.legoDB.LogEvent(lego.EventMessage, actor, p.Username, p.Body)
 	notify.Dispatch(lego.EventMessage, fmt.Sprintf("%s -> %s (bot): %s", actor, p.Username, p.Body), "")
 	s.audit.Log(actor, "", "MESSAGE_SENT", "SUCCESS", "to="+p.Username)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return http.StatusOK, map[string]any{"ok": true}
 }
 
 type kickParams struct {
@@ -258,11 +269,10 @@ type kickParams struct {
 }
 
 // kickSession mirrors internal/uiapp/sessions_screen.go's finishKick.
-func (s *server) kickSession(w http.ResponseWriter, actor string, raw json.RawMessage) {
+func (s *Server) kickSession(actor string, raw json.RawMessage) (int, map[string]any) {
 	var p kickParams
 	if err := json.Unmarshal(raw, &p); err != nil || p.SessionID == "" || p.Message == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session_id and message are required"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "session_id and message are required"}
 	}
 	username := ""
 	if sessions, err := s.legoDB.LiveSessions(sessionMaxAge); err == nil {
@@ -274,24 +284,35 @@ func (s *server) kickSession(w http.ResponseWriter, actor string, raw json.RawMe
 		}
 	}
 	if err := s.legoDB.ForceLogoff(p.SessionID, p.Message); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
 	_ = s.legoDB.LogEvent(lego.EventForcedOff, actor, username, "live session kicked (bot): "+p.Message)
 	notify.Dispatch(lego.EventForcedOff, fmt.Sprintf("%s's session kicked by %s (bot): %s", orDash(username), actor, p.Message), "")
 	s.audit.Log(actor, "", "SESSION_KICKED", "SUCCESS", orDash(username))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return http.StatusOK, map[string]any{"ok": true}
 }
 
 // listOpenTickets is the one read-only action — no DB mutation, so nothing
 // to log to the activity feed or notify about, just the current queue.
-func (s *server) listOpenTickets(w http.ResponseWriter) {
+func (s *Server) listOpenTickets() (int, map[string]any) {
 	tickets, err := s.legoDB.AllOpenTickets()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tickets": tickets})
+	return http.StatusOK, map[string]any{"ok": true, "tickets": tickets}
+}
+
+// listAlerts is the Admin → Alerts feed: open accuracy escalations (21+
+// missing in one check, flagged for manual review — see
+// RecordCheckOutcome/accKindEscalate in internal/lego/accuracy.go) with no
+// report filed against them yet. Also read-only, same reasoning as
+// listOpenTickets.
+func (s *Server) listAlerts() (int, map[string]any) {
+	alerts, err := s.legoDB.OpenAccuracyEscalations()
+	if err != nil {
+		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	}
+	return http.StatusOK, map[string]any{"ok": true, "alerts": alerts}
 }
 
 type resetRequest struct {
@@ -305,7 +326,7 @@ type resetRequest struct {
 // handleResetPIN requires a live 2FA code AND the security answer together —
 // either alone is refused, same rule as the TUI's own reset screen
 // (internal/uiapp/access_screens.go's accessBotResetScreen).
-func (s *server) handleResetPIN(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleResetPIN(w http.ResponseWriter, r *http.Request) {
 	var req resetRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || req.NewPIN == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})

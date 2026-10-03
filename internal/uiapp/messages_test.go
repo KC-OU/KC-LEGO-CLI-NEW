@@ -100,6 +100,36 @@ func TestMessageComposeOffersADozenTemplatesAndFreeText(t *testing.T) {
 	}
 }
 
+// TestSendBroadcastMessageExcludesTheSenderAndLogsOnce confirms the broadcast
+// path works end to end (no crash, one audit line, not one per recipient) —
+// the test environment's user listing is empty (no real WMS/Part-DB backing
+// it), so this can't assert on actual delivered-message counts; that part
+// reuses SendMessage, already covered by sendAdminMessage's own tests.
+func TestSendBroadcastMessageExcludesTheSenderAndLogsOnce(t *testing.T) {
+	app := newTestApp(t)
+	sendBroadcastMessage(app, "New process starting Monday — details to follow.")
+
+	if !auditHas(t, "BROADCAST_SENT") {
+		t.Error("expected one BROADCAST_SENT audit entry")
+	}
+	if app.cur != scrAdminHub {
+		t.Errorf("cur after broadcasting = %q, want back at the admin hub", app.cur)
+	}
+	msgs, err := app.legoDB.UndeliveredMessages("admin")
+	if err != nil || len(msgs) != 0 {
+		t.Errorf("the sender must never message themselves: UndeliveredMessages(admin) = %+v, %v", msgs, err)
+	}
+}
+
+func TestSendBroadcastMessageIgnoresABlankBody(t *testing.T) {
+	app := newTestApp(t)
+	app.cur, app.stack = scrMessagePick, []string{scrAdminHub}
+	sendBroadcastMessage(app, "")
+	if auditHas(t, "BROADCAST_SENT") {
+		t.Error("a blank body should send nothing and log nothing")
+	}
+}
+
 func TestMessagesFullScreenQDismissesAllAtOnce(t *testing.T) {
 	app := newTestApp(t)
 	app.queueMessage(1, "admin", "first message")

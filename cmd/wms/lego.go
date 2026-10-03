@@ -19,7 +19,7 @@ func newLegoCmd() *cobra.Command {
 	cmd.AddCommand(newLegoImportCmd(), newLegoAddPartCmd(), newLegoSyncPartsCmd(), newLegoCatalogCmd(),
 		newLegoLowCmd(), newLegoSetMinCmd(), newLegoOptionalCmd(), newLegoStatsCmd(), newLegoMissingCmd(), newLegoWantedCmd(), newLegoDetailCmd(), newLegoAchievementsCmd(), newLegoTodayCmd(), newLegoCheckCmd(), newLegoShoppingCmd(), newLegoOrdersCmd(), newLegoSpendCmd(), newLegoLabelsCmd(), newLegoSetInfoCmd(), newLegoImportPartsCmd(),
 		newLegoSearchCmd(), newLegoBackupCmd(), newLegoWatchCmd(), newLegoValueCmd(), newLegoBuildCmd(),
-		newLegoHistoryCmd(), newLegoSnapshotsCmd(), newLegoRestoreCmd(), newLegoExportCmd(),
+		newLegoHistoryCmd(), newLegoSnapshotsCmd(), newLegoRestoreCmd(), newLegoResetCmd(), newLegoExportCmd(),
 		newLegoReportCmd(), newLegoRetirementCmd(), newLegoShareCmd(), newLegoHelpSheetCmd())
 	return cmd
 }

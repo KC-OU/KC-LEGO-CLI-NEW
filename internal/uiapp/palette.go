@@ -57,6 +57,7 @@ var paletteScreens = []struct{ Label, ID, Hint string }{
 	{"Settings: Display theme", scrSettingsTheme, "admin — also everyone's default"},
 	{"My display theme", scrMyTheme, "13 themes, live preview"},
 	{"My loading indicator", scrMyLoading, "on/off — spinner for sign-on, Part-DB sync, price look-ups"},
+	{"My Accuracy — menu visibility", scrMyAccuracyVis, "show/hide My Accuracy on your own hub menu"},
 	{"My Settings", scrMySettings, "theme, loading indicator, Rebrickable key, exports — all in one place"},
 	{"My Rebrickable API key", scrMyRebrickKey, "a personal key overriding the shared one"},
 	{"My Exports", scrMyExports, "regenerate a download link for a recent export"},

@@ -113,6 +113,14 @@ func PDF(items []Data, s Size) []byte {
 		}
 		pages = append(pages, c.String())
 	}
+	return multiPagePDF(pages, pageW*pt, pageH*pt)
+}
+
+// multiPagePDF assembles a complete PDF (catalog, pages, two built-in
+// Helvetica fonts, one page+content-stream pair per entry in pages) from
+// already-built page content streams — the common tail PDF() and
+// PartsSheet() (partsheet.go) both need. pageW/pageH are in points.
+func multiPagePDF(pages []string, pageW, pageH float64) []byte {
 	if len(pages) == 0 {
 		pages = []string{""}
 	}
@@ -128,7 +136,7 @@ func PDF(items []Data, s Size) []byte {
 	objs = append(objs, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
 	for i, content := range pages {
 		objs = append(objs, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents %d 0 R >>",
-			pageW*pt, pageH*pt, 6+2*i))
+			pageW, pageH, 6+2*i))
 		objs = append(objs, fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content))
 	}
 	var b bytes.Buffer

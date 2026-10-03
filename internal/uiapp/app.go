@@ -170,6 +170,9 @@ type App struct {
 	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
 	viewingSubmenu  *submenuView     // which admin-named sub-menu scrSubMenuView is currently showing (see menu_catalog.go)
 	menuEdit        *menuEditDraft   // the screen+scope an admin is customizing (see main_menu_screen.go)
+
+	reviewingEscalation *lego.AccuracyEscalation // the open alert scrAccuracyReport is being filed against (see alerts_screen.go)
+	viewingReportsFor   *reportsViewDraft        // whose accuracy report history scrAccuracyReportsView is showing (see alerts_screen.go)
 }
 
 func NewApp(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, logger *audit.Logger, requireTwoFA, touchMode bool) *App {

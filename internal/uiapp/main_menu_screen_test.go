@@ -27,6 +27,26 @@ func TestHubOptionsUsesDefaultWhenMenuLayoutsUnset(t *testing.T) {
 	}
 }
 
+// TestHubAlwaysPinsLogOutAndExit mirrors TestPickerHubAlwaysPinsLogOutAndExit
+// — the fix for a reported gap where a customized main hub could lose its
+// own way out (no Log out/Exit, no button, only Escape/Q from a keyboard).
+// Goes through the screen's own options func, not hubOptions itself: that
+// bare list is also the classic tab bar's source (app.go's viewClassic),
+// which must never grow these two one-shot actions as tabs.
+func TestHubAlwaysPinsLogOutAndExit(t *testing.T) {
+	app := newTestApp(t)
+	setGlobalLayout(t, scrHub, []string{"overview"})
+	app.loadPolicy()
+
+	scr := hubScreen().(*menuScreen)
+	opts := scr.options(app)
+	last := opts[len(opts)-1]
+	secondLast := opts[len(opts)-2]
+	if secondLast.Label != "Log out" || last.Label != "Exit" {
+		t.Fatalf("Log out/Exit should always be pinned last, got %+v", opts)
+	}
+}
+
 func setGlobalLayout(t *testing.T, screenKey string, keys []string) {
 	t.Helper()
 	setPolicy(t, func(p *access.Policy) {

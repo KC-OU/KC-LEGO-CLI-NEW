@@ -45,6 +45,7 @@ var mainMenuCatalog = []menuCatalogItem{
 	{"admin_sessions", "k", "Admin: Live Sessions", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrLiveSessions) }},
 	{"admin_handover", "m", "Admin: Shift Handover Note", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrHandover) }},
 	{"admin_activity", "n", "Admin: Recent Activity", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAdminEvents) }},
+	{"admin_alerts", "o", "Admin: Alerts", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAlerts) }},
 }
 
 // defaultMainMenuKeys is today's unmodified top-level menu — what every
@@ -58,13 +59,29 @@ var defaultMainMenuKeys = []string{"overview", "partdb", "operations", "scripts"
 // sub-menu instead — per user, per group, or for everyone (see
 // resolveAndRenderMenu). Every item still gates on the exact same permission
 // check it always did, so this only changes navigation, never what a given
-// item requires to open.
+// item requires to open. Deliberately excludes Log out/Exit (see hubScreen):
+// this is also what the classic layout's tab bar renders (app.go's
+// viewClassic), which is for switching sections, not one-shot actions.
 func hubOptions(app *App) []menuOption {
 	return resolveAndRenderMenu(app, scrHub, mainMenuCatalog, defaultMainMenuKeys)
 }
 
 func hubScreen() screenModel {
-	return &menuScreen{panelID: "MAIN", title: "ModernWMS & Part-DB Control Suite", caption: "Main Navigation Hub:", options: hubOptions}
+	return &menuScreen{
+		panelID: "MAIN", title: "ModernWMS & Part-DB Control Suite", caption: "Main Navigation Hub:",
+		// Log out and Exit are pinned last here, same as the picker/checker
+		// hub (pickerHubScreen) — a customized layout can hide or reorder
+		// every other item, but never the way out. Not folded into
+		// hubOptions itself: that list doubles as the classic tab bar's
+		// source (app.go's viewClassic), where these two don't belong.
+		options: func(app *App) []menuOption {
+			opts := resolveAndRenderMenu(app, scrHub, mainMenuCatalog, defaultMainMenuKeys, "9", "0")
+			return append(opts,
+				menuOption{Key: "9", Label: "Log out", Go: func(app *App) { app.logout() }},
+				menuOption{Key: "0", Label: "Exit", Go: func(app *App) { app.quitting = true }},
+			)
+		},
+	}
 }
 
 // subMenu builds a submenu screen from a static option table, filtering
@@ -111,6 +128,7 @@ func adminHubScreen() screenModel {
 		{"8", "user_mgmt", "Live Sessions", scrLiveSessions},
 		{"9", "user_mgmt", "Shift Handover Note", scrHandover},
 		{"a", "user_mgmt", "Recent Activity", scrAdminEvents},
+		{"b", "user_mgmt", "Alerts", scrAlerts},
 	})
 }
 

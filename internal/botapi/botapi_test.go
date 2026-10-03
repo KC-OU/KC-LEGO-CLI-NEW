@@ -80,7 +80,7 @@ func post(t *testing.T, srv *httptest.Server, path string, body any) (*http.Resp
 // httptest.Server, bypassing Serve's loopback-string check and ctx/shutdown
 // plumbing, which httptest.NewServer already provides.
 func newTestServer(db *lego.DB, auditLog *audit.Logger) *httptest.Server {
-	s := &server{legoDB: db, audit: auditLog}
+	s := NewServer(db, auditLog)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /bot/action", s.handleAction)
 	mux.HandleFunc("POST /bot/reset-pin", s.handleResetPIN)
@@ -88,7 +88,7 @@ func newTestServer(db *lego.DB, auditLog *audit.Logger) *httptest.Server {
 }
 
 func TestServeRefusesANonLoopbackAddr(t *testing.T) {
-	err := Serve(context.TODO(), "0.0.0.0:8080", nil, nil) // legoDB/auditLog are never read before the refusal
+	err := Serve(context.TODO(), "0.0.0.0:8080", nil) // s is never read before the refusal
 	if err == nil {
 		t.Fatal("a non-loopback addr must be refused")
 	}
@@ -243,6 +243,25 @@ func TestListOpenTicketsAction(t *testing.T) {
 	tickets, ok := body["tickets"].([]any)
 	if !ok || len(tickets) != 1 {
 		t.Fatalf("tickets = %v, want 1", body["tickets"])
+	}
+}
+
+func TestListAlertsAction(t *testing.T) {
+	db, auditLog, _ := testEnv(t)
+	srv := newTestServer(db, auditLog)
+	defer srv.Close()
+
+	if _, _, err := db.RecordCheckOutcome("dave", lego.AccuracyChecker, lego.TicketCheck, "75192-1", 500, 25); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := post(t, srv, "/bot/action", map[string]any{"platform": "discord", "id": "111222333", "pin": "1234", "action": "list_alerts"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
+	}
+	alerts, ok := body["alerts"].([]any)
+	if !ok || len(alerts) != 1 {
+		t.Fatalf("alerts = %v, want 1", body["alerts"])
 	}
 }
 

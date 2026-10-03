@@ -30,6 +30,10 @@ type userPref struct {
 	// RebrickableKey is a personal Rebrickable API key overriding the shared
 	// instance-wide one (see my_settings.go) — "" means use the shared key.
 	RebrickableKey string `json:"rebrickable_key,omitempty"`
+	// HideMyAccuracy removes "My Accuracy" from this picker/checker's own hub
+	// menu (see picker_hub.go) — a display preference only, the accuracy data
+	// itself and the admin-facing accuracy screens are untouched.
+	HideMyAccuracy bool `json:"hide_my_accuracy,omitempty"`
 }
 
 func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }
@@ -42,6 +46,15 @@ func loadingEnabled(user string) bool {
 		return true
 	}
 	return !loadPrefs()[user].LoadingOff
+}
+
+// myAccuracyVisible is whether user's picker/checker hub shows "My Accuracy"
+// — on by default, same not-yet-signed-in fallback as loadingEnabled.
+func myAccuracyVisible(user string) bool {
+	if user == "" {
+		return true
+	}
+	return !loadPrefs()[user].HideMyAccuracy
 }
 
 // savePrefField writes one field of user's pref via a read-modify-write, preserving

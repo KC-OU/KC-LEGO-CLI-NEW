@@ -224,6 +224,17 @@ func ensureSchema(db *sql.DB) error {
 			kind TEXT NOT NULL, target TEXT NOT NULL DEFAULT '', pieces INTEGER NOT NULL DEFAULT 0, missing INTEGER NOT NULL DEFAULT 0,
 			delta REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_accuracy_log_user_day ON accuracy_log(username, role, day)`,
+		// A manager's formal write-up of one 21+-missing escalation (see
+		// RecordCheckOutcome/accKindEscalate in accuracy.go) — escalation_id points
+		// at that triggering accuracy_log row. An escalation counts as resolved the
+		// moment a report referencing it exists (see OpenAccuracyEscalations), so
+		// there's no separate status column to drift out of sync with reality.
+		`CREATE TABLE IF NOT EXISTS accuracy_reports (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, escalation_id INTEGER NOT NULL, username TEXT NOT NULL, role TEXT NOT NULL,
+			reviewed_by TEXT NOT NULL, summary TEXT NOT NULL, action_taken TEXT NOT NULL,
+			talk_requested INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_accuracy_reports_escalation ON accuracy_reports(escalation_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_accuracy_reports_user ON accuracy_reports(username, role)`,
 		// A one-way admin-to-user note (see messages.go): delivered_at is set the first
 		// time the recipient's own session notices it (polling, not a push — sessions are
 		// separate processes), read_at when they dismiss the toast.
@@ -244,6 +255,16 @@ func ensureSchema(db *sql.DB) error {
 		// never access-related.
 		`CREATE TABLE IF NOT EXISTS force_logoffs (
 			session_id TEXT PRIMARY KEY, message TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		// A mobile app's signed-in session — a per-shift bearer token, not a
+		// per-command credential like the Discord bot's PIN (see internal/
+		// mobileapi), since a phone stays signed in rather than re-proving
+		// identity on every scan. needs_2fa marks a password-verified-but-
+		// not-yet-2FA'd login (see mobileapi.Login): the token exists but
+		// isn't valid for anything else until the second step clears the
+		// flag and extends expires_at to the full session length.
+		`CREATE TABLE IF NOT EXISTS mobile_sessions (
+			token TEXT PRIMARY KEY, username TEXT NOT NULL, source TEXT NOT NULL, role TEXT NOT NULL DEFAULT '',
+			needs_2fa INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)`,
 		// The current shift handover note (see handover.go) — one row, always id 1,
 		// overwritten by whoever last saved it.
 		`CREATE TABLE IF NOT EXISTS handover_note (

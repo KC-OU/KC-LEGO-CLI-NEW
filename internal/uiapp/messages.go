@@ -108,6 +108,7 @@ func messagePickScreen() screenModel {
 		options: func(app *App) []menuOption {
 			return []menuOption{
 				{Key: "1", Label: "Pick a user…", Go: startMessagePick},
+				{Key: "2", Label: "Message everyone…", Go: startBroadcastCompose},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -164,6 +165,53 @@ func startMessageCompose(app *App) {
 		OnPick:    func(app *App, it pickItem) { sendAdminMessage(app, it.Label) },
 		OnFree:    func(app *App, text string) { sendAdminMessage(app, text) },
 	})
+}
+
+// ---- Admin: message everyone at once ----
+
+// startBroadcastCompose reuses the same quick-message templates and free-text
+// fallback as a single-user message — the only difference from
+// startMessageCompose is what sending it does with the body (see
+// sendBroadcastMessage).
+func startBroadcastCompose(app *App) {
+	startPick(app, &pickState{
+		Header:    "Message everyone",
+		Prompt:    "Choose a quick message, or type your own",
+		Items:     quickMessages,
+		AllowFree: true,
+		FreeHint:  "or write your own",
+		OnPick:    func(app *App, it pickItem) { sendBroadcastMessage(app, it.Label) },
+		OnFree:    func(app *App, text string) { sendBroadcastMessage(app, text) },
+	})
+}
+
+// sendBroadcastMessage delivers body to every registered user except the
+// sender, one SendMessage call each (today's messaging has no native
+// fan-out) — logged as a single Recent Activity line, not one per
+// recipient, so a broadcast to fifty people doesn't flood the feed.
+func sendBroadcastMessage(app *App, body string) {
+	if body == "" {
+		app.onBack()
+		return
+	}
+	rows, _ := app.users.ListAll(app.ctx())
+	seen := map[string]bool{app.userName(): true}
+	sent := 0
+	for _, r := range rows {
+		if r.Username == "" || seen[r.Username] {
+			continue
+		}
+		seen[r.Username] = true
+		if err := app.legoDB.SendMessage(app.userName(), r.Username, body); err == nil {
+			sent++
+		}
+	}
+	app.audit.Log(app.userName(), "", "BROADCAST_SENT", "SUCCESS", fmt.Sprintf("to %d user(s): %s", sent, body))
+	_ = app.legoDB.LogEvent(lego.EventMessage, app.userName(), "everyone", body)
+	app.notifyEvent(lego.EventMessage, fmt.Sprintf("%s -> everyone (%d): %s", app.userName(), sent, body), "")
+	app.setMsg(fmt.Sprintf("Sent to %d user(s).", sent), false)
+	app.stack = nil
+	app.cur = scrAdminHub
 }
 
 func sendAdminMessage(app *App, body string) {

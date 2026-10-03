@@ -7,6 +7,11 @@ POSTs that decision to WMS as plain JSON. Nothing here is a workflow file to imp
 tells you what to build and why, and flags the one networking gotcha that will otherwise make it
 silently fail.
 
+If it's only ever going to be Discord (no Slack, and no other reason to run n8n), a second guide,
+[Remote bot via a Discord slash command](remote-bot-discord.md), does the same four actions without
+n8n at all — no workflow to maintain, no networking gotcha, just a `/wms` command Discord calls
+directly.
+
 **Do [the setup in the API guide](remote-bot-api.md#part-1--set-up) first** — a real Access Control
 entry, a linked Discord/Slack ID, a bot PIN, and `WMS_BOT_API_PORT` turned on. Everything below
 assumes that part is already done and working from `curl`.

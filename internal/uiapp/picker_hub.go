@@ -21,7 +21,12 @@ var pickerHubCatalog = []menuCatalogItem{
 	{key: "request", hotkey: "2", label: "Request a set to check", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrRequest) }},
 	{key: "current_job", hotkey: "3", label: "My Current Jobs", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrCurrentJob) }},
 	{key: "query_menu", hotkey: "4", label: "Menu for Querys", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrQueryMenu) }},
-	{key: "my_accuracy", hotkey: "5", label: "My accuracy", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrMyAccuracy) }},
+	{key: "my_accuracy", hotkey: "5", label: "My accuracy", allowed: func(app *App) bool {
+		if app.session == nil {
+			return true
+		}
+		return myAccuracyVisible(app.session.Username)
+	}, open: func(app *App) { app.goTo(scrMyAccuracy) }},
 	{key: "my_exports", hotkey: "6", label: "My Exports", allowed: func(app *App) bool { return app.can("exports.download") }, open: func(app *App) { app.goTo(scrMyExports) }},
 	// checker/picker already carry lego.view/partdb.view by default (see
 	// access.go's seed()) — these only need a menu entry to be reachable

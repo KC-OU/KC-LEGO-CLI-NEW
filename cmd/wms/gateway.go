@@ -19,7 +19,10 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/mobileapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
 
 func newGatewayCmd() *cobra.Command {
@@ -93,20 +96,64 @@ func newGatewayServeCmd() *cobra.Command {
 			g.Go(func() error {
 				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv)
 			})
-			g.Go(func() error {
-				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv, strings.TrimSpace(config.Get(config.WebSoloDirectPort)))
-			})
-			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
-				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })
-			}
-			if port := strings.TrimSpace(config.Get(config.BotAPIPort)); port != "" {
+
+			// botSrv is shared between the loopback-only /bot/action webhook
+			// (n8n or any local script) and the public /discord/interactions
+			// route (a Discord slash command, no n8n needed) — one Server, so
+			// neither path can reach anything the other can't. Built once,
+			// gated on either being configured, so Discord-only setups don't
+			// need WMS_BOT_API_PORT set too.
+			botAPIPort := strings.TrimSpace(config.Get(config.BotAPIPort))
+			discordPublicKey := strings.TrimSpace(config.Get(config.DiscordPublicKey))
+			var botSrv *botapi.Server
+			if botAPIPort != "" || discordPublicKey != "" {
 				legoDB, err := openLego()
 				if err != nil {
 					return fmt.Errorf("opening lego db for the bot API: %w", err)
 				}
 				legoDB.SetActor("botapi")
 				defer legoDB.Close()
-				g.Go(func() error { return botapi.Serve(gctx, "127.0.0.1:"+port, legoDB, audit.New()) })
+				botSrv = botapi.NewServer(legoDB, audit.New())
+			}
+
+			// The /exports dashboard (a browsable alternative to a one-off /dl/
+			// link — see internal/gateway/exports_dashboard.go) needs the same
+			// account check the TUI's own sign-on screen uses; cheap to open
+			// unconditionally, same as botapi's own legoDB above.
+			webPDB, err := partdb.Open("")
+			if err != nil {
+				return fmt.Errorf("opening Part-DB for the web gateway's exports page: %w", err)
+			}
+			defer webPDB.Close()
+
+			g.Go(func() error {
+				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv, strings.TrimSpace(config.Get(config.WebSoloDirectPort)), botSrv, discordPublicKey, wmsdb.NewClient(), webPDB)
+			})
+			if port := strings.TrimSpace(config.Get(config.MetricsPort)); port != "" {
+				g.Go(func() error { return metrics.Serve(gctx, "0.0.0.0:"+port) })
+			}
+			if botAPIPort != "" {
+				g.Go(func() error { return botapi.Serve(gctx, "127.0.0.1:"+botAPIPort, botSrv) })
+			}
+			// The mobile pick/check app's API — off until WMS_MOBILE_API_PORT is
+			// set, same convention as the bot API. Binds GatewayListenHost, not
+			// loopback-only: a phone has to reach it (through a tunnel, same as
+			// the rest of this gateway), unlike the bot API's loopback-only trust
+			// model built for a local script/n8n.
+			if mobileAPIPort := strings.TrimSpace(config.Get(config.MobileAPIPort)); mobileAPIPort != "" {
+				pdb, err := partdb.Open("")
+				if err != nil {
+					return fmt.Errorf("opening Part-DB for the mobile API: %w", err)
+				}
+				defer pdb.Close()
+				legoDB, err := openLego()
+				if err != nil {
+					return fmt.Errorf("opening lego db for the mobile API: %w", err)
+				}
+				legoDB.SetActor("mobileapi")
+				defer legoDB.Close()
+				mobileSrv := mobileapi.NewServer(wmsdb.NewClient(), pdb, legoDB, audit.New())
+				g.Go(func() error { return mobileapi.Serve(gctx, host+":"+mobileAPIPort, mobileSrv) })
 			}
 			return g.Wait()
 		},

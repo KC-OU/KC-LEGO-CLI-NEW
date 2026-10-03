@@ -41,6 +41,7 @@ const (
 	WebSoloDirectPort          = "WMS_WEB_SOLO_DIRECT_PORT"
 	MetricsPort                = "WMS_METRICS_PORT"
 	BotAPIPort                 = "WMS_BOT_API_PORT"
+	MobileAPIPort              = "WMS_MOBILE_API_PORT"
 	PartDBURL                  = "PARTDB_URL"
 	ModernWMSURL               = "MODERNWMS_URL"
 	LegoDBPath                 = "LEGO_DB_PATH"
@@ -80,6 +81,7 @@ const (
 	BricklinkDailyBudget       = "BRICKLINK_DAILY_BUDGET"
 	DiscordBotToken            = "WMS_DISCORD_BOT_TOKEN"
 	DiscordBotUserID           = "WMS_DISCORD_BOT_USER_ID"
+	DiscordPublicKey           = "WMS_DISCORD_PUBLIC_KEY"
 	ArchiveDir                 = "WMS_ARCHIVE_DIR"
 	TestBinaryPath             = "WMS_TEST_BINARY_PATH"
 	TestEnvFile                = "WMS_TEST_ENV_FILE"
@@ -101,6 +103,7 @@ func Defaults() map[string]string {
 		TTYDPort:                "7682",
 		MetricsPort:             "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
 		BotAPIPort:              "", // empty: the remote-bot webhook (internal/botapi) is off until set, and always loopback-only when it is
+		MobileAPIPort:           "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
 		WebSoloDirectPort:       "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:         "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:       "/root/docker-server/partdb-sync/config/link_overrides.json",
@@ -139,6 +142,7 @@ func Defaults() map[string]string {
 		BricklinkDailyBudget:       "4500",
 		DiscordBotToken:            "", // from Discord's Developer Portal (discord.com/developers/applications): create an app, add a Bot, copy its token
 		DiscordBotUserID:           "", // the recipient's Discord user ID (Discord: enable Developer Mode, right-click your name, Copy User ID)
+		DiscordPublicKey:           "", // empty: the /discord/interactions route (internal/botapi) is off until set — the app's Public Key, General Information in the Developer Portal
 		ArchiveDir:                 "/root/docker-server/wms/archive",
 		// Both empty by default: the telnet/web gateway only offers a "connect to the dev
 		// build instead" picker when an admin has deliberately set both, on the LIVE

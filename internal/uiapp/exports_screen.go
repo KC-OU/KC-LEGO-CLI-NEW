@@ -19,7 +19,7 @@ func myExportsScreen() screenModel {
 	return &selectList{
 		panelID:   "MYEXP",
 		title:     "My Exports",
-		hint:      "Enter regenerates a fresh download link",
+		hint:      "Enter regenerates a fresh download link, D deletes it",
 		emptyHint: "Nothing exported yet — X on a list screen makes one.",
 		rows: func(app *App) ([]string, [][]string, []string) {
 			if app.session == nil {
@@ -38,7 +38,8 @@ func myExportsScreen() screenModel {
 			return []string{"File", "Created"}, rows, keys
 		},
 		keys: func(app *App, key string, msg tea.KeyMsg) {
-			if msg.Type != tea.KeyEnter || key == "" || app.session == nil {
+			isDelete := msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && (msg.Runes[0] == 'd' || msg.Runes[0] == 'D')
+			if (msg.Type != tea.KeyEnter && !isDelete) || key == "" || app.session == nil {
 				return
 			}
 			files, err := exports.ListExports(exports.Dir(), app.session.Username)
@@ -51,6 +52,16 @@ func myExportsScreen() screenModel {
 				return
 			}
 			f := files[idx]
+			if isDelete {
+				desc := exports.Describe(f.Path) // before Delete — Describe falls back to a bare filename once the file's gone
+				if err := exports.Delete(f.Path); err != nil {
+					app.setMsg(err.Error(), true)
+					return
+				}
+				app.audit.Log(app.userName(), "", "EXPORT_DELETED", "SUCCESS", f.Path)
+				app.setMsg("Deleted "+desc+".", false)
+				return
+			}
 			if !app.can("exports.download") {
 				app.setMsg("ACCESS DENIED — needs the exports.download permission.", true)
 				return

@@ -44,6 +44,10 @@ phone's camera at the terminal and the file downloads.
 - It is served by the web gateway at `/dl/…`; a wrong, used or expired link is a plain 404.
 - Every export and download is in the audit log with the user who made it, and plugins hear `export_done`.
 
+If a link dies before you use it — or you just want your past exports without going back into the TUI —
+`<WMS_PUBLIC_URL>/exports` lists everything you've made that's still within the export retention period, each with a
+fresh one-time download link. It asks for the same username and password as the terminal (no fresh code needed).
+
 ## Import a parts list
 
 ```bash

@@ -51,6 +51,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `TWOFA_GRACE_MINUTES` | `30` | `0` = always ask for a code |
 | `LISTEN_PORTS` / `GATEWAY_PORT` | `2323,23` / `7681` | telnet and web gateway |
 | `GATEWAY_LISTEN_HOST` | `127.0.0.1` | address both gateways bind; `0.0.0.0` exposes them on every interface |
+| `WMS_MOBILE_API_PORT` | *(empty, off)* | the mobile pick/check app's API (`internal/mobileapi`: login, 2FA, guided-walk `next`/`confirm`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway, so reach it through a tunnel rather than opening it to the raw internet |
 | `WMS_EQUIVALENTS` | `default` | `default`, `none`, or `alt,mold,print` |
 | `BRICKLINK_CURRENCY` / `BRICKLINK_REGION` / `BRICKLINK_CONDITION` | `GBP` / `europe` / `U` | price guide selection |
 | `BRICKLINK_DAILY_BUDGET` | `4500` | hard cap on calls a day (max 5000) |

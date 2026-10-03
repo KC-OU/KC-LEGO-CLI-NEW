@@ -274,6 +274,13 @@ type ExportFile struct {
 	Size    int64
 }
 
+// Delete removes one export file outright — the path must come straight from
+// a ListExports(dir, user) call, which already filters to that user's own
+// "<user>-" prefixed files, so a caller never needs a second ownership check.
+func Delete(path string) error {
+	return os.Remove(path)
+}
+
 // ListExports is user's own export files still in dir (see Save's naming: they
 // all start "<user>-"), newest first — for a "My Exports" screen that regenerates
 // a fresh download link without a terminal, once the original's died.

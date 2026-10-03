@@ -6,14 +6,15 @@ import "time"
 // narrow, named set (see LogEvent's call sites), not every ticket claim or
 // admin quick-switch.
 const (
-	EventMessage            = "message"
-	EventAccuracyDock       = "accuracy_dock"
-	EventAccuracyCredit     = "accuracy_credit"
-	EventAccuracyEscalation = "accuracy_escalation"
-	EventMissingParts       = "missing_parts"
-	EventForcedOff          = "forced_off"
-	EventReassigned         = "reassigned"
-	EventFeatureRequest     = "feature_request"
+	EventMessage             = "message"
+	EventAccuracyDock        = "accuracy_dock"
+	EventAccuracyCredit      = "accuracy_credit"
+	EventAccuracyEscalation  = "accuracy_escalation"
+	EventAccuracyReportFiled = "accuracy_report_filed"
+	EventMissingParts        = "missing_parts"
+	EventForcedOff           = "forced_off"
+	EventReassigned          = "reassigned"
+	EventFeatureRequest      = "feature_request"
 )
 
 type AdminEvent struct {
@@ -28,6 +29,16 @@ type AdminEvent struct {
 func (d *DB) LogEvent(kind, actor, target, detail string) error {
 	_, err := d.Exec(`INSERT INTO admin_events (kind, actor, target, detail, created_at) VALUES (?,?,?,?,?)`,
 		kind, actor, target, detail, time.Now().Format(time.RFC3339))
+	return err
+}
+
+// ClearAdminEvents permanently empties the Recent Activity feed for every
+// admin — unlike the tamper-evident audit log (internal/audit), this feed is
+// just a scannable UI convenience, so clearing it loses no security record,
+// only the at-a-glance history. The caller (admin_events clear screen) is
+// responsible for confirming first; this does not ask again.
+func (d *DB) ClearAdminEvents() error {
+	_, err := d.Exec(`DELETE FROM admin_events`)
 	return err
 }
 

@@ -67,6 +67,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrFeatureRequest:      featureRequestScreen(),
 		scrMessageAdmin:        messageAdminScreen(),
 		scrMyLoading:           loadingPrefScreen(),
+		scrMyAccuracyVis:       accuracyVisPrefScreen(),
 		scrMySettings:          mySettingsScreen(),
 		scrMyRebrickKey:        myRebrickableKeyScreen(),
 		scrMyRebrickEdit:       myRebrickableEditScreen(),
@@ -122,9 +123,13 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrMessagePick:  messagePickScreen(),
 		scrMessagesFull: messagesFullScreen(),
 
-		scrLiveSessions: liveSessionsScreen(),
-		scrHandover:     handoverScreen(),
-		scrMyExports:    myExportsScreen(),
-		scrAdminEvents:  adminEventsScreen(),
+		scrLiveSessions:        liveSessionsScreen(),
+		scrHandover:            handoverScreen(),
+		scrMyExports:           myExportsScreen(),
+		scrAdminEvents:         adminEventsScreen(),
+		scrAdminEventsClear:    adminEventsClearScreen(),
+		scrAlerts:              alertsScreen(),
+		scrAccuracyReport:      accuracyReportScreen(),
+		scrAccuracyReportsView: accuracyReportsViewScreen(),
 	}
 }

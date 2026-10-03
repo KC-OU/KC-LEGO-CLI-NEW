@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/botapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 )
 
@@ -106,7 +108,7 @@ func soloCommand(wmsBinaryPath string) []string {
 // requests correctly for a same-process HTTP/1.1 target since it streams the
 // hijacked connection rather than buffering it. Every process started here is
 // torn down together, mirroring start_webtui.sh's kill-all-on-any-exit.
-func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath, testBinaryPath string, testEnv []string, soloDirectPort string) error {
+func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort int, wmsBinaryPath, testBinaryPath string, testEnv []string, soloDirectPort string, botSrv *botapi.Server, discordPublicKey string, authWMS auth.WMSAuthenticator, authPDB auth.PartDBAuthenticator) error {
 	// A tmux session outlives ttyd (tmux has its own background server), so without
 	// this a gateway restart — every deploy — would silently keep running whatever
 	// binary was already inside the persisted session instead of picking up the new
@@ -156,6 +158,16 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 	share := shareHandler(exports.Dir, auditShare)
 	mux.Handle("/share/", share)
 	mux.Handle("/SHARE/", share)
+	mux.Handle("/exports", exportsHandler(exports.Dir, authWMS, authPDB, auditExports))
+	// Discord's Interactions Endpoint URL can point at this path on any
+	// public hostname already proxying here (e.g. https://tui.example.com
+	// /discord/interactions) — no separate tunnel hostname or port needed.
+	// Off entirely (same "" = off convention as every other optional port in
+	// this project) until WMS_DISCORD_PUBLIC_KEY is set — see
+	// docs/guides/remote-bot-discord.md.
+	if botSrv != nil && discordPublicKey != "" {
+		mux.Handle("/discord/interactions", botapi.InteractionsHandler(botSrv, discordPublicKey))
+	}
 	mux.Handle(soloBasePath+"/", soloProxy) // more specific than "/", ServeMux prefers it
 
 	// The dev-build "Test" terminal: a third ttyd, same independent-process
