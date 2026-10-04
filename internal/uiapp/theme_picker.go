@@ -34,6 +34,14 @@ type userPref struct {
 	// menu (see picker_hub.go) — a display preference only, the accuracy data
 	// itself and the admin-facing accuracy screens are untouched.
 	HideMyAccuracy bool `json:"hide_my_accuracy,omitempty"`
+	// ShowPictures turns on a part/set picture (plus a colour swatch) in the
+	// guided check/pick walk (see set_check.go's guidedBody) — for a
+	// dyslexic or visual-learning picker who finds a picture faster to
+	// recognise than reading the part number and name. Off by default: a
+	// picture costs a live fetch the first time a part's seen (cached after)
+	// and real terminal space, so it opts in rather than changing the
+	// screen for everyone.
+	ShowPictures bool `json:"show_pictures,omitempty"`
 }
 
 func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }
@@ -55,6 +63,16 @@ func myAccuracyVisible(user string) bool {
 		return true
 	}
 	return !loadPrefs()[user].HideMyAccuracy
+}
+
+// picturesEnabled is whether user's guided check/pick walk shows a picture
+// — off by default (the opposite sense from loadingEnabled/myAccuracyVisible,
+// which default on): see userPref.ShowPictures.
+func picturesEnabled(user string) bool {
+	if user == "" {
+		return false
+	}
+	return loadPrefs()[user].ShowPictures
 }
 
 // savePrefField writes one field of user's pref via a read-modify-write, preserving

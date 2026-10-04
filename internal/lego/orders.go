@@ -254,6 +254,61 @@ func (d *DB) ReceiveLine(lineID int64, qty int) (completedSet string, err error)
 	return completedSet, tx.Commit()
 }
 
+// UnreceiveLine is ReceiveLine's inverse — undoing a mis-scanned receive, same
+// transaction shape, clamped so it can never take received_qty below 0 or claw
+// back more than this line actually has recorded. Only ever called for a recent
+// mistake (the mobile app's "undo last confirm"), not a general correction tool:
+// it has no way to tell its own earlier receive apart from anything else that
+// touched the same have/owned-qty numbers since.
+func (d *DB) UnreceiveLine(lineID int64, qty int) (err error) {
+	d.ensureDailySnapshot()
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var l OrderLine
+	if err := tx.QueryRow(`SELECT set_num, part_num, color_id, color_name, part_name, qty, received_qty FROM order_lines WHERE id = ?`, lineID).
+		Scan(&l.SetNum, &l.PartNum, &l.ColorID, &l.ColorName, &l.PartName, &l.Qty, &l.ReceivedQty); err != nil {
+		return fmt.Errorf("no order line %d", lineID)
+	}
+	qty = min(qty, l.ReceivedQty)
+	if qty <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE order_lines SET received_qty = received_qty - ? WHERE id = ?`, qty, lineID); err != nil {
+		return err
+	}
+	if l.SetNum != "" {
+		var checkID int64
+		_ = tx.QueryRow(`SELECT last_check_id FROM set_state WHERE set_num = ?`, l.SetNum).Scan(&checkID)
+		if checkID > 0 {
+			if _, err := tx.Exec(`UPDATE set_check_lines SET have = MAX(0, have - ?) WHERE check_id = ? AND part_num = ? AND color_id = ?`, qty, checkID, l.PartNum, l.ColorID); err != nil {
+				return err
+			}
+			if err := refreshMissing(tx, l.SetNum, checkID); err != nil {
+				return err
+			}
+		}
+		d.journal(tx, "receive", "set", l.SetNum, l.ColorID, l.ColorName, 0, 0, fmt.Sprintf("undid receiving %d x %s", qty, l.PartNum))
+	} else {
+		cur, err := getOwnedTx(tx, l.PartNum, l.ColorID, l.ColorName)
+		if err != nil {
+			return err
+		}
+		if cur != nil {
+			before := cur.Qty
+			p := *cur
+			p.Qty = max(0, cur.Qty-qty)
+			if err := addOwned(tx, p); err != nil {
+				return err
+			}
+			d.journal(tx, "change", "part", l.PartNum, l.ColorID, l.ColorName, before, p.Qty, "undid a receive from an order")
+		}
+	}
+	return tx.Commit()
+}
+
 // OrderFromMissing starts an order (status wanted) with a line for every part the
 // set is short, at the given unit prices (0 = unknown).
 func (d *DB) OrderFromMissing(setNum string, o *Order, price func(CheckLine) float64) error {

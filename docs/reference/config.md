@@ -44,14 +44,14 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 |---------|---------|---------|
 | `MODERNWMS_TUI_THEME` | `green` | `green`, `amber`, `high-contrast`, `colorblind`, `dracula`, `half-life`, `nord`, `gruvbox`, `catppuccin`, `tokyo-night`, `ibm-3270`, `matrix`, `lego` (everyone's default; users can pick their own) |
 | `NO_COLOR` | unset | any value turns colour off |
-| `MODERNWMS_TUI_IMAGES` | `auto` | `auto`, `blocks`, `ascii`, `off` |
+| `MODERNWMS_TUI_IMAGES` | `auto` | `auto`, `blocks`, `ascii`, `kitty`, `off` — `kitty` (real images via the [Kitty graphics protocol](../guides/search-and-pictures.md#pictures)) only ever actually applies on a genuinely local terminal session that identifies itself as Kitty/Ghostty/WezTerm/Konsole; telnet and the web gateway always keep half-blocks/ASCII regardless of this setting |
 | `MODERNWMS_TUI_CLASSIC` | `1` | `0` uses the older fixed 80-column frame |
 | `TUI_IDLE_LOCK_MINUTES` | `15` | `0` = never lock |
 | `CATALOG_AUTO_REFRESH_HOURS` | `0` (off) | the gateway refreshes the offline catalog this often (never more than once a day) |
 | `TWOFA_GRACE_MINUTES` | `30` | `0` = always ask for a code |
 | `LISTEN_PORTS` / `GATEWAY_PORT` | `2323,23` / `7681` | telnet and web gateway |
 | `GATEWAY_LISTEN_HOST` | `127.0.0.1` | address both gateways bind; `0.0.0.0` exposes them on every interface |
-| `WMS_MOBILE_API_PORT` | *(empty, off)* | the mobile pick/check app's API (`internal/mobileapi`: login, 2FA, guided-walk `next`/`confirm`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway, so reach it through a tunnel rather than opening it to the raw internet |
+| `WMS_MOBILE_API_PORT` | *(empty, off)* | the mobile pick/check app's API (`internal/mobileapi`: login, 2FA, guided-walk `next`/`confirm`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway, so reach it through a tunnel rather than opening it to the raw internet. Logins share the telnet gateway's own brute-force protection (per-address strike/block on repeated failures), so a locked-out address gets the same refusal on either front door |
 | `WMS_EQUIVALENTS` | `default` | `default`, `none`, or `alt,mold,print` |
 | `BRICKLINK_CURRENCY` / `BRICKLINK_REGION` / `BRICKLINK_CONDITION` | `GBP` / `europe` / `U` | price guide selection |
 | `BRICKLINK_DAILY_BUDGET` | `4500` | hard cap on calls a day (max 5000) |

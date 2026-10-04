@@ -30,12 +30,17 @@ Pictures are drawn as **text**, so they work over telnet, in Termux, and in the 
 - **Half-blocks** (`▀` with two colours per character) in any colour terminal.
 - **ASCII shading** when colour is off (`NO_COLOR`) or you ask for it.
 
-Set `MODERNWMS_TUI_IMAGES` to `auto` (default), `blocks`, `ascii` or `off`. Pictures are downloaded **once** from Rebrickable's image
-host, cached (up to 200 MB, least recently used removed first) and shown from the cache afterwards, so they also work offline
-once seen. Only `https` from an allow-list of hosts, PNG or JPEG, capped in size and pixels.
+Set `MODERNWMS_TUI_IMAGES` to `auto` (default), `blocks`, `ascii`, `kitty` or `off`. Pictures are downloaded **once** from
+Rebrickable's image host, cached (up to 200 MB, least recently used removed first) and shown from the cache afterwards, so
+they also work offline once seen. Only `https` from an allow-list of hosts, PNG or JPEG, capped in size and pixels.
 
-!!! info "Kitty and Sixel graphics"
-    Terminal graphics protocols aren't used: they don't work over telnet and don't survive the interface's screen redraws. Half-blocks
-    look good enough to recognise a part or a box, everywhere.
+!!! info "Kitty graphics"
+    `auto` now picks real Kitty-protocol images, not half-blocks, but **only on a genuinely local terminal session** — one
+    that isn't telnet or the web gateway (neither carries the protocol: telnet can't, and the web terminal's xterm.js doesn't
+    implement it) — and whose emulator identifies itself as Kitty, Ghostty, WezTerm or Konsole. Everyone else keeps
+    half-blocks, which still look good enough to recognise a part or a box. Sixel still isn't offered (no session here runs
+    a Sixel-capable terminal to test against). Each redraw re-sends the image fresh rather than trying to keep a placement
+    alive across the TUI's own full-screen redraws — if it ever looks glitchy in your terminal, set `MODERNWMS_TUI_IMAGES=blocks`
+    and it's exactly as if Kitty mode didn't exist.
 
 A page is sized to your window (it fits a plain 80x24 telnet window; larger windows get a bigger picture).

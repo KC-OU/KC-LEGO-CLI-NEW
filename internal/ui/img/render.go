@@ -16,19 +16,27 @@ type Mode string
 const (
 	ModeBlocks Mode = "blocks" // Unicode half-blocks in colour (the terminal downgrades to what it supports)
 	ModeASCII  Mode = "ascii"  // plain ASCII shading, no colour, no UTF-8 needed
+	ModeKitty  Mode = "kitty"  // real image via the Kitty graphics protocol — local terminals only, see kitty.go
 	ModeOff    Mode = "off"
 )
 
-// ParseMode reads MODERNWMS_TUI_IMAGES: auto, blocks, ascii or off. mono says colour
-// is off (NO_COLOR), where half-blocks would show as solid bars, so auto picks ASCII.
-// Kitty and Sixel are not offered: they do not work over telnet and do not survive
-// the TUI's screen redraws.
+// ParseMode reads MODERNWMS_TUI_IMAGES: auto, blocks, ascii, kitty or off. mono says
+// colour is off (NO_COLOR), where half-blocks would show as solid bars, so auto picks
+// ASCII. Sixel is still not offered (no sessions here run a Sixel-capable terminal to
+// test against). Kitty is offered, but only ever actually used over telnet or the
+// web/ttyd gateway (see kittySupported) or when mono — those sessions silently keep
+// their existing rendering instead.
 func ParseMode(value string, mono bool) Mode {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "none", "no", "0":
 		return ModeOff
 	case "ascii", "text":
 		return ModeASCII
+	case "kitty":
+		if mono || !kittySupported() {
+			break
+		}
+		return ModeKitty
 	case "blocks", "block", "color", "colour":
 		if mono {
 			return ModeASCII
@@ -37,6 +45,9 @@ func ParseMode(value string, mono bool) Mode {
 	}
 	if mono {
 		return ModeASCII
+	}
+	if kittySupported() {
+		return ModeKitty
 	}
 	return ModeBlocks
 }
@@ -100,6 +111,14 @@ func Render(src image.Image, maxCols, maxRows int, mode Mode) string {
 	cols, pixRows := fit(b.Dx(), b.Dy(), maxCols, maxRows)
 	if cols == 0 {
 		return ""
+	}
+	if mode == ModeKitty {
+		out, err := kittyEncode(src, cols, pixRows/2)
+		if err != nil { // a bad/unencodable image: fall back rather than show nothing
+			mode = ModeBlocks
+		} else {
+			return out
+		}
 	}
 	if pixRows%2 == 1 {
 		pixRows++

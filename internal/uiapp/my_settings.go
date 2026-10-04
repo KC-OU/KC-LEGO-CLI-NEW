@@ -37,6 +37,7 @@ func mySettingsScreen() screenModel {
 				{Key: "5", Label: "Request a feature or improvement", Go: func(app *App) { app.goTo(scrFeatureRequest) }},
 				{Key: "6", Label: "Message an admin", Go: func(app *App) { app.goTo(scrMessageAdmin) }},
 				{Key: "7", Label: "Show/hide My Accuracy on my hub menu", Go: func(app *App) { app.goTo(scrMyAccuracyVis) }},
+				{Key: "8", Label: "Show/hide pictures while checking or picking", Go: func(app *App) { app.goTo(scrMyPictures) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},

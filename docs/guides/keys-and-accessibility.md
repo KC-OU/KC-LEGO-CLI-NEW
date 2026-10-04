@@ -55,3 +55,9 @@ through the same navigation as the menus, so a screen your role may not use boun
 - In the high-contrast, colour-blind and no-colour modes **OK / FAIL / WARN are spelled out** beside the icons, and **LOW** is always
   spelled out, so meaning never depends on colour alone.
 - Screens fit an 80x24 window (the classic terminal size; smaller than that is not supported). Larger windows are used when the client reports its size, and long lists page with PgUp/PgDn.
+- **If the full-screen TUI itself is hard to follow with a screen reader** — a whole-screen redraw on every keystroke is a known hard
+  problem for terminal UIs generally, themes and NO_COLOR don't change that part — every TUI screen has a non-interactive CLI
+  equivalent that prints plain, linear text instead: `wms lego check`, `wms lego missing`, `wms lego orders`, and the rest all read and
+  write the same `lego.db` the TUI does, just without a redrawing screen to track. Add `--json` to any of them for structured output a
+  screen reader (or another tool) can follow more predictably still. This isn't a separate, lesser interface kept in sync by hand —
+  it's the same commands the TUI itself calls underneath, so nothing here is missing a feature the TUI has.

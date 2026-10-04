@@ -125,3 +125,6 @@ too.
   or switch back with "Use the shared/global key" — a personal key that stops working isn't
   detected automatically (it just fails like any other Rebrickable error would); switch back
   the same way.
+- **Show/hide pictures while checking or picking** (My Settings): off by default; turns on a
+  colour swatch and the part's (or set's) picture in the [guided check/pick walk](set-checks.md#guided-walk-and-pictures),
+  for anyone who finds a picture faster to confirm against than reading a colour name off the screen.

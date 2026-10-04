@@ -45,6 +45,23 @@ Press **Z** and scan (or type) a part number or LEGO element id followed by Ente
 The matching line goes up by one and flashes; a part that is not in the set, or a line already complete, beeps. **Z** or
 **Esc** leaves scanner mode.
 
+A scanner needs something to scan: **P** prints a barcode sheet for the open check — one row per part, a Code 128 barcode,
+its name, shelf location and how many are needed — so you're not relying on each part's own retail packaging. From the
+shell, `wms-go lego parts-sheet <set> -o sheet.pdf` prints the same sheet without opening a check at all (read-only; it
+never changes anything). The two differ in where the file lands: **P** in the TUI saves it through the same
+[exports mechanism](export-import.md) everything else does, so it also shows up on the **[exports dashboard](export-import.md#download-it-with-a-qr-code)**
+for grabbing from your phone — the CLI's `-o` just writes the file wherever you point it, since a shell session already has
+direct filesystem access and has no need for a download link.
+
+### Guided walk and pictures
+
+Press **W** for the guided view: one line at a time with a big "GO TO: &lt;location&gt;" banner, instead of the full table —
+meant for walking the shelves rather than reading a list on screen. Turn on **Show/hide pictures while checking or picking**
+(*My Settings*, or the palette — off by default) and this guided view also shows a colour swatch next to the colour name and
+the part's (or set's) picture underneath, the same [half-blocks/ASCII rendering](search-and-pictures.md#pictures) used
+everywhere else — meant for anyone who finds a picture and a colour swatch faster to confirm against than reading "Dark
+Bluish Gray" or a part number off the screen.
+
 ## Where the set is kept
 
 The add/confirm form and *Completion dashboard → I* record a **location** (shelf, box, bin) and a **condition** (sealed,

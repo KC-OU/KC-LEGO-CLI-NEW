@@ -515,6 +515,78 @@ func newLegoLabelsCmd() *cobra.Command {
 	return cmd
 }
 
+// newLegoPartsSheetCmd is the CLI's own version of set_check.go's P key
+// (printPartsSheet): a printable A4 sheet of barcode tags for a set's
+// parts — one per part+colour, not per set — so the stock-check scanner
+// mode has something to scan against without each part's own retail
+// packaging. Read-only: it reads whatever check is already open for this
+// set (a saved draft) or starts a fresh one in memory, same as NewCheck
+// everywhere else, but never calls SaveCheck/FinishCheck — printing a
+// sheet doesn't touch the check itself, same as pressing P mid-check in
+// the TUI doesn't. Unlike the TUI's P key, this never goes through
+// exports.Save (no download-link dashboard entry) — the CLI already has
+// direct filesystem access, same reasoning `lego labels`'s own -o uses.
+func newLegoPartsSheetCmd() *cobra.Command {
+	var by, outPath string
+	cmd := &cobra.Command{
+		Use:   "parts-sheet <set>",
+		Short: "Printable A4 barcode sheet of a set's parts, for the stock-check scanner mode",
+		Long: "One row per part+colour (not per set) with a Code 128 barcode, description and shelf location — for taking\n" +
+			"to the shelves and scanning as you go, instead of typing each part number by hand. Read-only: printing the\n" +
+			"sheet never changes the check itself. If a check for this set is already open (saved with the TUI's S key),\n" +
+			"the sheet reflects its current state; otherwise it's the set's full parts list.",
+		Example: "  wms lego parts-sheet 75192 -o falcon-sheet.pdf",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			db, rb, err := openLegoWithClient()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			num := catalogNum(args[0])
+			if by == "" {
+				by = cliActor()
+			}
+			kind := lego.CheckIntake
+			if db.GetSetState(num).Checked() {
+				kind = lego.CheckRecount
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			c, err := db.NewCheck(ctx, rb, num, kind, by)
+			if err != nil {
+				return withCode(exitNotFound, err)
+			}
+			pdb, _ := partdb.Open("") // nil is fine: LocationFor blanks out cleanly with no Part-DB
+			if pdb != nil {
+				defer pdb.Close()
+			}
+			lines := make([]labels.PartSheetLine, len(c.Lines))
+			for i, l := range c.Lines {
+				lines[i] = labels.PartSheetLine{
+					PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
+					Location: db.LocationFor(pdb, l.PartNum, l.ColorID, l.ColorName), Need: l.Need,
+				}
+			}
+			body := labels.PartsSheet(lines)
+			if outPath == "" {
+				_, _ = os.Stdout.Write(body)
+				return nil
+			}
+			abs, err := writeExportFile(outPath, body, true)
+			if err != nil {
+				return err
+			}
+			say(ui.Status(ui.New(), true, fmt.Sprintf("Wrote a %d-line parts sheet to %s", len(lines), abs)))
+			return emit(map[string]any{"file": abs, "lines": len(lines), "set": num})
+		},
+	}
+	cmd.Flags().StringVar(&by, "by", "", "whose check this reads, if a draft is already open (default: your login)")
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "output file (default: print it)")
+	return cmd
+}
+
 func labelSizes() string {
 	var b strings.Builder
 	for _, s := range labels.Sizes {

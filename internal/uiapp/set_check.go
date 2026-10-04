@@ -3,17 +3,20 @@ package uiapp
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/labels"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
 
 // The parts check: a set's whole parts list, every line starting as "have all".
@@ -260,9 +263,20 @@ func (s *setCheckScreen) guidedBody(app *App) string {
 	if m := l.Missing(); m > 0 {
 		miss = t.Danger.Render(fmt.Sprintf("  MISSING %d", m))
 	}
-	item := fmt.Sprintf("%s  %s  %s\nNeed %d · Have %d%s", l.PartNum, orDash(l.ColorName), l.PartName, l.Need, l.Have, miss)
+	colorLabel := orDash(l.ColorName)
+	if sw := colorSwatch(app, l.ColorID); sw != "" {
+		colorLabel = sw + " " + colorLabel
+	}
+	item := fmt.Sprintf("%s  %s  %s\nNeed %d · Have %d%s", l.PartNum, colorLabel, l.PartName, l.Need, l.Have, miss)
 	if note := st.spares[cur]; note != "" {
 		item += "\n" + t.Warning.Render(note)
+	}
+	if app.session != nil && picturesEnabled(app.session.Username) {
+		if art, caption := picture(app, img.PartURLs(l.PartNum, l.ColorID, nil)); art != "" {
+			item += "\n\n" + art
+		} else if caption != "" {
+			item += "\n\n" + t.Muted.Render(caption)
+		}
 	}
 
 	next := t.Muted.Render("Last item in this walk.")
@@ -294,6 +308,21 @@ func (s *setCheckScreen) guidedBody(app *App) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// colorSwatch is a small block of the colour's own RGB, for a picker who
+// finds a swatch faster to tell apart than a name like "Lavender" vs
+// "Medium Lavender" — "" for an unknown colour, NO_COLOR, or free-text (id
+// < 0, nothing in cat_colors to look an RGB up by).
+func colorSwatch(app *App, colorID int) string {
+	if os.Getenv("NO_COLOR") != "" || colorID < 0 {
+		return ""
+	}
+	c, ok := app.legoDB.ColorByID(colorID)
+	if !ok || c.RGB == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().Background(lipgloss.Color("#" + c.RGB)).Render("  ")
 }
 
 func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {

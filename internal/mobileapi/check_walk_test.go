@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
@@ -73,6 +74,9 @@ func newCheckWalkTestServer(s *Server) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mobile/next", s.withSession(s.handleNext))
 	mux.HandleFunc("POST /mobile/confirm", s.withSession(s.handleConfirm))
+	mux.HandleFunc("POST /mobile/finish", s.withSession(s.handleFinish))
+	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
+	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
 	return httptest.NewServer(mux)
 }
 
@@ -121,6 +125,29 @@ func TestNextReturnsTheFirstLineInShelfOrder(t *testing.T) {
 	// resolves to blank cleanly rather than erroring.
 	if v.Location != "" || v.NextLocation != "" {
 		t.Errorf("location = %q, next_location = %q, want both blank with no Part-DB", v.Location, v.NextLocation)
+	}
+}
+
+func TestNextIncludesColorAndPartImageForPictures(t *testing.T) {
+	s, _ := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, s.legoDB)
+
+	status, v := getLine(t, srv, token, 0)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if v.ColorRGB != "C91A09" {
+		t.Errorf("color_rgb = %q, want C91A09 (red, from cat_colors)", v.ColorRGB)
+	}
+	if !strings.Contains(v.PartImageURL, "3001") {
+		t.Errorf("part_image_url = %q, want it to mention the part number", v.PartImageURL)
+	}
+	// The fixture's cat_sets row has an empty img_url — confirms this passes
+	// through cleanly rather than inventing one.
+	if v.SetImageURL != "" {
+		t.Errorf("set_image_url = %q, want blank (fixture has no img_url)", v.SetImageURL)
 	}
 }
 

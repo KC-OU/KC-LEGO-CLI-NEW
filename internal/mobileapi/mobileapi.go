@@ -17,11 +17,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
@@ -42,13 +44,38 @@ type Server struct {
 	rebrick *lego.Client
 	legoDB  *lego.DB
 	audit   *audit.Logger
+	// throttle blocks an address after too many failed /mobile/login
+	// attempts — the same gateway.Throttle the telnet gateway already uses
+	// for the exact same reason, just not previously wired in here. nil in
+	// tests that build a Server literal directly (checkWalkEnv and
+	// friends): handleLogin skips throttling entirely when it's nil, rather
+	// than every such test needing to set up one more field.
+	throttle *gateway.Throttle
+	// pdbw is the same Part-DB writer the TUI's finishCheck/pushReceived use
+	// (see finish.go) — built straight from pdb, so /mobile/finish can push
+	// a completed check/order the same way F does in the TUI, instead of
+	// leaving a mobile-only check/order permanently un-synced.
+	pdbw *partdb.Writer
 }
 
 func NewServer(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, auditLog *audit.Logger) *Server {
 	return &Server{
 		authWMS: wms, authPDB: pdb, pdb: pdb, legoDB: legoDB, audit: auditLog,
-		rebrick: lego.NewClientFor(legoDB),
+		rebrick:  lego.NewClientFor(legoDB),
+		throttle: gateway.NewThrottle(),
+		pdbw:     partdb.NewWriter(pdb),
 	}
+}
+
+// remoteHost is r.RemoteAddr with the port stripped, the same shape
+// gateway.Throttle expects (and the telnet gateway already passes it) —
+// net.ParseIP inside Throttle.exempt rejects anything with a port attached.
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // Serve runs the mobile API until ctx is cancelled. Unlike botapi.Serve,
@@ -62,6 +89,9 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /mobile/me", s.withSession(s.handleMe))
 	mux.HandleFunc("GET /mobile/next", s.withSession(s.handleNext))
 	mux.HandleFunc("POST /mobile/confirm", s.withSession(s.handleConfirm))
+	mux.HandleFunc("POST /mobile/finish", s.withSession(s.handleFinish))
+	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
+	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
@@ -94,6 +124,17 @@ type loginResponse struct {
 // 2FA enabled, the returned token is only good for POST /mobile/login/2fa
 // next; MobileSessionFor refuses it for anything else until that completes.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var host string
+	if s.throttle != nil {
+		host = remoteHost(r)
+		release, why := s.throttle.Admit(host)
+		if why != "" {
+			s.audit.Log("-", "", "MOBILE_LOGIN", "DENIED", why+" ("+host+")")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": why})
+			return
+		}
+		defer release()
+	}
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
@@ -101,6 +142,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	session, err := auth.AuthenticateUser(r.Context(), s.authWMS, s.authPDB, req.Username, req.Password)
 	if err != nil {
+		if s.throttle != nil {
+			s.throttle.Strike(host)
+		}
 		status := "FAILED_INVALID_CREDENTIALS"
 		if errors.Is(err, auth.ErrAccountDisabled) {
 			status = "FAILED_ACCOUNT_DISABLED"

@@ -68,6 +68,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrMessageAdmin:        messageAdminScreen(),
 		scrMyLoading:           loadingPrefScreen(),
 		scrMyAccuracyVis:       accuracyVisPrefScreen(),
+		scrMyPictures:          picturePrefScreen(),
 		scrMySettings:          mySettingsScreen(),
 		scrMyRebrickKey:        myRebrickableKeyScreen(),
 		scrMyRebrickEdit:       myRebrickableEditScreen(),

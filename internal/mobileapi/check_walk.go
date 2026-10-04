@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
 
 // lineView is one line — a check line or an order line — as the mobile app
@@ -23,6 +24,7 @@ type lineView struct {
 	SetName      string `json:"set_name"`
 	PartNum      string `json:"part_num"`
 	ColorName    string `json:"color_name"`
+	ColorRGB     string `json:"color_rgb,omitempty"` // e.g. "C91A09", no leading '#' — "" when unknown
 	Name         string `json:"name"`
 	Need         int    `json:"need"`
 	Have         int    `json:"have"`
@@ -32,6 +34,19 @@ type lineView struct {
 	NextLocation string `json:"next_location"`
 	Done         bool   `json:"done"`                    // true only when there's nothing assigned at all
 	CompletedSet string `json:"completed_set,omitempty"` // set here only when a receive just finished it
+	// SetImageURL/PartImageURL are plain Rebrickable CDN URLs, not fetched or
+	// cached here — the phone loads them directly (see img.PartURLs; unlike
+	// the TUI's guided walk, there's no terminal to render into, so a client
+	// that doesn't want pictures just doesn't show the <Image>). "" when
+	// there's nothing to show (an unknown set, a colour-less part lookup).
+	SetImageURL  string `json:"set_image_url,omitempty"`
+	PartImageURL string `json:"part_image_url,omitempty"`
+	// AccuracyPct is the signed-in user's own today-so-far accuracy for
+	// whichever role this walk is (checker for a check, picker for an
+	// order) — internal/lego/accuracy.go's AccuracyToday, the same number
+	// "My Accuracy" shows in the TUI, read fresh on every /next and
+	// /confirm so it's never more than one request stale.
+	AccuracyPct float64 `json:"accuracy_pct"`
 }
 
 // loadSortedCheck resolves the signed-in user's current claimed check ticket
@@ -84,13 +99,17 @@ func (s *Server) loadSortedOrder(username string) (*lego.Order, error) {
 	return o, nil
 }
 
-func (s *Server) lineViewAt(c *lego.SetCheck, pos int) lineView {
+func (s *Server) lineViewAt(c *lego.SetCheck, pos int, username string) lineView {
 	l := c.Lines[pos]
+	acc, _ := s.legoDB.AccuracyToday(username, lego.AccuracyChecker)
 	v := lineView{
 		Kind: "check", Position: pos + 1, Total: len(c.Lines),
 		Target: c.SetNum, PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
 		Need: l.Need, Have: l.Have, Missing: l.Missing(), Extra: l.Extra,
-		Location: s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		Location:     s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		ColorRGB:     s.colorRGB(l.ColorID),
+		PartImageURL: s.partImageURL(l.PartNum, l.ColorID),
+		AccuracyPct:  acc,
 	}
 	if pos+1 < len(c.Lines) {
 		n := c.Lines[pos+1]
@@ -98,29 +117,61 @@ func (s *Server) lineViewAt(c *lego.SetCheck, pos int) lineView {
 	}
 	if cs, _ := s.legoDB.CatalogSet(c.SetNum); cs != nil {
 		v.SetName = cs.Name
+		v.SetImageURL = cs.ImgURL
 	}
 	return v
+}
+
+// partImageURL/colorRGB back the mobile app's own picture (see internal/
+// uiapp's ShowPictures preference for the TUI's equivalent) — a plain URL
+// and hex string, not fetched or decoded here; the phone does that itself.
+func (s *Server) partImageURL(partNum string, colorID int) string {
+	urls := img.PartURLs(partNum, colorID, nil)
+	if len(urls) == 0 {
+		return ""
+	}
+	return urls[0]
+}
+
+func (s *Server) colorRGB(colorID int) string {
+	if colorID < 0 {
+		return ""
+	}
+	c, ok := s.legoDB.ColorByID(colorID)
+	if !ok {
+		return ""
+	}
+	return c.RGB
 }
 
 // lineViewAtOrder mirrors lineViewAt: Need/Have read as "ordered" / "received
 // so far" — ReceiveLine already treats a line as done once Have reaches
 // Need, so "missing" (need-have) reads the same way a check's does.
-func (s *Server) lineViewAtOrder(o *lego.Order, pos int) lineView {
+func (s *Server) lineViewAtOrder(o *lego.Order, pos int, username string) lineView {
 	l := o.Lines[pos]
 	missing := l.Qty - l.ReceivedQty
 	if missing < 0 {
 		missing = 0
 	}
+	acc, _ := s.legoDB.AccuracyToday(username, lego.AccuracyPicker)
 	v := lineView{
 		Kind: "order", Position: pos + 1, Total: len(o.Lines),
 		Target: strconv.FormatInt(o.ID, 10), SetName: o.Supplier,
 		PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
 		Need: l.Qty, Have: l.ReceivedQty, Missing: missing,
-		Location: s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		Location:     s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		ColorRGB:     s.colorRGB(l.ColorID),
+		PartImageURL: s.partImageURL(l.PartNum, l.ColorID),
+		AccuracyPct:  acc,
 	}
 	if pos+1 < len(o.Lines) {
 		n := o.Lines[pos+1]
 		v.NextLocation = s.legoDB.LocationFor(s.pdb, n.PartNum, n.ColorID, n.ColorName)
+	}
+	if l.SetNum != "" {
+		if cs, _ := s.legoDB.CatalogSet(l.SetNum); cs != nil {
+			v.SetImageURL = cs.ImgURL
+		}
 	}
 	return v
 }
@@ -145,7 +196,7 @@ func (s *Server) handleNext(w http.ResponseWriter, r *http.Request, sess lego.Mo
 			writeJSON(w, http.StatusOK, lineView{Done: true})
 			return
 		}
-		writeJSON(w, http.StatusOK, s.lineViewAt(c, min(pos, len(c.Lines)-1)))
+		writeJSON(w, http.StatusOK, s.lineViewAt(c, min(pos, len(c.Lines)-1), sess.Username))
 		return
 	}
 
@@ -158,12 +209,12 @@ func (s *Server) handleNext(w http.ResponseWriter, r *http.Request, sess lego.Mo
 		writeJSON(w, http.StatusOK, lineView{Done: true})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.lineViewAtOrder(o, min(pos, len(o.Lines)-1)))
+	writeJSON(w, http.StatusOK, s.lineViewAtOrder(o, min(pos, len(o.Lines)-1), sess.Username))
 }
 
 type confirmRequest struct {
 	Position int    `json:"position"`
-	Action   string `json:"action"` // check: "have_all" | "missing" | "extra" | "have" — order: "receive"
+	Action   string `json:"action"` // check: "have_all" | "missing" | "extra" | "have" — order: "receive" | "unreceive"
 	Count    int    `json:"count"`  // used by missing/extra/have/receive
 }
 
@@ -234,7 +285,7 @@ func (s *Server) confirmCheckLine(w http.ResponseWriter, sess lego.MobileSession
 		return
 	}
 	s.audit.Log(sess.Username, sess.Role, "MOBILE_CONFIRM", "SUCCESS", c.SetNum+" line "+strconv.Itoa(req.Position)+": "+req.Action)
-	writeJSON(w, http.StatusOK, s.lineViewAt(c, req.Position))
+	writeJSON(w, http.StatusOK, s.lineViewAt(c, req.Position, sess.Username))
 }
 
 func (s *Server) confirmOrderLine(w http.ResponseWriter, sess lego.MobileSession, o *lego.Order, req confirmRequest) {
@@ -242,8 +293,8 @@ func (s *Server) confirmOrderLine(w http.ResponseWriter, sess lego.MobileSession
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no such line"})
 		return
 	}
-	if req.Action != "receive" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be receive"})
+	if req.Action != "receive" && req.Action != "unreceive" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be receive or unreceive"})
 		return
 	}
 	if req.Count <= 0 {
@@ -251,22 +302,28 @@ func (s *Server) confirmOrderLine(w http.ResponseWriter, sess lego.MobileSession
 		return
 	}
 	l := o.Lines[req.Position]
-	completedSet, err := s.legoDB.ReceiveLine(l.ID, req.Count)
+	var completedSet string
+	var err error
+	if req.Action == "receive" {
+		completedSet, err = s.legoDB.ReceiveLine(l.ID, req.Count)
+	} else {
+		err = s.legoDB.UnreceiveLine(l.ID, req.Count)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.audit.Log(sess.Username, sess.Role, "MOBILE_CONFIRM", "SUCCESS", "order "+strconv.FormatInt(o.ID, 10)+" line "+strconv.Itoa(req.Position)+": received "+strconv.Itoa(req.Count))
+	s.audit.Log(sess.Username, sess.Role, "MOBILE_CONFIRM", "SUCCESS", "order "+strconv.FormatInt(o.ID, 10)+" line "+strconv.Itoa(req.Position)+": "+req.Action+" "+strconv.Itoa(req.Count))
 
-	// Re-fetch so the response reflects ReceiveLine's own clamping
-	// (it caps count at what's actually still outstanding).
+	// Re-fetch so the response reflects ReceiveLine/UnreceiveLine's own
+	// clamping (each caps count at what's actually still outstanding).
 	fresh, err := s.legoDB.GetOrder(o.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	fresh.Lines = s.legoDB.SortedOrderLines(s.pdb, fresh.Lines)
-	view := s.lineViewAtOrder(fresh, req.Position)
+	view := s.lineViewAtOrder(fresh, req.Position, sess.Username)
 	view.CompletedSet = completedSet
 	writeJSON(w, http.StatusOK, view)
 }

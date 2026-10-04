@@ -23,7 +23,12 @@ In the terminal: **L** on a set's detail page, **L** on the completion dashboard
 format(s) you want — PDF + web page alone, or also a **PNG** image, **Zebra ZPL**, or a **Brother `.lbx`**, or all of
 them (see Formats below). Any other pick (several sets, or a sheet size) goes straight to the usual **PDF** and a web
 page, with the one-time download link and QR code ([exports](export-import.md#download-it-with-a-qr-code)) — scan it
-with your phone or open the link on the PC the printer is connected to.
+with your phone or open the link on the PC the printer is connected to. Every format you pick is saved this same way
+(not just the PDF the in-TUI message links to), so PNG/ZPL/`.lbx` files show up on the **exports dashboard** too —
+check there if you picked one of those and didn't scan the message's QR code at the time.
+
+From the shell (`-o`), a label file is written wherever you point it — a shell session already has direct filesystem
+access, so there's no download link or exports-dashboard entry for the CLI path, same as [the parts barcode sheet](set-checks.md#barcode-scanner-mode).
 
 ```bash
 wms-go lego labels 75192 --size 4x6 -o falcon.pdf
