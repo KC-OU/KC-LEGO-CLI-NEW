@@ -37,6 +37,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `BRICKLINK_CONSUMER_KEY`, `_CONSUMER_SECRET`, `_TOKEN`, `_TOKEN_SECRET` | BrickLink API |
 | `NOTIFY_URL`, `NOTIFY_FORMAT` | [alerts](../guides/alerts.md) |
 | `WMS_BACKUP_PASSPHRASE` | for unattended encrypted backups |
+| `WMS_BACKUP_GITHUB_REPO` | which private repo `wms lego backup --github` uploads to (default `KC-OU/wms-backups`) — needs `gh auth login`, created automatically (private) the first time |
 
 ## Behaviour
 

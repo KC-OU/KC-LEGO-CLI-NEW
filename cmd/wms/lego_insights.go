@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -683,18 +684,24 @@ func newLegoSearchCmd() *cobra.Command {
 }
 
 func newLegoBackupCmd() *cobra.Command {
-	var encrypt bool
+	var encrypt, toGitHub bool
 	var passFile, dest string
 	cmd := &cobra.Command{
 		Use:   "backup",
 		Short: "Back up your LEGO collection (sets, owned parts, history), without the re-downloadable catalog",
 		Long: "Writes a consistent copy of lego.db using SQLite's VACUUM INTO, then drops the offline catalog, the API cache\n" +
 			"and the image cache tables from the copy, so the file is small. The catalog comes back with\n" +
-			"`wms lego catalog refresh`. --encrypt seals it with a passphrase exactly like `wms backup --encrypt`.",
+			"`wms lego catalog refresh`. --encrypt seals it with a passphrase exactly like `wms backup --encrypt`.\n" +
+			"--github also uploads the sealed file as a release on a private GitHub repo (implies --encrypt — a\n" +
+			"plaintext backup is never uploaded) using the same `gh` CLI scripts/publish.sh already needs; nothing\n" +
+			"reaches GitHub unless you run this flag yourself, same as publish.sh and promote-dev.sh.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()
+			if toGitHub {
+				encrypt = true // a plaintext backup is never uploaded
+			}
 			if dest == "" {
 				dest = filepath.Join(config.Get(config.ModernWMSBackupDir), "lego")
 			}
@@ -727,14 +734,57 @@ func newLegoBackupCmd() *cobra.Command {
 			say(ui.Status(t, true, "LEGO collection backed up"))
 			say(ui.Fact(t, "File", path))
 			say(ui.Fact(t, "Size", fmt.Sprintf("%.1f KB", float64(size)/1024)))
-			emitHook("backup_done", map[string]any{"kind": "lego", "file": path, "bytes": size, "encrypted": encrypt})
-			return emit(map[string]any{"file": path, "bytes": size, "encrypted": encrypt})
+			out := map[string]any{"file": path, "bytes": size, "encrypted": encrypt}
+			if toGitHub {
+				repo, release, err := uploadBackupToGitHub(t, path)
+				if err != nil {
+					return err
+				}
+				out["github_repo"], out["github_release"] = repo, release
+			}
+			emitHook("backup_done", out)
+			return emit(out)
 		},
 	}
 	cmd.Flags().BoolVar(&encrypt, "encrypt", false, "seal the backup with a passphrase (age)")
 	cmd.Flags().StringVar(&passFile, "passphrase-file", "", "read the passphrase from this file")
 	cmd.Flags().StringVar(&dest, "dir", "", "where to write it (default: <backup dir>/lego)")
+	cmd.Flags().BoolVar(&toGitHub, "github", false, "also upload the sealed backup to a private GitHub repo (implies --encrypt)")
 	return cmd
+}
+
+// uploadBackupToGitHub pushes a sealed (.age) backup as a release asset on a
+// dedicated private repo (WMS_BACKUP_GITHUB_REPO, default KC-OU/wms-backups)
+// — separate from KC-LEGO-CLI-NEW's own public source repo, so a backup is
+// never a public download even by mistake. One release per backup, tagged by
+// timestamp, the same "gh CLI, your own GitHub login" dependency
+// scripts/publish.sh already has — never run automatically, only when
+// --github is passed explicitly.
+func uploadBackupToGitHub(t ui.Theme, path string) (repo, tag string, err error) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return "", "", usageError("--github needs GitHub's CLI (gh) installed and logged in (gh auth login)")
+	}
+	repo = envOr("WMS_BACKUP_GITHUB_REPO", "KC-OU/wms-backups")
+	if err := exec.Command("gh", "repo", "view", repo).Run(); err != nil {
+		say(ui.Fact(t, "GitHub", "creating private backup repo "+repo))
+		create := exec.Command("gh", "repo", "create", repo, "--private", "--add-readme",
+			"--description", "Encrypted LEGO collection backups (age-sealed; see docs/guides/backups.md in KC-LEGO-CLI-NEW)")
+		create.Stdout, create.Stderr = os.Stdout, os.Stderr
+		if err := create.Run(); err != nil {
+			return "", "", fmt.Errorf("could not create %s: %w", repo, err)
+		}
+	}
+	tag = "lego-" + time.Now().UTC().Format("20060102-150405")
+	release := exec.Command("gh", "release", "create", tag, path, "--repo", repo, "--title", tag,
+		"--notes", "Age-encrypted LEGO collection backup from `wms lego backup --github`. Decrypt with `wms backup decrypt` (see docs/guides/backups.md).")
+	release.Stdout, release.Stderr = os.Stdout, os.Stderr
+	if err := release.Run(); err != nil {
+		return "", "", fmt.Errorf("could not upload to %s: %w", repo, err)
+	}
+	say(ui.Status(t, true, "Uploaded to GitHub"))
+	say(ui.Fact(t, "Repo", repo))
+	say(ui.Fact(t, "Release", tag))
+	return repo, tag, nil
 }
 
 func newLegoWatchCmd() *cobra.Command {
