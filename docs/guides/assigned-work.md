@@ -15,10 +15,24 @@ someone in a different group) from [Access Control's Users list](access-control.
 ## Roles
 
 `picker` and `checker` are ordinary starter groups (*Admin → Access Control → Groups*, or `wms
-access groups set`) — a user can hold either, both, or neither. Which hub and which kind of work
-("Request an order to pick" vs "Request a set to check") someone sees depends on which
-permission they actually hold (`orders.manage` → picker, `sets.check` → checker), not the literal
-group name.
+access groups set`) — a user can hold either, both, or neither. Which hub someone sees depends on
+which permission they actually hold (`orders.manage` → picker, `sets.check` → checker), not the
+literal group name. The `checker` group already grants **both** `sets.check` and `orders.manage`
+— every checker is dual-skilled by default, able to pick as well as check.
+
+For a dual-skilled account, which kind of work the hub menu, the Request screen and My Accuracy
+frame itself around follows **whatever ticket is currently claimed**, automatically:
+
+- Claim an order and the menu says "Request an order to pick", My Accuracy shows picker numbers,
+  and so on — picker framing throughout, for as long as that order is claimed.
+- Finish it (or it's taken off you) and claim a check instead, and everything switches back to
+  checker framing the same way — nothing to toggle by hand, no setting to remember to flip.
+- With **nothing** currently claimed — the moment you're actually looking at the Request
+  screen to find work — there's no ticket to read the role from, so it shows **both** kinds of
+  open work at once, tagged `[Check]`/`[Order]`, rather than guessing one and hiding the other.
+
+A single-skilled account (only `picker` or only `checker`, not both) is unaffected by any of this
+— it only ever sees its one role, same as before.
 
 ## Switching to Admin (the V key)
 

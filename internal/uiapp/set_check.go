@@ -467,7 +467,8 @@ func printPartsSheet(app *App, st *checkState) {
 			Location: app.locationFor(l.PartNum, l.ColorID, l.ColorName), Need: l.Need,
 		}
 	}
-	pdf := labels.PartsSheet(lines)
+	a4, _ := labels.SizeByID("a4")
+	pdf := labels.PartsSheet(lines, a4)
 	path, err := exports.Save(exports.Dir(), app.userName(), "parts-sheet", st.check.SetNum, "pdf", pdf)
 	if err != nil {
 		app.setMsg(err.Error(), true)

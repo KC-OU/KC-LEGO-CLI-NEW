@@ -20,7 +20,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
@@ -152,6 +154,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.audit.Log(req.Username, "", "MOBILE_LOGIN", status, err.Error())
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
+	}
+	// A real credential check only confirms the password — expiry is a
+	// separate, access-policy-level gate the TUI already enforces
+	// (continueSignOn, internal/uiapp/login.go) that this path was missing
+	// entirely: an expired account could still get a mobile session even
+	// though the exact same account is correctly refused at the terminal.
+	if p, err := access.Load(); err == nil {
+		if u := p.Users[access.Key(session.Source, session.Username)]; u.Expired(time.Now()) {
+			s.audit.Log(session.Username, session.Role, "MOBILE_LOGIN", "DENIED_EXPIRED", "access ended "+u.Expires)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "This account's access has ended. Ask an admin."})
+			return
+		}
 	}
 	needs2FA := twofa.IsEnabled(session.Username, session.Source)
 	token, err := s.legoDB.StartMobileLogin(session.Username, session.Source, session.Role, needs2FA)

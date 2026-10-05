@@ -597,6 +597,16 @@ func checkScripts(ctx context.Context, e *Env) Result {
 // tool finds an analysis tool: on $PATH, else in the tool cache, installing it
 // there (go install …@latest) when missing or older than a week. Installing once
 // instead of `go run …@latest` on every preflight is most of what made it slow.
+//
+// The cache is namespaced by `go env GOVERSION`: with GOTOOLCHAIN=auto, the
+// go command on PATH can upgrade itself between preflight runs (a dependency
+// bump pulling in a newer toolchain, say), and these tools embed the go/types
+// of whatever Go built them — pointed at a newer GOROOT, they crash trying to
+// parse stdlib source they don't recognize ("unknown field", "method must
+// have no type parameters"), which the caller then reports as a real
+// finding. Keying the directory by version means a toolchain upgrade just
+// lands in a fresh, empty directory instead of reusing a binary that no
+// longer matches what's on PATH.
 func (e *Env) tool(ctx context.Context, name, pkg string) (string, error) {
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
@@ -605,6 +615,9 @@ func (e *Env) tool(ctx context.Context, name, pkg string) (string, error) {
 	if dir == "" {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".cache", "wms-preflight", "bin")
+	}
+	if goVer, err := e.run(ctx, "go", "env", "GOVERSION"); err == nil {
+		dir = filepath.Join(dir, strings.TrimSpace(goVer))
 	}
 	bin := filepath.Join(dir, name)
 	if fi, err := os.Stat(bin); err == nil && time.Since(fi.ModTime()) < 7*24*time.Hour {

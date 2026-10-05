@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 )
 
 func TestRoleBadge(t *testing.T) {
@@ -182,6 +185,13 @@ func TestNoColorWinsOverAnyThemeAndEmitsNoColourCodes(t *testing.T) {
 
 func TestThemeSelectionByName(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
+	// New() reads config.Get(config.TUITheme), which checks a persisted
+	// settings-override file before the env var (see config.Get) — without
+	// isolating it, this test reads whatever theme is actually saved on the
+	// machine running it (e.g. /root/docker-server/wms/settings.json) instead
+	// of the env var each case sets, and every case collapses to that one
+	// saved value.
+	t.Setenv(config.SettingsFile, filepath.Join(t.TempDir(), "settings.json"))
 	for name, want := range map[string]string{"": "green", "nonsense": "green", "AMBER": "amber", "high-contrast": "high-contrast", "colorblind": "colorblind", "Dracula": "dracula", "half-life": "half-life", "hev": "half-life", "Tokyo": "tokyo-night", "3270": "ibm-3270", "lego": "lego", "matrix": "matrix"} {
 		t.Setenv("MODERNWMS_TUI_THEME", name)
 		if got := New().Name; got != want {

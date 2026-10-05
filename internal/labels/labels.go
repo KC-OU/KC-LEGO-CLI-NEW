@@ -213,6 +213,14 @@ func qrOps(text string, x, y, side float64) []op {
 	return modules(code, x, y, side, side, true)
 }
 
+// minModuleWidth is the narrowest a single Code 128 bar can be and still
+// reliably resolve on a 203 dpi thermal head (3 dots) — below this, a
+// barcode can look perfectly printed and still not scan, which used to
+// happen silently: a long set number (e.g. "75192-1") on small stock
+// (40x30, 50x30) had enough modules that the old width*0.9-vs-mods*0.5 cap
+// could squeeze well under this with nothing warning about it.
+const minModuleWidth = 0.375 // mm
+
 func barcodeOps(text string, x, y, w, h float64) []op {
 	code, err := code128.Encode(asciiOnly(text))
 	if err != nil {
@@ -222,6 +230,17 @@ func barcodeOps(text string, x, y, w, h float64) []op {
 	// narrower only when the label is too small; the rest is quiet zone.
 	mods := float64(code.Bounds().Dx())
 	bw := min(w*0.9, mods*0.5)
+	if need := mods * minModuleWidth; bw < need {
+		// The box is too narrow for this content at a safe module width.
+		// Let the barcode run wider than its nominal box (capped so it
+		// can't blow the layout up entirely) rather than silently
+		// shrinking below what the print head can resolve — a barcode
+		// that overflows its box but scans beats one that fits and
+		// doesn't. Still won't help indefinitely: very long content on
+		// the smallest stock is a real physical limit, not just a layout
+		// one — pick bigger stock, or a shorter --barcode value, for those.
+		bw = min(need, w*1.4)
+	}
 	return modules(code, x+(w-bw)/2, y, bw, h, false)
 }
 

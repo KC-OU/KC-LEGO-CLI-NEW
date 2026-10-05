@@ -18,6 +18,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
 
 // Set checks, missing parts, orders, spend and labels from the shell (the same as
@@ -527,18 +528,28 @@ func newLegoLabelsCmd() *cobra.Command {
 // exports.Save (no download-link dashboard entry) — the CLI already has
 // direct filesystem access, same reasoning `lego labels`'s own -o uses.
 func newLegoPartsSheetCmd() *cobra.Command {
-	var by, outPath string
+	var by, outPath, size, format string
 	cmd := &cobra.Command{
 		Use:   "parts-sheet <set>",
-		Short: "Printable A4 barcode sheet of a set's parts, for the stock-check scanner mode",
+		Short: "Printable barcode sheet of a set's parts, for the stock-check scanner mode",
 		Long: "One row per part+colour (not per set) with a Code 128 barcode, description and shelf location — for taking\n" +
-			"to the shelves and scanning as you go, instead of typing each part number by hand. Read-only: printing the\n" +
-			"sheet never changes the check itself. If a check for this set is already open (saved with the TUI's S key),\n" +
-			"the sheet reflects its current state; otherwise it's the set's full parts list.",
-		Example: "  wms lego parts-sheet 75192 -o falcon-sheet.pdf",
-		Args:    cobra.ExactArgs(1),
+			"to the shelves and scanning as you go, instead of typing each part number by hand. --size takes any stock\n" +
+			"from `wms lego labels` (see its own --help), not just a4: a sheet size grids several per page, the small\n" +
+			"thermal/sticky sizes (50x30, 40x30, 62x29, ...) print one part per label instead, for sticking straight on\n" +
+			"a bin or box. --format html also draws each part's picture (the PDF path is vector-only, no images at all) —\n" +
+			"print it from a browser at 100%, no margins, same as any other picture-bearing export. Read-only: printing\n" +
+			"the sheet never changes the check itself. If a check for this set is already open (saved with the TUI's S\n" +
+			"key), the sheet reflects its current state; otherwise it's the set's full parts list.",
+		Example: "  wms lego parts-sheet 75192 -o falcon-sheet.pdf\n" +
+			"  wms lego parts-sheet 75192 --size 50x30 -o falcon-labels.pdf\n" +
+			"  wms lego parts-sheet 75192 --size 50x30 --format html -o falcon-labels.html",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+			s, err := labels.SizeByID(size)
+			if err != nil {
+				return usageError("%v", err)
+			}
 			db, rb, err := openLegoWithClient()
 			if err != nil {
 				return err
@@ -564,12 +575,25 @@ func newLegoPartsSheetCmd() *cobra.Command {
 			}
 			lines := make([]labels.PartSheetLine, len(c.Lines))
 			for i, l := range c.Lines {
+				imgURL := ""
+				if urls := img.PartURLs(l.PartNum, l.ColorID, nil); len(urls) > 0 {
+					imgURL = urls[0]
+				}
 				lines[i] = labels.PartSheetLine{
 					PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
 					Location: db.LocationFor(pdb, l.PartNum, l.ColorID, l.ColorName), Need: l.Need,
+					ImageURL: imgURL,
 				}
 			}
-			body := labels.PartsSheet(lines)
+			var body []byte
+			switch strings.ToLower(format) {
+			case "pdf":
+				body = labels.PartsSheet(lines, s)
+			case "html":
+				body = labels.PartsSheetHTML(lines, s)
+			default:
+				return usageError("--format must be pdf or html")
+			}
 			if outPath == "" {
 				_, _ = os.Stdout.Write(body)
 				return nil
@@ -579,11 +603,13 @@ func newLegoPartsSheetCmd() *cobra.Command {
 				return err
 			}
 			say(ui.Status(ui.New(), true, fmt.Sprintf("Wrote a %d-line parts sheet to %s", len(lines), abs)))
-			return emit(map[string]any{"file": abs, "lines": len(lines), "set": num})
+			return emit(map[string]any{"file": abs, "lines": len(lines), "set": num, "size": s.ID})
 		},
 	}
 	cmd.Flags().StringVar(&by, "by", "", "whose check this reads, if a draft is already open (default: your login)")
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "output file (default: print it)")
+	cmd.Flags().StringVar(&size, "size", "a4", "label stock — sheet (a4, letter) or sticky/thermal (50x30, 40x30, 62x29, ...); see wms lego labels --help")
+	cmd.Flags().StringVar(&format, "format", "pdf", "pdf (vector, no pictures) or html (includes each part's picture; print from a browser)")
 	return cmd
 }
 

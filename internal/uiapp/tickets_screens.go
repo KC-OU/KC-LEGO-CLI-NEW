@@ -30,18 +30,44 @@ const (
 	scrForceOffMessage = "force_off_message"
 )
 
-// roleForApp is which accuracy/ticket role the signed-in user works as, decided by
-// which permission they actually hold — "" if neither (they see no picker/checker
-// screens at all).
+// roleForApp is which accuracy/ticket role the signed-in user works as right
+// now, decided by which permission(s) they hold. Someone with only one of
+// sets.check/orders.manage is always that role. Someone with BOTH — dual-
+// skilled, picking and checking — is framed by whatever they currently have
+// claimed (CurrentTicket): claim an order and every picker/checker screen
+// treats them as a picker; finish it and claim a check instead, and they're
+// a checker again, automatically, with nothing to toggle by hand. With
+// nothing claimed yet there's no signal to go on, so it falls back to
+// checker-first (today's only behavior) — that moment only affects which
+// role's accuracy the dynamic "Request" label defaults to; requestJobRows
+// itself shows both kinds of open work either way, not just one.
 func roleForApp(app *App) string {
-	switch {
-	case app.can("sets.check"):
+	canCheck, canPick := app.can("sets.check"), app.can("orders.manage")
+	if canCheck && canPick {
+		if app.session != nil {
+			if t, err := app.legoDB.CurrentTicket(app.session.Username); err == nil && t != nil {
+				if t.Kind == lego.TicketOrder {
+					return lego.AccuracyPicker
+				}
+				return lego.AccuracyChecker
+			}
+		}
 		return lego.AccuracyChecker
-	case app.can("orders.manage"):
+	}
+	switch {
+	case canCheck:
+		return lego.AccuracyChecker
+	case canPick:
 		return lego.AccuracyPicker
 	default:
 		return ""
 	}
+}
+
+// dualSkilled is whether the signed-in user holds both roles — the request
+// screen shows open work from both kinds for them, rather than guessing one.
+func dualSkilled(app *App) bool {
+	return app.can("sets.check") && app.can("orders.manage")
 }
 
 // isPickerOrChecker is the landing-screen routing test: a narrowly-scoped
@@ -90,10 +116,25 @@ func openTicket(app *App, t *lego.Ticket) {
 // ---- Request: claim an open ticket ----
 
 func requestJobRows(app *App) ([]string, [][]string, []string) {
-	role := roleForApp(app)
-	tickets, err := app.legoDB.OpenTickets(ticketKindFor(role), app.userName())
+	tickets, err := app.legoDB.OpenTickets(ticketKindFor(roleForApp(app)), app.userName())
 	if err != nil {
 		app.setMsg(err.Error(), true)
+	}
+	// Dual-skilled with nothing claimed yet: roleForApp has no current-ticket
+	// signal to go on (that's the whole reason they're on this screen), so
+	// show both kinds of open work rather than guessing one — "fair" for a
+	// picker/checker means actually seeing both, not whichever the fallback
+	// happened to pick.
+	if dualSkilled(app) {
+		if t, _ := app.legoDB.CurrentTicket(app.userName()); t == nil {
+			other := lego.TicketCheck
+			if ticketKindFor(roleForApp(app)) == lego.TicketCheck {
+				other = lego.TicketOrder
+			}
+			if more, err := app.legoDB.OpenTickets(other, app.userName()); err == nil {
+				tickets = append(tickets, more...)
+			}
+		}
 	}
 	var rows [][]string
 	var keys []string
@@ -106,7 +147,15 @@ func requestJobRows(app *App) ([]string, [][]string, []string) {
 		if pri == "" {
 			pri = "—"
 		}
-		rows = append(rows, []string{t.Label, who, pri, t.Note})
+		label := t.Label
+		if dualSkilled(app) {
+			kindTag := "Check"
+			if t.Kind == lego.TicketOrder {
+				kindTag = "Order"
+			}
+			label = "[" + kindTag + "] " + label
+		}
+		rows = append(rows, []string{label, who, pri, t.Note})
 		keys = append(keys, strconv.FormatInt(t.ID, 10))
 	}
 	return []string{"Set/Order", "Status", "Priority", "Note"}, rows, keys

@@ -53,6 +53,18 @@ never changes anything). The two differ in where the file lands: **P** in the TU
 for grabbing from your phone — the CLI's `-o` just writes the file wherever you point it, since a shell session already has
 direct filesystem access and has no need for a download link.
 
+By default it's an A4 sheet, several parts per page. `--size` takes any stock [`wms lego labels`](labels.md) does, so
+small sticky/thermal labels (`50x30`, `40x30`, `62x29`, ...) print **one part per label** instead — peel one straight
+onto a bin or box. `--format html` also draws each part's picture (the default PDF is vector-only — text and barcode,
+no images at all): `wms-go lego parts-sheet 75192 --size 50x30 --format html -o falcon-labels.html`, then print it from
+a browser at 100%, no margins, same as any other picture-bearing export.
+
+Every barcode here is held to a minimum module width a 203 dpi thermal head can actually resolve, even when that means
+letting it run slightly wider than its nominal box — a barcode that overflows its box but scans beats one that fits and
+doesn't. Very long content (a long set number) on the smallest stock is a real physical limit no software fixes
+outright: pick a size with more room, or a shorter `--barcode` value on `wms lego labels`, if one specific label still
+won't scan.
+
 ### Guided walk and pictures
 
 Press **W** for the guided view: one line at a time with a big "GO TO: &lt;location&gt;" banner, instead of the full table —
