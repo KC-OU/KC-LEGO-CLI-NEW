@@ -29,6 +29,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
 
@@ -58,6 +59,9 @@ type Server struct {
 	// a completed check/order the same way F does in the TUI, instead of
 	// leaving a mobile-only check/order permanently un-synced.
 	pdbw *partdb.Writer
+	// users backs the admin endpoints' "who can I assign this to" list (see
+	// admin.go) — built the same way uiapp's own app.users is.
+	users *users.Service
 }
 
 func NewServer(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, auditLog *audit.Logger) *Server {
@@ -66,6 +70,7 @@ func NewServer(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, auditLog *aud
 		rebrick:  lego.NewClientFor(legoDB),
 		throttle: gateway.NewThrottle(),
 		pdbw:     partdb.NewWriter(pdb),
+		users:    users.New(wms, pdb),
 	}
 }
 
@@ -94,6 +99,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /mobile/finish", s.withSession(s.handleFinish))
 	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
 	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
+	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
+	mux.HandleFunc("GET /mobile/admin/users", s.withSession(s.handleAdminUsers))
+	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
+	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

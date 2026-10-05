@@ -64,3 +64,44 @@ func (s *Server) handleMessageAdmin(w http.ResponseWriter, r *http.Request, sess
 	s.audit.Log(sess.Username, sess.Role, "MESSAGE_TO_ADMIN", "SUCCESS", detail)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+type flagLocationRequest struct {
+	PartNum   string `json:"part_num"`
+	ColorName string `json:"color_name"`
+	Location  string `json:"location"`
+	Note      string `json:"note"`
+}
+
+// handleFlagLocation is "flag this location/barcode as wrong": a picker or
+// checker who finds a part not where the system says it is (or a barcode
+// that won't scan) tells an admin right away without it blocking the rest
+// of their list — same notification path as handleMessageAdmin, just with
+// the part/location folded into the message so an admin doesn't have to ask
+// what and where. Nothing about the line itself changes: it's still open,
+// still countable, same as before the flag.
+func (s *Server) handleFlagLocation(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	var req flagLocationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.PartNum, req.ColorName, req.Location, req.Note = strings.TrimSpace(req.PartNum), strings.TrimSpace(req.ColorName),
+		strings.TrimSpace(req.Location), strings.TrimSpace(req.Note)
+	if req.PartNum == "" || req.Location == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "part_num and location are required"})
+		return
+	}
+	body := "FLAGGED: " + req.PartNum
+	if req.ColorName != "" {
+		body += " (" + req.ColorName + ")"
+	}
+	body += " — location says \"" + req.Location + "\" but that's wrong"
+	if req.Note != "" {
+		body += ": " + req.Note
+	}
+	detail := "to admins: " + body
+	_ = s.legoDB.LogEvent(lego.EventMessage, sess.Username, "", detail)
+	go notify.Dispatch(lego.EventMessage, sess.Username+": "+body, "")
+	s.audit.Log(sess.Username, sess.Role, "FLAG_LOCATION", "SUCCESS", detail)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
