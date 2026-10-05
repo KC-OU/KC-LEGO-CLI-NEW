@@ -17,7 +17,7 @@ import (
 func newLegoCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "lego", Short: "Manage the local LEGO collection (sets, parts, Rebrickable lookups)"}
 	cmd.AddCommand(newLegoImportCmd(), newLegoAddPartCmd(), newLegoSyncPartsCmd(), newLegoCatalogCmd(),
-		newLegoLowCmd(), newLegoSetMinCmd(), newLegoOptionalCmd(), newLegoStatsCmd(), newLegoMissingCmd(), newLegoWantedCmd(), newLegoDetailCmd(), newLegoAchievementsCmd(), newLegoTodayCmd(), newLegoCheckCmd(), newLegoShoppingCmd(), newLegoOrdersCmd(), newLegoSpendCmd(), newLegoLabelsCmd(), newLegoPartsSheetCmd(), newLegoSetInfoCmd(), newLegoImportPartsCmd(),
+		newLegoLowCmd(), newLegoSetMinCmd(), newLegoOptionalCmd(), newLegoStatsCmd(), newLegoMissingCmd(), newLegoWantedCmd(), newLegoDetailCmd(), newLegoAchievementsCmd(), newLegoTodayCmd(), newLegoCheckCmd(), newLegoShoppingCmd(), newLegoOrdersCmd(), newLegoSpendCmd(), newLegoLabelsCmd(), newLegoPartsSheetCmd(), newLegoMissingSheetCmd(), newLegoSetInfoCmd(), newLegoImportPartsCmd(),
 		newLegoSearchCmd(), newLegoBackupCmd(), newLegoWatchCmd(), newLegoValueCmd(), newLegoBuildCmd(),
 		newLegoHistoryCmd(), newLegoSnapshotsCmd(), newLegoRestoreCmd(), newLegoResetCmd(), newLegoExportCmd(),
 		newLegoReportCmd(), newLegoRetirementCmd(), newLegoShareCmd(), newLegoHelpSheetCmd())

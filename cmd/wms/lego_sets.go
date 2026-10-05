@@ -613,6 +613,96 @@ func newLegoPartsSheetCmd() *cobra.Command {
 	return cmd
 }
 
+// newLegoMissingSheetCmd is "Bulk-print sticky labels for everything
+// missing, across multiple sets": one combined sheet instead of running
+// parts-sheet per set and collating the stack by hand. A separate command
+// from parts-sheet rather than a flag on it — parts-sheet's single-set,
+// "reflects whatever check is already open" semantics don't generalise to
+// several sets at once, and ShoppingList (what's actually missing) is a
+// different read than NewCheck's full parts list.
+func newLegoMissingSheetCmd() *cobra.Command {
+	var outPath, size, format string
+	cmd := &cobra.Command{
+		Use:   "missing-sheet <set> [<set>...]",
+		Short: "Combined label sheet of everything missing, across several checked sets",
+		Long: "One row per part+colour still short (not per set), across every set given, combined onto one sheet —\n" +
+			"for restocking several incomplete sets in one shelf walk instead of printing and carrying a separate sheet\n" +
+			"per set. Each set must already have a check on record (wms lego check <set>) — unchecked sets are skipped\n" +
+			"with a warning, not a hard failure, so one typo doesn't stop the rest. Same --size/--format as parts-sheet.",
+		Example: "  wms lego missing-sheet 75192 10696 42078 -o restock.pdf\n" +
+			"  wms lego missing-sheet 75192 10696 --size 50x30 -o restock-labels.pdf",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			s, err := labels.SizeByID(size)
+			if err != nil {
+				return usageError("%v", err)
+			}
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			pdb, _ := partdb.Open("")
+			if pdb != nil {
+				defer pdb.Close()
+			}
+
+			var lines []labels.PartSheetLine
+			var skipped []string
+			for _, arg := range args {
+				num := catalogNum(arg)
+				sl, err := db.ShoppingList(num)
+				if err != nil {
+					skipped = append(skipped, num)
+					continue
+				}
+				for _, l := range sl {
+					imgURL := ""
+					if urls := img.PartURLs(l.PartNum, l.ColorID, nil); len(urls) > 0 {
+						imgURL = urls[0]
+					}
+					lines = append(lines, labels.PartSheetLine{
+						PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
+						Location: db.LocationFor(pdb, l.PartNum, l.ColorID, l.ColorName), Need: l.Short,
+						ImageURL: imgURL,
+					})
+				}
+			}
+			for _, num := range skipped {
+				say(ui.Status(ui.New(), false, "skipped "+num+": not checked yet"))
+			}
+			if len(lines) == 0 {
+				return usageError("nothing missing across the given set(s) (or none have been checked yet)")
+			}
+
+			var body []byte
+			switch strings.ToLower(format) {
+			case "pdf":
+				body = labels.PartsSheet(lines, s)
+			case "html":
+				body = labels.PartsSheetHTML(lines, s)
+			default:
+				return usageError("--format must be pdf or html")
+			}
+			if outPath == "" {
+				_, _ = os.Stdout.Write(body)
+				return nil
+			}
+			abs, err := writeExportFile(outPath, body, true)
+			if err != nil {
+				return err
+			}
+			say(ui.Status(ui.New(), true, fmt.Sprintf("Wrote a %d-line missing-parts sheet (%d set(s), %d skipped) to %s", len(lines), len(args)-len(skipped), len(skipped), abs)))
+			return emit(map[string]any{"file": abs, "lines": len(lines), "sets": len(args) - len(skipped), "skipped": skipped, "size": s.ID})
+		},
+	}
+	cmd.Flags().StringVarP(&outPath, "out", "o", "", "output file (default: print it)")
+	cmd.Flags().StringVar(&size, "size", "a4", "label stock — sheet (a4, letter) or sticky/thermal (50x30, 40x30, 62x29, ...); see wms lego labels --help")
+	cmd.Flags().StringVar(&format, "format", "pdf", "pdf (vector, no pictures) or html (includes each part's picture; print from a browser)")
+	return cmd
+}
+
 func labelSizes() string {
 	var b strings.Builder
 	for _, s := range labels.Sizes {

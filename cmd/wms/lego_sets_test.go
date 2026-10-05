@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
@@ -75,5 +77,46 @@ func TestApplyEditsValidInput(t *testing.T) {
 	}
 	if c.Lines[1].Have != 20 {
 		t.Errorf("3023 Have = %d, want 20", c.Lines[1].Have)
+	}
+}
+
+// checkedSetShort finishes a check for setNum with exactly one line short by
+// shortBy, the minimal "something's missing" fixture missing-sheet needs.
+func checkedSetShort(t *testing.T, db *lego.DB, invID int, setNum string, shortBy int) {
+	t.Helper()
+	db.Exec(`INSERT INTO cat_sets (set_num, name, year, theme_id, num_parts, img_url) VALUES (?, ?, 2020, 0, 10, '')`, setNum, "Set "+setNum)
+	db.Exec(`INSERT INTO cat_inventories (id, version, set_num) VALUES (?, 1, ?)`, invID, setNum)
+	db.Exec(`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (?, '3001', 4, 10)`, invID)
+	c, err := db.NewCheck(context.Background(), nil, setNum, lego.CheckIntake, "kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Lines[0].Have = c.Lines[0].Need - shortBy
+	if _, err := db.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMissingSheetCombinesSeveralSetsAndSkipsUnchecked is the direct test
+// for "bulk-print sticky labels for everything missing, across multiple
+// sets": two checked sets' missing lines land on one sheet, and a third,
+// never-checked set is skipped with a warning rather than failing the
+// whole command.
+func TestMissingSheetCombinesSeveralSetsAndSkipsUnchecked(t *testing.T) {
+	db := legoEnv(t)
+	seedCatalog(t, db)
+	checkedSetShort(t, db, 1, "1-1", 3)
+	checkedSetShort(t, db, 2, "2-1", 5)
+
+	stdout, code := run(t, "lego", "missing-sheet", "1-1", "2-1", "9999-1", "--format", "html")
+	if code != 0 {
+		t.Fatalf("missing-sheet: code=%d out=%q", code, stdout)
+	}
+	if !strings.Contains(stdout, "Need: 3") || !strings.Contains(stdout, "Need: 5") {
+		t.Errorf("sheet should show each set's shortfall:\n%s", stdout)
+	}
+
+	if _, code := run(t, "lego", "missing-sheet", "9999-1"); code == 0 {
+		t.Error("every given set unchecked (or nothing missing) should be a usage error, not a quiet success")
 	}
 }

@@ -65,6 +65,11 @@ doesn't. Very long content (a long set number) on the smallest stock is a real p
 outright: pick a size with more room, or a shorter `--barcode` value on `wms lego labels`, if one specific label still
 won't scan.
 
+Restocking several incomplete sets at once? `wms-go lego missing-sheet <set> [<set>...]` combines everything **missing**
+(not the full parts list) across every set given onto one sheet, so one shelf walk covers all of them instead of
+printing and carrying a separate sheet per set. Each set needs a check on record already; one that doesn't is skipped
+with a warning rather than failing the whole run. Same `--size`/`--format` as `parts-sheet`.
+
 ### Guided walk and pictures
 
 Press **W** for the guided view: one line at a time with a big "GO TO: &lt;location&gt;" banner, instead of the full table —
