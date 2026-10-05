@@ -17,6 +17,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/backup"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
 )
 
 // sysStatus is a quick picture of the machine, for `wms sys status`, the login banner and the launcher's
@@ -278,6 +279,35 @@ func newSysCmd() *cobra.Command {
 			say(t.Muted.Render("2FA is required over telnet and web: wms users 2fa enable <user>."))
 			say(t.Muted.Render("Telnet is plain text: keep it on a trusted network or VPN."))
 			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "mobile-setup-qr [url]",
+		Short: "QR code for a new phone's first-time KC-Parts Pick setup",
+		Long: "Prints the sentry-wms mobile app's server URL as a QR code — scan it on the app's first-run SERVER URL\n" +
+			"screen instead of typing it by hand. That app is a separate deployment this project doesn't own, so the URL\n" +
+			"isn't known automatically: give it once and it's saved (Settings-style, see `wms sys connect` for the\n" +
+			"equivalent for this project's own telnet/web address), or give it again any time to update it.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			url := config.Get(config.MobileAppURL)
+			if len(args) == 1 {
+				url = strings.TrimSpace(args[0])
+				if err := config.SetOverride(config.MobileAppURL, url); err != nil {
+					return err
+				}
+			}
+			if url == "" {
+				return usageError("no URL saved yet — run: wms sys mobile-setup-qr <https://your-mobile-api-url>")
+			}
+			t := ui.New()
+			say(t.Strong.Render(url))
+			say("")
+			say(uiapp.QRCode(url))
+			say("")
+			say(t.Muted.Render("Scan this on the app's first-run SERVER URL screen (SCAN QR CODE INSTEAD)."))
+			return emit(map[string]any{"url": url})
 		},
 	})
 

@@ -74,6 +74,13 @@ or whatever mobile screen is built against it next.
 part that genuinely isn't where the system says — it messages admins immediately (the same path
 as *Message an Admin*) and doesn't block or change the line; they keep working.
 
+**Setting up a new phone**: `wms sys mobile-setup-qr <url>` prints the sentry-wms mobile app's
+server URL as a QR code — scan it on the app's first-run SERVER URL screen ("SCAN QR CODE
+INSTEAD") instead of typing it by hand. The URL is sentry-wms's own Flask API address (a separate
+deployment this project doesn't own — e.g. `https://wms-mobile.example.com`), saved once
+(Settings-style) so later runs of the command don't need it given again; `wms sys mobile-setup-qr`
+with no argument reprints the saved one.
+
 ## How long it's taking
 
 A check or order claimed through a ticket shows **how long it's taken so far**, and once there's
