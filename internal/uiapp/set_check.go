@@ -35,6 +35,15 @@ type checkState struct {
 	undoIdx   []int
 	spares    map[int]string // line index → "2 spare (10696)"
 	finishing bool           // Finish Check pressed, Part-DB sync running in the background — see finishCheck
+	// claimedAt/estimateSeconds are the time-estimate feature's TUI half
+	// ("how long it will take, how long it has taken" — the mobile app's
+	// equivalent is lineView's own ElapsedSeconds/EstimatedSeconds field).
+	// Looked up once in startCheck rather than on every Body() render —
+	// this is a per-keystroke redraw, not a place for a DB query. Zero
+	// claimedAt (no ticket behind this check — opened directly, not
+	// through the job queue) just means that part of the line is omitted.
+	claimedAt       time.Time
+	estimateSeconds int64
 }
 
 type setCheckScreen struct {
@@ -76,8 +85,29 @@ func startCheck(app *App, setNum, kind string) {
 	}
 	app.sortCheckLinesByLocation(c.Lines)
 	app.checking = &checkState{check: c, setName: name}
+	if t, _ := app.legoDB.CurrentTicket(by); t != nil && t.Kind == lego.TicketCheck {
+		app.checking.claimedAt = t.ClaimedAt
+	}
+	if pace, _ := app.legoDB.EstimatePace(lego.TicketCheck, 20); pace.Samples > 0 {
+		app.checking.estimateSeconds = pace.AvgSeconds
+	}
 	app.checking.findSpares(app)
 	app.goTo(scrSetCheck)
+}
+
+// roughDuration formats a duration the way a status line wants it — "6m",
+// "1h20m" — never seconds (nobody times a parts check to the second) and
+// never more than two units.
+func roughDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "under 1m"
+	}
+	h := d / time.Hour
+	m := (d % time.Hour) / time.Minute
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
 }
 
 func (st *checkState) findSpares(app *App) {
@@ -169,6 +199,13 @@ func (s *setCheckScreen) Body(app *App) string {
 	}
 	if n := len(st.spares); n > 0 {
 		sum += t.Warning.Render(fmt.Sprintf(" · %d line(s) have spares elsewhere", n))
+	}
+	if !st.claimedAt.IsZero() {
+		elapsed := " · " + roughDuration(time.Since(st.claimedAt)) + " so far"
+		if st.estimateSeconds > 0 {
+			elapsed += " (usually ~" + roughDuration(time.Duration(st.estimateSeconds)*time.Second) + ")"
+		}
+		sum += t.Muted.Render(elapsed)
 	}
 	vis := s.visible(app)
 	s.sel = min(s.sel, max(0, len(vis)-1))

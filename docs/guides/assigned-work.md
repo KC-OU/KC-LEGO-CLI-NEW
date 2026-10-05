@@ -74,6 +74,19 @@ or whatever mobile screen is built against it next.
 part that genuinely isn't where the system says — it messages admins immediately (the same path
 as *Message an Admin*) and doesn't block or change the line; they keep working.
 
+## How long it's taking
+
+A check or order claimed through a ticket shows **how long it's taken so far**, and once there's
+a bit of history, **how long one usually takes** — in the TUI, in the check screen's status line
+(`12m so far (usually ~20m)`); on the phone, on every `/mobile/next`/`/mobile/confirm` response
+(`elapsed_seconds`/`estimated_seconds`) and in the admin ticket list (`GET /mobile/admin/tickets`,
+`claimed_for_seconds`/`estimated_seconds` — the supervisor live-status view's data). The estimate
+is a plain average of how long recently *finished* tickets of that kind took, not a per-part
+calculation — there's no reliable link from a ticket back to exactly which check or order row it
+produced (a set can be recounted many times), so it's "a check like this usually takes about this
+long", not a precise countdown. With no finished-ticket history yet, nothing is shown rather than
+a made-up number.
+
 ## Leaving a job
 
 Pressing your usual back key (Esc/F3/F12) while a ticket-backed check or order is open asks:

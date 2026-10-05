@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
@@ -103,6 +104,45 @@ func getLine(t *testing.T, srv *httptest.Server, token string, pos int) (int, li
 	var v lineView
 	_ = json.NewDecoder(resp.Body).Decode(&v)
 	return resp.StatusCode, v
+}
+
+// TestNextShowsElapsedAndEstimatedTime is the direct test for the time-
+// estimate feature's picker/checker-facing half: elapsed tracks the current
+// ticket's own claim (checkWalkEnv already claimed one for dave, so it's
+// present but small), and estimated stays 0 until there's finished-ticket
+// history to average, then reflects it.
+func TestNextShowsElapsedAndEstimatedTime(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	_, v := getLine(t, srv, token, 0)
+	if v.ElapsedSeconds < 0 {
+		t.Errorf("elapsed_seconds = %d, want >= 0 for a just-claimed ticket", v.ElapsedSeconds)
+	}
+	if v.EstimatedSeconds != 0 {
+		t.Errorf("estimated_seconds = %d, want 0 with no finished-ticket history yet", v.EstimatedSeconds)
+	}
+
+	// A finished check from 10 minutes ago gives EstimatePace something to average.
+	tk, err := db.AssignTicket(lego.TicketCheck, "10696-1", "Classic Box", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := db.Exec(`UPDATE job_tickets SET status = ?, claimed_at = ?, done_at = ? WHERE id = ?`,
+		lego.TicketDone, now.Add(-10*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), tk.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, v = getLine(t, srv, token, 0)
+	if v.EstimatedSeconds != 600 {
+		t.Errorf("estimated_seconds = %d, want 600 (10 minutes) once there's history", v.EstimatedSeconds)
+	}
 }
 
 func TestNextReturnsTheFirstLineInShelfOrder(t *testing.T) {

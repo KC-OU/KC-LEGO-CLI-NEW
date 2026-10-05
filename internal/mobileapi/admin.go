@@ -75,6 +75,11 @@ type adminTicketRow struct {
 	// supervisor's "who's doing what, and for how long" view — computed
 	// here rather than left to the client so every client agrees on "now".
 	ClaimedForSeconds int64 `json:"claimed_for_seconds,omitempty"`
+	// EstimatedSeconds is lego.DB.EstimatePace's historical average for
+	// this kind of ticket — "how long it will take" beside
+	// ClaimedForSeconds' "how long it has taken". 0/omitted with no
+	// finished-ticket history yet for that kind.
+	EstimatedSeconds int64 `json:"estimated_seconds,omitempty"`
 }
 
 // handleAdminTickets lists every open or claimed ticket — the admin queue
@@ -92,12 +97,18 @@ func (s *Server) handleAdminTickets(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	now := time.Now()
+	paceByKind := map[string]int64{}
 	out := make([]adminTicketRow, 0, len(tickets))
 	for _, t := range tickets {
 		row := adminTicketRow{ID: t.ID, Kind: t.Kind, Target: t.Target, Label: t.Label, AssignedTo: t.AssignedTo, Status: t.Status}
 		if t.Status == lego.TicketClaimed && !t.ClaimedAt.IsZero() {
 			row.ClaimedAt = t.ClaimedAt.Format(time.RFC3339)
 			row.ClaimedForSeconds = int64(now.Sub(t.ClaimedAt).Seconds())
+			if _, ok := paceByKind[t.Kind]; !ok {
+				pace, _ := s.legoDB.EstimatePace(t.Kind, 20)
+				paceByKind[t.Kind] = pace.AvgSeconds // 0 with no history — fine, omitempty drops it
+			}
+			row.EstimatedSeconds = paceByKind[t.Kind]
 		}
 		out = append(out, row)
 	}

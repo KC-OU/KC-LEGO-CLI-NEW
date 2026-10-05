@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
@@ -47,6 +48,27 @@ type lineView struct {
 	// "My Accuracy" shows in the TUI, read fresh on every /next and
 	// /confirm so it's never more than one request stale.
 	AccuracyPct float64 `json:"accuracy_pct"`
+	// ElapsedSeconds/EstimatedSeconds are "how long it will take, how long
+	// it has taken": Elapsed is now minus this ticket's own ClaimedAt;
+	// Estimated is lego.DB.EstimatePace's historical average for this kind
+	// of ticket. Both 0/omitted when there's nothing to show yet (no
+	// current ticket, or no finished-ticket history for Estimated).
+	ElapsedSeconds   int64 `json:"elapsed_seconds,omitempty"`
+	EstimatedSeconds int64 `json:"estimated_seconds,omitempty"`
+}
+
+// ticketTiming is lineViewAt/lineViewAtOrder's shared "how long" lookup —
+// read fresh every time, same as everything else in this file, rather than
+// threading the ticket this request already found for CurrentTicket through
+// every call site.
+func (s *Server) ticketTiming(kind, username string) (elapsed, estimated int64) {
+	if t, _ := s.legoDB.CurrentTicket(username); t != nil && !t.ClaimedAt.IsZero() {
+		elapsed = int64(time.Since(t.ClaimedAt).Seconds())
+	}
+	if pace, _ := s.legoDB.EstimatePace(kind, 20); pace.Samples > 0 {
+		estimated = pace.AvgSeconds
+	}
+	return
 }
 
 // loadSortedCheck resolves the signed-in user's current claimed check ticket
@@ -102,14 +124,17 @@ func (s *Server) loadSortedOrder(username string) (*lego.Order, error) {
 func (s *Server) lineViewAt(c *lego.SetCheck, pos int, username string) lineView {
 	l := c.Lines[pos]
 	acc, _ := s.legoDB.AccuracyToday(username, lego.AccuracyChecker)
+	elapsed, estimated := s.ticketTiming(lego.TicketCheck, username)
 	v := lineView{
 		Kind: "check", Position: pos + 1, Total: len(c.Lines),
 		Target: c.SetNum, PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
 		Need: l.Need, Have: l.Have, Missing: l.Missing(), Extra: l.Extra,
-		Location:     s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
-		ColorRGB:     s.colorRGB(l.ColorID),
-		PartImageURL: s.partImageURL(l.PartNum, l.ColorID),
-		AccuracyPct:  acc,
+		Location:         s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		ColorRGB:         s.colorRGB(l.ColorID),
+		PartImageURL:     s.partImageURL(l.PartNum, l.ColorID),
+		AccuracyPct:      acc,
+		ElapsedSeconds:   elapsed,
+		EstimatedSeconds: estimated,
 	}
 	if pos+1 < len(c.Lines) {
 		n := c.Lines[pos+1]
@@ -154,15 +179,18 @@ func (s *Server) lineViewAtOrder(o *lego.Order, pos int, username string) lineVi
 		missing = 0
 	}
 	acc, _ := s.legoDB.AccuracyToday(username, lego.AccuracyPicker)
+	elapsed, estimated := s.ticketTiming(lego.TicketOrder, username)
 	v := lineView{
 		Kind: "order", Position: pos + 1, Total: len(o.Lines),
 		Target: strconv.FormatInt(o.ID, 10), SetName: o.Supplier,
 		PartNum: l.PartNum, ColorName: l.ColorName, Name: l.PartName,
 		Need: l.Qty, Have: l.ReceivedQty, Missing: missing,
-		Location:     s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
-		ColorRGB:     s.colorRGB(l.ColorID),
-		PartImageURL: s.partImageURL(l.PartNum, l.ColorID),
-		AccuracyPct:  acc,
+		Location:         s.legoDB.LocationFor(s.pdb, l.PartNum, l.ColorID, l.ColorName),
+		ColorRGB:         s.colorRGB(l.ColorID),
+		PartImageURL:     s.partImageURL(l.PartNum, l.ColorID),
+		AccuracyPct:      acc,
+		ElapsedSeconds:   elapsed,
+		EstimatedSeconds: estimated,
 	}
 	if pos+1 < len(o.Lines) {
 		n := o.Lines[pos+1]

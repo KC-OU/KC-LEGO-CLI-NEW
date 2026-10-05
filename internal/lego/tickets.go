@@ -156,6 +156,57 @@ func (d *DB) ClaimTicket(id int64, by string) error {
 	return nil
 }
 
+// TicketPace is how long tickets of a kind have recently taken, claim to
+// done — "how long it will take", beside a ticket's own ClaimedAt for "how
+// long it has taken" (see mobileapi's lineView and the admin ticket list).
+// Deliberately a per-kind average, not per-line or per-piece: job_tickets
+// has no link back to which specific set_checks/order row it produced (a
+// set can be recounted many times over), so there's no robust join to
+// normalize by size without guessing which check a ticket matches. A rough
+// "a check like this usually takes about this long" is what's actually
+// available; Samples says how much that's worth.
+type TicketPace struct {
+	AvgSeconds int64
+	Samples    int
+}
+
+// EstimatePace averages claimed_at -> done_at over the most recent
+// sampleSize finished tickets of kind. Samples 0 (a zero TicketPace) means
+// no history yet — a fresh install, or nobody's finished one of this kind —
+// callers show nothing rather than a meaningless estimate.
+func (d *DB) EstimatePace(kind string, sampleSize int) (TicketPace, error) {
+	rows, err := d.Query(`SELECT claimed_at, done_at FROM job_tickets WHERE kind = ? AND status = ? AND claimed_at != '' AND done_at != ''
+		ORDER BY id DESC LIMIT ?`, kind, TicketDone, sampleSize)
+	if err != nil {
+		return TicketPace{}, err
+	}
+	defer rows.Close()
+	var total float64
+	var n int
+	for rows.Next() {
+		var claimedS, doneS string
+		if err := rows.Scan(&claimedS, &doneS); err != nil {
+			return TicketPace{}, err
+		}
+		claimed, err1 := time.Parse(time.RFC3339, claimedS)
+		done, err2 := time.Parse(time.RFC3339, doneS)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if dur := done.Sub(claimed); dur > 0 {
+			total += dur.Seconds()
+			n++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return TicketPace{}, err
+	}
+	if n == 0 {
+		return TicketPace{}, nil
+	}
+	return TicketPace{AvgSeconds: int64(total / float64(n)), Samples: n}, nil
+}
+
 // TicketByToken looks up an open ticket by its barcode claim token — scan-to-claim.
 func (d *DB) TicketByToken(token string) (*Ticket, error) {
 	rows, err := d.Query(`SELECT id, kind, target, label, assigned_to, status, priority, note, token, created_by, created_at, claimed_at, done_at

@@ -3,6 +3,7 @@ package lego
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestTicketAssignClaimFinish(t *testing.T) {
@@ -91,6 +92,51 @@ func TestReopenTicketRequiresAReasonAndLeavesTheOriginalAlone(t *testing.T) {
 	open, err := db.OpenTickets(TicketCheck, "anyone")
 	if err != nil || len(open) != 1 || open[0].ID != reopened.ID {
 		t.Errorf("open tickets = %+v, %v, want just the reopened one", open, err)
+	}
+}
+
+// TestEstimatePaceAveragesRecentFinishedTickets is the direct test for the
+// "how long it will take" half of the time-estimate feature: no history ->
+// zero samples (caller shows nothing); finished tickets of the other kind
+// are excluded; the average is actually an average, not just the last one.
+func TestEstimatePaceAveragesRecentFinishedTickets(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if pace, err := db.EstimatePace(TicketCheck, 20); err != nil || pace.Samples != 0 {
+		t.Fatalf("no history yet = %+v, %v, want zero samples", pace, err)
+	}
+
+	finish := func(kind, target string, claimed, done time.Time) {
+		t.Helper()
+		tk, err := db.AssignTicket(kind, target, target, "", "", "", "admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE job_tickets SET status = ?, assigned_to = 'dave', claimed_at = ?, done_at = ? WHERE id = ?`,
+			TicketDone, claimed.Format(time.RFC3339), done.Format(time.RFC3339), tk.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	finish(TicketCheck, "1-1", now.Add(-20*time.Minute), now.Add(-10*time.Minute)) // 10 min
+	finish(TicketCheck, "2-1", now.Add(-40*time.Minute), now.Add(-20*time.Minute)) // 20 min
+	finish(TicketOrder, "99", now.Add(-5*time.Minute), now)                        // 5 min, other kind — excluded
+
+	pace, err := db.EstimatePace(TicketCheck, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pace.Samples != 2 || pace.AvgSeconds != 900 { // (10+20)/2 = 15 min = 900s
+		t.Errorf("pace = %+v, want 2 samples averaging 900s", pace)
+	}
+
+	orderPace, err := db.EstimatePace(TicketOrder, 20)
+	if err != nil || orderPace.Samples != 1 || orderPace.AvgSeconds != 300 {
+		t.Errorf("order pace = %+v, %v, want 1 sample of 300s", orderPace, err)
 	}
 }
 

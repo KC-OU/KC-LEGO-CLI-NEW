@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -121,6 +122,56 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	b, _ := os.ReadFile(app.exportRes.Path)
 	if !strings.HasPrefix(string(b), "%PDF") || !strings.Contains(string(b), "COMPLETE") || !strings.Contains(string(b), "admin") {
 		t.Fatal("label PDF lacks the status or checker")
+	}
+}
+
+// TestSetCheckShowsElapsedAndEstimatedTime is the TUI half of the
+// time-estimate feature: opening a check through a claimed ticket shows
+// "so far", and once there's finished-ticket history for checks it also
+// shows "usually ~"; opening one directly (no ticket, the TUI's own K
+// recount path in the earlier test) shows neither.
+func TestSetCheckShowsElapsedAndEstimatedTime(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	if _, err := app.legoDB.Exec(`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1');
+		INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10)`); err != nil {
+		t.Fatal(err)
+	}
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	tk, err := app.legoDB.AssignTicket(lego.TicketCheck, "75192-1", "75192-1", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.ClaimTicket(tk.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckIntake)
+	if v := plain(app.View()); !strings.Contains(v, "so far") || strings.Contains(v, "usually") {
+		t.Fatalf("a freshly claimed check with no finished-ticket history yet:\n%s", v)
+	}
+
+	// Seed one finished check 20 minutes long so EstimatePace has something to average.
+	other, err := app.legoDB.AssignTicket(lego.TicketCheck, "10696-1", "10696-1", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.ClaimTicket(other.ID, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := app.legoDB.Exec(`UPDATE job_tickets SET status = 'done', claimed_at = ?, done_at = ? WHERE id = ?`,
+		now.Add(-20*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), other.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckRecount)
+	if v := plain(app.View()); !strings.Contains(v, "so far (usually ~20m)") {
+		t.Fatalf("with history, should show the estimate too:\n%s", v)
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
 func newAdminTestServer(s *Server) *httptest.Server {
@@ -146,6 +148,45 @@ func TestAdminCanReopenAFinishedCheck(t *testing.T) {
 	open, err := db.OpenTickets("check", "anyone")
 	if err != nil || len(open) != 1 {
 		t.Errorf("open tickets after reopening = %+v %v, want exactly one", open, err)
+	}
+}
+
+// TestAdminTicketListShowsEstimatedAlongsideElapsed is the supervisor-view
+// half of the time-estimate feature: dave's claimed check (checkWalkEnv's
+// setup) carries both an elapsed time and, once there's finished-ticket
+// history for "check", an estimate too.
+func TestAdminTicketListShowsEstimatedAlongsideElapsed(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	asAdmin(t, "dave")
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	tk, err := db.AssignTicket(lego.TicketCheck, "10696-1", "Classic Box", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "sam"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := db.Exec(`UPDATE job_tickets SET status = ?, claimed_at = ?, done_at = ? WHERE id = ?`,
+		lego.TicketDone, now.Add(-10*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), tk.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := authed(t, http.MethodGet, srv.URL+"/mobile/admin/tickets", token, nil)
+	var list []adminTicketRow
+	_ = json.NewDecoder(resp.Body).Decode(&list)
+	if resp.StatusCode != http.StatusOK || len(list) != 1 {
+		t.Fatalf("admin ticket list = %d %+v, want dave's one still-claimed check", resp.StatusCode, list)
+	}
+	row := list[0]
+	if row.ClaimedAt == "" || row.ClaimedForSeconds < 0 {
+		t.Errorf("claimed_at/claimed_for_seconds = %q/%d, want a present, non-negative elapsed time", row.ClaimedAt, row.ClaimedForSeconds)
+	}
+	if row.EstimatedSeconds != 600 {
+		t.Errorf("estimated_seconds = %d, want 600 (10 minutes) once there's history", row.EstimatedSeconds)
 	}
 }
 
