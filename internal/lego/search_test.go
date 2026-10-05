@@ -102,6 +102,36 @@ func TestCatalogSetAndElementLookup(t *testing.T) {
 	}
 }
 
+// TestCatalogSetAppliesAnImageOverride is the direct test for the
+// admin-editable set image feature: SetImageOverride must win over the
+// catalog's own picture, and clearing it (blank) must fall back to the
+// catalog again — CatalogSet is the one place every reader (TUI, CLI,
+// mobile) goes through, so this covers all of them at once.
+func TestCatalogSetAppliesAnImageOverride(t *testing.T) {
+	db := loadedCatalog(t)
+	before, err := db.CatalogSet("75192-1")
+	if err != nil || before == nil || before.ImgURL == "" {
+		t.Fatalf("CatalogSet before an override = %+v %v", before, err)
+	}
+	catalogURL := before.ImgURL
+
+	if err := db.SetImageOverride("75192-1", "https://example.com/my-falcon.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.CatalogSet("75192-1")
+	if err != nil || after == nil || after.ImgURL != "https://example.com/my-falcon.jpg" {
+		t.Errorf("CatalogSet with an override = %+v %v, want the override URL", after, err)
+	}
+
+	if err := db.SetImageOverride("75192-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := db.CatalogSet("75192-1")
+	if err != nil || cleared == nil || cleared.ImgURL != catalogURL {
+		t.Errorf("CatalogSet after clearing the override = %+v %v, want back to %q", cleared, err, catalogURL)
+	}
+}
+
 func TestThemePathSurvivesACycle(t *testing.T) {
 	db := openScratchDB(t)
 	db.Exec(`INSERT INTO cat_themes (id, name, parent_id) VALUES (1,'A',2),(2,'B',1)`)

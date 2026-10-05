@@ -153,6 +153,10 @@ func (d *DB) SearchCatalogSets(term string, limit int) ([]SetHit, error) {
 }
 
 // CatalogSet returns one set by number ("75192" and "75192-1" both work), or nil.
+// An admin's image override (SetImageOverride) replaces the catalog's own
+// picture here — the one place every reader (TUI, CLI, the mobile API's
+// lineView) goes through, so none of them need their own override lookup
+// and a change is visible everywhere on the very next read, live.
 func (d *DB) CatalogSet(num string) (*SetHit, error) {
 	num = rebrickableSetNum(num)
 	if num == "" {
@@ -162,7 +166,11 @@ func (d *DB) CatalogSet(num string) (*SetHit, error) {
 	if err != nil || len(hits) == 0 {
 		return nil, err
 	}
-	return &hits[0], nil
+	hit := hits[0]
+	if override := d.GetSetState(hit.Num).ImageURL; override != "" {
+		hit.ImgURL = override
+	}
+	return &hit, nil
 }
 
 // ThemePath is a theme's name with its parents ("Star Wars - Ultimate Collector

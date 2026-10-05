@@ -121,6 +121,54 @@ func TestMigrationKeepsExistingRowsAndAddsColour(t *testing.T) {
 	}
 }
 
+// TestMigrationAddsImageURLToSetState is the direct test for the admin-set-
+// image feature's migration path: a real lego.db already at user_version 1
+// (the "Version 1 added colour to owned_parts" release) has set_state
+// without image_url at all — ALTER TABLE must add it without losing the
+// existing row, and the column must actually be usable afterwards.
+func TestMigrationAddsImageURLToSetState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lego.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`
+		CREATE TABLE owned_parts (id INTEGER PRIMARY KEY AUTOINCREMENT, part_num TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+			category TEXT NOT NULL DEFAULT '', color_id INTEGER NOT NULL DEFAULT -1, color_name TEXT NOT NULL DEFAULT '',
+			qty INTEGER NOT NULL DEFAULT 0, min_qty INTEGER NOT NULL DEFAULT 0, synced_part_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+		CREATE TABLE set_state (set_num TEXT PRIMARY KEY, location TEXT NOT NULL DEFAULT '', condition TEXT NOT NULL DEFAULT '',
+			condition_note TEXT NOT NULL DEFAULT '', missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0,
+			pdb_location_id INTEGER NOT NULL DEFAULT 0);
+		INSERT INTO set_state (set_num, location, condition) VALUES ('75192-1', 'Shelf B2', 'built');
+		PRAGMA user_version = 1`)
+	raw.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (migrating v1 -> v2): %v", err)
+	}
+	defer db.Close()
+
+	var version int
+	_ = db.QueryRow("PRAGMA user_version").Scan(&version)
+	if version != schemaVersion {
+		t.Errorf("user_version = %d, want %d", version, schemaVersion)
+	}
+	st := db.GetSetState("75192-1")
+	if st.Location != "Shelf B2" || st.Condition != "built" || st.ImageURL != "" {
+		t.Fatalf("the existing row must survive with an empty image_url: %+v", st)
+	}
+	if err := db.SetImageOverride("75192-1", "https://example.com/falcon.jpg"); err != nil {
+		t.Fatalf("SetImageOverride after migration: %v", err)
+	}
+	if st = db.GetSetState("75192-1"); st.ImageURL != "https://example.com/falcon.jpg" {
+		t.Errorf("ImageURL after SetImageOverride = %q", st.ImageURL)
+	}
+}
+
 // Every telnet/web session is its own process opening the file: several may
 // try to migrate at once, and exactly one may do the rebuild.
 func TestConcurrentOpensMigrateSafely(t *testing.T) {

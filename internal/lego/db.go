@@ -155,7 +155,8 @@ func ensureSchema(db *sql.DB) error {
 		// A set's parts check (intake when added, recount for a stock check), and what the set is short.
 		`CREATE TABLE IF NOT EXISTS set_state (
 			set_num TEXT PRIMARY KEY, location TEXT NOT NULL DEFAULT '', condition TEXT NOT NULL DEFAULT '', condition_note TEXT NOT NULL DEFAULT '',
-			missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0, pdb_location_id INTEGER NOT NULL DEFAULT 0)`,
+			missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0, pdb_location_id INTEGER NOT NULL DEFAULT 0,
+			image_url TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS set_checks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
 			checked_by TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT '',
@@ -293,8 +294,10 @@ func ensureSchema(db *sql.DB) error {
 }
 
 // schemaVersion is the PRAGMA user_version this code expects. Version 1 added
-// colour to owned_parts.
-const schemaVersion = 1
+// colour to owned_parts. Version 2 added set_state.image_url (an admin's
+// override of a set's catalog picture, read ahead of cat_sets.img_url so it
+// survives the next Rebrickable catalog sync — see DB.CatalogSet).
+const schemaVersion = 2
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -361,9 +364,20 @@ func migrate(db *sql.DB) error {
 				}
 			}
 		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	}
+	if version < 2 {
+		var hasImageURL int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('set_state') WHERE name = 'image_url'").Scan(&hasImageURL); err != nil {
 			return err
 		}
+		if hasImageURL == 0 {
+			if _, err := conn.ExecContext(ctx, `ALTER TABLE set_state ADD COLUMN image_url TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("migrating set_state: %w", err)
+			}
+		}
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return err

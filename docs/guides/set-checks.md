@@ -79,6 +79,11 @@ Bluish Gray" or a part number off the screen.
 The add/confirm form and *Completion dashboard → I* record a **location** (shelf, box, bin) and a **condition** (sealed,
 built, in pieces, displayed). Both appear on labels. CLI: `wms-go lego set-info 75192 --location "Shelf B2" --condition built`.
 
+The same screen has an **image URL override** — when Rebrickable's own picture for a set is wrong or missing, an admin
+can replace it there (`--image-url` from the shell; blank clears it, back to the catalog's own). It's picked up
+everywhere that set's picture shows — the TUI, label sheets, the mobile app's check/pick screen — the next time any of
+them loads it, with nothing to re-sync by hand.
+
 ## From the shell
 
 ```bash

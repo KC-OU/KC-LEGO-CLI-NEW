@@ -622,7 +622,7 @@ func labelSizes() string {
 }
 
 func newLegoSetInfoCmd() *cobra.Command {
-	var location, condition, note string
+	var location, condition, note, imageURL string
 	cmd := &cobra.Command{
 		Use: "set-info <set>", Short: "Where a set is kept and its condition (sealed, built, in pieces, displayed)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -645,11 +645,19 @@ func newLegoSetInfoCmd() *cobra.Command {
 			if err := db.SetInfo(num, location, strings.ToLower(condition), note); err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("image-url") {
+				if err := db.SetImageOverride(num, imageURL); err != nil {
+					return err
+				}
+			}
 			st = db.GetSetState(num)
 			t := ui.New()
 			say(ui.Fact(t, "Set", num))
 			say(ui.Fact(t, "Location", orDash(st.Location)))
 			say(ui.Fact(t, "Condition", orDash(strings.TrimSpace(st.Condition+" "+st.ConditionNote))))
+			if st.ImageURL != "" {
+				say(ui.Fact(t, "Image override", st.ImageURL))
+			}
 			check := "not checked"
 			if c := st.LastCheck; c != nil {
 				check = fmt.Sprintf("%s by %s — %d missing, %d on order", c.FinishedAt.Local().Format("2 Jan 2006"), c.CheckedBy, st.MissingQty, st.OnOrderQty)
@@ -661,5 +669,6 @@ func newLegoSetInfoCmd() *cobra.Command {
 	cmd.Flags().StringVar(&location, "location", "", "shelf, box or bin")
 	cmd.Flags().StringVar(&condition, "condition", "", "sealed, built, in pieces or displayed")
 	cmd.Flags().StringVar(&note, "note", "", "condition note")
+	cmd.Flags().StringVar(&imageURL, "image-url", "", "override the catalog picture (blank clears it, back to Rebrickable's own)")
 	return cmd
 }

@@ -456,6 +456,11 @@ type SetState struct {
 	MissingQty, OnOrderQty                     int
 	LastCheck                                  *SetCheck // without lines
 	PDBLocationID                              int
+	// ImageURL is an admin's override of this set's picture (blank = use the
+	// catalog's own cat_sets.img_url). Set via SetImageOverride, applied by
+	// DB.CatalogSet so every reader — TUI, CLI, the mobile API's lineView —
+	// sees it the same way, with no separate push to keep them in sync.
+	ImageURL string
 }
 
 // Incomplete reports whether the last check found parts missing.
@@ -468,8 +473,8 @@ func (s *SetState) Checked() bool { return s.LastCheck != nil }
 func (d *DB) GetSetState(setNum string) *SetState {
 	s := &SetState{SetNum: setNum}
 	var checkID int64
-	_ = d.QueryRow(`SELECT location, condition, condition_note, missing_qty, last_check_id, pdb_location_id FROM set_state WHERE set_num = ?`, setNum).
-		Scan(&s.Location, &s.Condition, &s.ConditionNote, &s.MissingQty, &checkID, &s.PDBLocationID)
+	_ = d.QueryRow(`SELECT location, condition, condition_note, missing_qty, last_check_id, pdb_location_id, image_url FROM set_state WHERE set_num = ?`, setNum).
+		Scan(&s.Location, &s.Condition, &s.ConditionNote, &s.MissingQty, &checkID, &s.PDBLocationID, &s.ImageURL)
 	if checkID > 0 {
 		c := &SetCheck{ID: checkID}
 		var started, finished string
@@ -490,6 +495,15 @@ func (d *DB) SetInfo(setNum, location, condition, note string) error {
 	_, err := d.Exec(`INSERT INTO set_state (set_num, location, condition, condition_note) VALUES (?,?,?,?)
 		ON CONFLICT(set_num) DO UPDATE SET location = excluded.location, condition = excluded.condition, condition_note = excluded.condition_note`,
 		setNum, strings.TrimSpace(location), strings.TrimSpace(condition), strings.TrimSpace(note))
+	return err
+}
+
+// SetImageOverride records an admin's replacement picture for a set (blank
+// clears it, back to the catalog's own cat_sets.img_url). See DB.CatalogSet.
+func (d *DB) SetImageOverride(setNum, url string) error {
+	_, err := d.Exec(`INSERT INTO set_state (set_num, image_url) VALUES (?,?)
+		ON CONFLICT(set_num) DO UPDATE SET image_url = excluded.image_url`,
+		setNum, strings.TrimSpace(url))
 	return err
 }
 

@@ -802,13 +802,18 @@ func setInfoScreen() screenModel {
 		build: func(app *App) []ui.Field {
 			st := app.legoDB.GetSetState(app.ws().set)
 			return []ui.Field{{Label: "Set", Value: app.ws().set, Protected: true}, {Label: "Location (shelf, box, bin)", Value: st.Location},
-				{Label: "Condition: sealed, built, in pieces, displayed", Value: st.Condition}, {Label: "Condition note", Value: st.ConditionNote}}
+				{Label: "Condition: sealed, built, in pieces, displayed", Value: st.Condition}, {Label: "Condition note", Value: st.ConditionNote},
+				{Label: "Image URL override (blank = use the catalog picture)", Value: st.ImageURL}}
 		},
 		submit: func(app *App, v []string) {
 			if !app.require("lego.edit", "SET_INFO") {
 				return
 			}
 			if err := app.legoDB.SetInfo(app.ws().set, v[1], strings.ToLower(v[2]), v[3]); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			if err := app.legoDB.SetImageOverride(app.ws().set, v[4]); err != nil {
 				app.setMsg(err.Error(), true)
 				return
 			}
