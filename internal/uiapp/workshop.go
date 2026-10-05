@@ -56,7 +56,7 @@ func workshopScreens() map[string]screenModel {
 	return map[string]screenModel{
 		scrWorkshop:         workshopHubScreen(),
 		scrCheckAsk:         checkAskScreen(),
-		scrCompletion:       &selectList{panelID: "SETCMP", title: "Set Completion", rows: completionRows, keys: completionKeys, hint: "↑/↓ choose  Enter missing parts  K check again  L label  I location"},
+		scrCompletion:       &selectList{panelID: "SETCMP", title: "Set Completion", rows: completionRows, keys: completionKeys, hint: "↑/↓ choose  Enter missing parts  K check again  L label  I location  R reopen for someone else"},
 		scrSetMissing:       &selectList{panelID: "SETMIS", title: "Missing Parts & Prices", rows: setMissingRows, keys: setMissingKeys, hint: "P fetch prices  Enter shop links  T take spare  O order all  W shopping list  L label"},
 		scrShopLinks:        &shopLinksScreen{},
 		scrOrders:           &selectList{panelID: "ORDERS", title: "Parts Orders", rows: orderRows, keys: orderKeys, hint: "Enter lines  N new  E edit  O ordered  S shipped  R received  C cancel", emptyHint: "N starts a new order once you know what you're buying and from where."},
@@ -213,6 +213,15 @@ func completionKeys(app *App, set string, msg tea.KeyMsg) {
 	case isKey(msg, 'i'):
 		app.ws().set = set
 		app.goTo(scrSetInfo)
+	case isKey(msg, 'r'):
+		if !app.checkAdmin("SETTINGS_ACCESS") {
+			return
+		}
+		label := set
+		if cs, _ := app.legoDB.CatalogSet(set); cs != nil && cs.Name != "" {
+			label = set + " " + cs.Name
+		}
+		startReopen(app, lego.TicketCheck, set, label)
 	}
 }
 

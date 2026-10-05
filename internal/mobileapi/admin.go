@@ -146,6 +146,40 @@ func (s *Server) handleAdminAssignTicket(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, adminTicketRow{ID: tk.ID, Kind: tk.Kind, Target: tk.Target, Label: tk.Label, AssignedTo: tk.AssignedTo, Status: tk.Status})
 }
 
+type reopenTicketRequest struct {
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Reason string `json:"reason"`
+}
+
+// handleAdminReopenTicket is "Admin: reopen a wrong check/order" — a fresh,
+// open ticket against the same set/order (lego.DB.ReopenTicket), reached
+// from the phone the same way assign-ticket is. The finished ticket it
+// points at is untouched; claiming the new one is what makes a check a
+// recount (see loadSortedCheck), so there's nothing else to wire up here.
+func (s *Server) handleAdminReopenTicket(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_REOPEN_TICKET") {
+		return
+	}
+	var req reopenTicketRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.Kind, req.Target, req.Reason = strings.TrimSpace(req.Kind), strings.TrimSpace(req.Target), strings.TrimSpace(req.Reason)
+	if req.Kind != lego.TicketCheck && req.Kind != lego.TicketOrder || req.Target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind (check or order) and target are required"})
+		return
+	}
+	tk, err := s.legoDB.ReopenTicket(req.Kind, req.Target, s.ticketLabel(req.Kind, req.Target), req.Reason, sess.Username)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit.Log(sess.Username, sess.Role, "TICKET_REOPENED", "SUCCESS", tk.Label+" ("+tk.Kind+"): "+req.Reason)
+	writeJSON(w, http.StatusOK, adminTicketRow{ID: tk.ID, Kind: tk.Kind, Target: tk.Target, Label: tk.Label, AssignedTo: tk.AssignedTo, Status: tk.Status})
+}
+
 // ticketLabel mirrors assignTargetScreen's own label lookup (internal/
 // uiapp/tickets_screens.go) so a phone-assigned ticket reads the same as a
 // TUI-assigned one — the set's name, or the order's supplier.

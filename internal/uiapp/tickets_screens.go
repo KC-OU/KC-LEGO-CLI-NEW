@@ -28,6 +28,8 @@ const (
 
 	scrForceOffPick    = "force_off_pick"
 	scrForceOffMessage = "force_off_message"
+
+	scrReopenReason = "reopen_reason"
 )
 
 // roleForApp is which accuracy/ticket role the signed-in user works as right
@@ -255,6 +257,50 @@ type assignDraft struct {
 func startAssign(app *App, kind string) {
 	app.assign = &assignDraft{kind: kind}
 	app.goTo(scrAssignTarget)
+}
+
+// startReopen is "Admin: reopen a wrong check/order" 's entry point — called
+// with the target already known (the Completion dashboard's R key, a
+// checked set under the cursor), so unlike startAssign there's no "which
+// one?" step; it goes straight to asking why. Left open for anyone to
+// claim, same as ReopenTicket always does — no "who" step either.
+func startReopen(app *App, kind, target, label string) {
+	app.assign = &assignDraft{kind: kind, target: target, label: label}
+	app.goTo(scrReopenReason)
+}
+
+func reopenReasonScreen() screenModel {
+	return &formScreen{
+		panelID: "REOPEN",
+		title:   "Reopen — why does this need to be redone?",
+		build: func(app *App) []ui.Field {
+			label := ""
+			if app.assign != nil {
+				label = app.assign.label
+			}
+			return []ui.Field{{Label: "Reopening " + label, Protected: true}, {Label: "Reason"}}
+		},
+		submit: func(app *App, v []string) {
+			if app.assign == nil {
+				app.onBack()
+				return
+			}
+			if !app.checkAdmin("SETTINGS_ACCESS") {
+				app.assign = nil
+				return
+			}
+			_, err := app.legoDB.ReopenTicket(app.assign.kind, app.assign.target, app.assign.label, v[1], app.userName())
+			kind, label := app.assign.kind, app.assign.label
+			app.assign = nil
+			if err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			app.audit.Log(app.userName(), "", "TICKET_REOPENED", "SUCCESS", fmt.Sprintf("%s (%s): %s", label, kind, v[1]))
+			app.onBack()
+			app.setMsg("Reopened "+label+" — back in the open queue for anyone to claim.", false)
+		},
+	}
 }
 
 func assignTargetScreen() screenModel {

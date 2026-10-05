@@ -15,6 +15,7 @@ func newAdminTestServer(s *Server) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
+	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
 	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
 	return httptest.NewServer(mux)
 }
@@ -108,6 +109,43 @@ func TestAdminCanAssignAndSeeTheQueue(t *testing.T) {
 	_ = json.NewDecoder(resp2.Body).Decode(&list)
 	if resp2.StatusCode != http.StatusOK || len(list) != 2 {
 		t.Fatalf("admin ticket list = %d %+v, want dave's claimed one and alex's queued one", resp2.StatusCode, list)
+	}
+}
+
+// TestAdminCanReopenAFinishedCheck covers "reopen a wrong check/order": a
+// reason is required, and the finished ticket checkWalkEnv's claim/finish
+// would have produced stays untouched while a fresh open one appears.
+func TestAdminCanReopenAFinishedCheck(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	asAdmin(t, "dave")
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	tickets, err := db.AllOpenTickets()
+	if err != nil || len(tickets) != 1 {
+		t.Fatalf("checkWalkEnv's claimed ticket = %+v %v", tickets, err)
+	}
+	if err := db.FinishTicket("check", "75192-1", "dave"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := authed(t, http.MethodPost, srv.URL+"/mobile/admin/reopen-ticket", token,
+		map[string]string{"kind": "check", "target": "75192-1"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("reopen without a reason = %d, want 400", resp.StatusCode)
+	}
+
+	resp = authed(t, http.MethodPost, srv.URL+"/mobile/admin/reopen-ticket", token,
+		map[string]string{"kind": "check", "target": "75192-1", "reason": "miscounted"})
+	body := decodeMap(t, resp)
+	if resp.StatusCode != http.StatusOK || body["status"] != "queued" {
+		t.Fatalf("reopen-ticket = %d %+v", resp.StatusCode, body)
+	}
+
+	open, err := db.OpenTickets("check", "anyone")
+	if err != nil || len(open) != 1 {
+		t.Errorf("open tickets after reopening = %+v %v, want exactly one", open, err)
 	}
 }
 

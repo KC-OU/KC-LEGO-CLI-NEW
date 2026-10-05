@@ -112,6 +112,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrJobQueue:        jobQueueScreen(),
 		scrForceOffPick:    forceOffPickScreen(),
 		scrForceOffMessage: forceOffMessageScreen(),
+		scrReopenReason:    reopenReasonScreen(),
 		scrQuitJob:         quitJobScreen(),
 		scrAbandonAuth:     abandonAuthScreen(),
 		scrScanClaim:       scanClaimScreen(),

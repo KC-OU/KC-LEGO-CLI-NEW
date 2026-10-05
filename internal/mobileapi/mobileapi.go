@@ -103,6 +103,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /mobile/admin/users", s.withSession(s.handleAdminUsers))
 	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
+	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

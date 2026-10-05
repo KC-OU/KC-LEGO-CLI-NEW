@@ -47,6 +47,53 @@ func TestTicketAssignClaimFinish(t *testing.T) {
 	}
 }
 
+// TestReopenTicketRequiresAReasonAndLeavesTheOriginalAlone is the direct
+// test for "Admin: reopen a wrong check/order": a reason is mandatory, the
+// finished ticket is untouched (the audit trail — "this was redone" sits
+// beside the original, nothing is overwritten), and the new one is open for
+// anyone to claim.
+func TestReopenTicketRequiresAReasonAndLeavesTheOriginalAlone(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	tk, err := db.AssignTicket(TicketCheck, "75192-1", "Millennium Falcon", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishTicket(TicketCheck, "75192-1", "dave"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ReopenTicket(TicketCheck, "75192-1", "Millennium Falcon", "", "admin"); err == nil {
+		t.Error("ReopenTicket without a reason must fail")
+	}
+
+	reopened, err := db.ReopenTicket(TicketCheck, "75192-1", "Millennium Falcon", "miscounted the dark grey plates", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.ID == tk.ID || reopened.Status != TicketQueued || reopened.AssignedTo != "" {
+		t.Errorf("reopened ticket = %+v, want a new queued/open ticket", reopened)
+	}
+
+	// The original stays exactly as finished — a new row, not a rewrite.
+	var stillDone string
+	if err := db.QueryRow(`SELECT status FROM job_tickets WHERE id = ?`, tk.ID).Scan(&stillDone); err != nil || stillDone != TicketDone {
+		t.Errorf("the original ticket's status = %q, %v, want unchanged %q", stillDone, err, TicketDone)
+	}
+
+	open, err := db.OpenTickets(TicketCheck, "anyone")
+	if err != nil || len(open) != 1 || open[0].ID != reopened.ID {
+		t.Errorf("open tickets = %+v, %v, want just the reopened one", open, err)
+	}
+}
+
 func TestTicketAbandonReturnsToOpenQueue(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
 	if err != nil {

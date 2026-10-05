@@ -3,10 +3,57 @@ package uiapp
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
+
+// TestReopenKeyOpensTheReasonScreenForAnAdmin is the direct test for
+// "Admin: reopen a wrong check/order" 's TUI entry point: R on a Completion
+// dashboard row goes straight to the reason prompt (no "which one?" step —
+// the target's already under the cursor), and submitting creates a fresh,
+// open ticket via lego.DB.ReopenTicket.
+func TestReopenKeyOpensTheReasonScreenForAnAdmin(t *testing.T) {
+	app := newTestApp(t)
+	app.cur, app.stack = scrCompletion, nil
+
+	completionKeys(app, "75192-1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if app.cur != scrReopenReason {
+		t.Fatalf("R should open the reopen-reason screen, got %q (%s)", app.cur, app.message)
+	}
+	if app.assign == nil || app.assign.kind != lego.TicketCheck || app.assign.target != "75192-1" {
+		t.Fatalf("assign draft = %+v, want a check ticket targeting 75192-1", app.assign)
+	}
+
+	app.screens[scrReopenReason].(*formScreen).submit(app, []string{"", "miscounted the dark grey plates"})
+
+	open, err := app.legoDB.OpenTickets(lego.TicketCheck, "anyone")
+	if err != nil || len(open) != 1 || open[0].Target != "75192-1" || open[0].AssignedTo != "" {
+		t.Fatalf("open tickets after reopening = %+v, %v, want one open ticket for 75192-1", open, err)
+	}
+}
+
+// TestReopenKeyDeniesANonAdmin confirms the gate actually gates: a governed
+// checker-only account pressing R must not reach the reason screen or
+// create a ticket.
+func TestReopenKeyDeniesANonAdmin(t *testing.T) {
+	app := newTestApp(t)
+	dualSkilledSignOn(t, app, "dave")
+	app.cur, app.stack = scrCompletion, nil
+
+	completionKeys(app, "75192-1", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if app.cur == scrReopenReason {
+		t.Fatal("a non-admin pressing R must not reach the reopen-reason screen")
+	}
+	if open, _ := app.legoDB.OpenTickets(lego.TicketCheck, "anyone"); len(open) != 0 {
+		t.Errorf("a denied reopen must not create a ticket, got %+v", open)
+	}
+}
 
 func TestToggleAdminViewRoundTrip(t *testing.T) {
 	app := newTestApp(t)

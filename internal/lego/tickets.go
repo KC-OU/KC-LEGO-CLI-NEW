@@ -66,6 +66,22 @@ func (d *DB) AssignTicket(kind, target, label, assignedTo, priority, note, creat
 		Priority: priority, Note: note, Token: token, CreatedBy: createdBy, CreatedAt: now}, nil
 }
 
+// ReopenTicket is "Admin: reopen a wrong check/order": a fresh ticket
+// against the same set/order, left open for anyone to claim (claiming a
+// check ticket for a set that's already been checked naturally becomes a
+// recount — see loadSortedCheck/CheckRecount — so there's no separate
+// "redo" code path to maintain). It's a thin wrapper over AssignTicket
+// rather than new mechanics: the audit trail is a new row either way, which
+// is the whole point — "this was redone" stays visible next to the
+// original, not overwritten. reason is required (unlike a plain assign)
+// so there's always a stated why next to it.
+func (d *DB) ReopenTicket(kind, target, label, reason, createdBy string) (*Ticket, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, errors.New("a reason is required to reopen a ticket")
+	}
+	return d.AssignTicket(kind, target, label, "", "", "reopened: "+reason, createdBy)
+}
+
 // OpenTickets lists tickets a user could see in "Request": queued and either open
 // (assigned_to "") or already assigned to them, for the given kind.
 func (d *DB) OpenTickets(kind, forUser string) ([]Ticket, error) {

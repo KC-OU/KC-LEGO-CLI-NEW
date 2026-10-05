@@ -64,6 +64,16 @@ there yourself — the ticket only remembers who's on it.
 job ticket") — printing it on a physical ticket alongside the usual Code 128 part/set labels lets
 someone claim and open a job by scanning it, no menu navigation needed.
 
+**From the phone**: an admin can do the same assigning without a terminal — `GET
+/mobile/admin/tickets` (the open queue, who's claimed what and for how long), `GET
+/mobile/admin/users` and `POST /mobile/admin/assign-ticket`. Gated the same way *Assign Work*
+is in the TUI; no mobile screen calls these yet, so for now this is reachable from a REST client
+or whatever mobile screen is built against it next.
+
+**Flagging a wrong location**: `POST /mobile/flag-location` lets a picker or checker report a
+part that genuinely isn't where the system says — it messages admins immediately (the same path
+as *Message an Admin*) and doesn't block or change the line; they keep working.
+
 ## Leaving a job
 
 Pressing your usual back key (Esc/F3/F12) while a ticket-backed check or order is open asks:
@@ -89,6 +99,19 @@ is exactly where the next person (or the same person, on a different job) finds 
 taken off it is mid-check or mid-order right now, their own screen notices within about 15 seconds
 (the same background check that delivers messages) and returns them to their hub with the message
 waiting.
+
+## Reopening a finished check or order
+
+A set's Completion dashboard (*LEGO → 8 Set Workshop → 2*) has an **R** key next to a checked
+set: when a check turns out to have been done wrong — miscounted, missed a line — this puts a
+fresh ticket straight back in the open queue for anyone to claim, without touching the finished
+one it's correcting. It asks for a reason first (required), and that reason is recorded on the
+new ticket's own note, same as the rest of this page's audit trail — nothing about the original
+finished check is rewritten or deleted; the "this was redone" record sits beside it. Claiming the
+new ticket on an already-checked set is automatically a **recount**, same as pressing K yourself,
+so there's nothing extra to set up. Reached from the phone the same way (an admin action,
+`POST /mobile/admin/reopen-ticket`); orders can be reopened the same way from there even though
+there's no dedicated TUI key for it yet.
 
 ## Accuracy
 
