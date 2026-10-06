@@ -140,6 +140,60 @@ func TestEstimatePaceAveragesRecentFinishedTickets(t *testing.T) {
 	}
 }
 
+// TestTicketHistoryIsOnlyThisUsersFinishedTicketsNewestFirst is the direct
+// test for the check/pick history screen's data: only forUser's own DONE
+// tickets, most recent first, nothing queued/claimed/abandoned or belonging
+// to someone else leaking in.
+func TestTicketHistoryIsOnlyThisUsersFinishedTicketsNewestFirst(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	finish := func(target, by string, doneAt time.Time) {
+		t.Helper()
+		tk, err := db.AssignTicket(TicketCheck, target, target, "", "", "", "admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.ClaimTicket(tk.ID, by); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE job_tickets SET status = ?, done_at = ? WHERE id = ?`, TicketDone, doneAt.Format(time.RFC3339), tk.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	finish("1-1", "dave", now.Add(-2*time.Hour))
+	finish("2-1", "dave", now.Add(-1*time.Hour)) // most recent of dave's
+	finish("3-1", "sam", now)                    // someone else's — must not appear for dave
+
+	// An abandoned ticket (back in the open queue) must not count as history either.
+	open, err := db.AssignTicket(TicketCheck, "4-1", "4-1", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(open.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AbandonTicket(open.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+
+	hist, err := db.TicketHistory("dave", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 || hist[0].Target != "2-1" || hist[1].Target != "1-1" {
+		t.Fatalf("dave's history = %+v, want [2-1, 1-1] newest first", hist)
+	}
+
+	if hist, err := db.TicketHistory("dave", 1); err != nil || len(hist) != 1 || hist[0].Target != "2-1" {
+		t.Errorf("limit=1 should return just the newest: %+v, %v", hist, err)
+	}
+}
+
 func TestTicketAbandonReturnsToOpenQueue(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "lego.db"))
 	if err != nil {

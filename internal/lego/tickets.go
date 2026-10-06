@@ -118,6 +118,21 @@ func (d *DB) AllOpenTickets() ([]Ticket, error) {
 	return scanTickets(rows)
 }
 
+// TicketHistory is forUser's own past finished tickets, most recent first —
+// the check/pick history screen's data. Deliberately just the ticket
+// itself (what, when, how long): like EstimatePace, there's no reliable
+// link from a ticket back to the specific set_checks/order row it produced
+// (a set can be recounted many times), so outcome detail (missing/extra
+// counts) isn't attempted here rather than guessed at.
+func (d *DB) TicketHistory(forUser string, limit int) ([]Ticket, error) {
+	rows, err := d.Query(`SELECT id, kind, target, label, assigned_to, status, priority, note, token, created_by, created_at, claimed_at, done_at
+		FROM job_tickets WHERE assigned_to = ? AND status = ? ORDER BY done_at DESC LIMIT ?`, forUser, TicketDone, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanTickets(rows)
+}
+
 func scanTickets(rows *sql.Rows) ([]Ticket, error) {
 	defer rows.Close()
 	var out []Ticket

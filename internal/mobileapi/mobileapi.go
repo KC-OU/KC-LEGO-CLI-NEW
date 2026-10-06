@@ -100,6 +100,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
 	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
 	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
+	mux.HandleFunc("GET /mobile/history", s.withSession(s.handleHistory))
 	mux.HandleFunc("GET /mobile/admin/users", s.withSession(s.handleAdminUsers))
 	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))

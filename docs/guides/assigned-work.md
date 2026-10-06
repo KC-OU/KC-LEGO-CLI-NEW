@@ -94,6 +94,14 @@ produced (a set can be recounted many times), so it's "a check like this usually
 long", not a precise countdown. With no finished-ticket history yet, nothing is shown rather than
 a made-up number.
 
+## Your history
+
+`GET /mobile/history` is the signed-in user's own finished tickets, most recent first — the check/
+pick history screen's data (50 at a time). Like the time estimate above, it's deliberately just the
+ticket itself (what, when, how long it took) and not a per-part outcome: there's no reliable link
+from a ticket back to exactly which check or order row it produced, so missing/extra counts aren't
+attempted here rather than guessed at.
+
 ## Leaving a job
 
 Pressing your usual back key (Esc/F3/F12) while a ticket-backed check or order is open asks:
