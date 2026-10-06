@@ -41,6 +41,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newPreflightCmd())
 	root.AddCommand(newSysCmd())
+	root.AddCommand(newAttendanceCmd())
 	root.AddCommand(newMenuCmd())
 	root.AddCommand(newDocsGenCmd(root))
 	addOutputFlags(root)

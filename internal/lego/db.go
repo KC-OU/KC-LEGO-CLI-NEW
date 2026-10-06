@@ -277,6 +277,27 @@ func ensureSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, actor TEXT NOT NULL DEFAULT '',
 			target TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(id)`,
+		// Who's scheduled to work which day (see attendance.go) — one row per
+		// user per date, start/end are free-text ("09:00") for display only,
+		// nothing here enforces them. emergency_override marks a row an admin
+		// added on the spot to let someone work a day they weren't on the
+		// rota for (the "quick NS override"), rather than a planned shift —
+		// IsScheduled treats both the same; the flag is just for the record.
+		`CREATE TABLE IF NOT EXISTS rota_entries (
+			username TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL DEFAULT '', end_time TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '', emergency_override INTEGER NOT NULL DEFAULT 0,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			PRIMARY KEY (username, date))`,
+		`CREATE INDEX IF NOT EXISTS idx_rota_entries_date ON rota_entries(date)`,
+		// One row per clock-in; clock_out_at "" means still clocked in (see
+		// attendance.go). A username can have at most one open (clock_out_at
+		// = '') row at a time — enforced in Go (ClockIn checks first), not by
+		// a partial unique index, to keep the "already clocked in" error
+		// message specific rather than a generic constraint failure.
+		`CREATE TABLE IF NOT EXISTS clock_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,
+			clock_in_at TEXT NOT NULL, clock_out_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_clock_events_user ON clock_events(username, clock_in_at)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -296,8 +317,9 @@ func ensureSchema(db *sql.DB) error {
 // schemaVersion is the PRAGMA user_version this code expects. Version 1 added
 // colour to owned_parts. Version 2 added set_state.image_url (an admin's
 // override of a set's catalog picture, read ahead of cat_sets.img_url so it
-// survives the next Rebrickable catalog sync — see DB.CatalogSet).
-const schemaVersion = 2
+// survives the next Rebrickable catalog sync — see DB.CatalogSet). Version 3
+// added rota_entries/clock_events (see attendance.go).
+const schemaVersion = 3
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -373,6 +395,25 @@ func migrate(db *sql.DB) error {
 		if hasImageURL == 0 {
 			if _, err := conn.ExecContext(ctx, `ALTER TABLE set_state ADD COLUMN image_url TEXT NOT NULL DEFAULT ''`); err != nil {
 				return fmt.Errorf("migrating set_state: %w", err)
+			}
+		}
+	}
+	if version < 3 {
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS rota_entries (
+				username TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL DEFAULT '', end_time TEXT NOT NULL DEFAULT '',
+				note TEXT NOT NULL DEFAULT '', emergency_override INTEGER NOT NULL DEFAULT 0,
+				created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+				PRIMARY KEY (username, date))`,
+			`CREATE INDEX IF NOT EXISTS idx_rota_entries_date ON rota_entries(date)`,
+			`CREATE TABLE IF NOT EXISTS clock_events (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,
+				clock_in_at TEXT NOT NULL, clock_out_at TEXT NOT NULL DEFAULT '')`,
+			`CREATE INDEX IF NOT EXISTS idx_clock_events_user ON clock_events(username, clock_in_at)`,
+		}
+		for _, s := range stmts {
+			if _, err := conn.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("migrating in rota_entries/clock_events: %w (%s)", err, s)
 			}
 		}
 	}

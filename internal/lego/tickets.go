@@ -159,6 +159,9 @@ func scanTickets(rows *sql.Rows) ([]Ticket, error) {
 // ClaimTicket assigns an open ticket to by (if it wasn't already named) and marks
 // it claimed. Refuses a ticket already claimed by someone else.
 func (d *DB) ClaimTicket(id int64, by string) error {
+	if err := d.RequireClockedIn(by); err != nil {
+		return err
+	}
 	res, err := d.Exec(`UPDATE job_tickets SET assigned_to = ?, status = ?, claimed_at = ?
 		WHERE id = ? AND status = ? AND (assigned_to = '' OR assigned_to = ?)`,
 		by, TicketClaimed, time.Now().Format(time.RFC3339), id, TicketQueued, by)

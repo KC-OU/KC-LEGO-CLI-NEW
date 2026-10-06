@@ -105,6 +105,13 @@ const (
 	// internal/gateway's reconnectRegistry doc comment for the shared-NAT
 	// risk this trades off before turning it on.
 	TelnetReconnectSeconds = "WMS_TELNET_RECONNECT_SECONDS"
+	// RequireClockIn gates claiming or advancing pick/check work (TUI and
+	// mobile) on being clocked in and on today's rota — see
+	// internal/lego.RequireClockedIn. "0" (the default) is off: turning this
+	// on with an empty rota locks everyone out of picking/checking until an
+	// admin populates it (`wms attendance rota set`), so it's an explicit
+	// opt-in once that's actually in place, not a day-one default.
+	RequireClockIn = "WMS_REQUIRE_CLOCK_IN"
 )
 
 func Defaults() map[string]string {
@@ -174,6 +181,7 @@ func Defaults() map[string]string {
 		TestBinaryPath:         "",
 		TestEnvFile:            "",
 		TelnetReconnectSeconds: "0",
+		RequireClockIn:         "0",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's

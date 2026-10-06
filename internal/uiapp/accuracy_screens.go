@@ -3,7 +3,9 @@ package uiapp
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -39,13 +41,34 @@ func myAccuracyScreen() screenModel {
 				rows[len(hist)-1-i] = []string{e.CreatedAt.Format("15:04"), e.Kind, orDash(fmtNonZero(e.Missing)), fmt.Sprintf("%+.1f%%", e.Delta), e.Reason}
 			}
 			var tr []string
-			for _, v := range trend {
-				tr = append(tr, fmt.Sprintf("%.0f", v))
+			for i, v := range trend { // trend[last] is today, trend[0] is 6 days ago — see AccuracyTrend
+				date := time.Now().AddDate(0, 0, -(len(trend) - 1 - i)).Format("2006-01-02")
+				if accuracyIsNS(app, app.userName(), date) {
+					tr = append(tr, "NS")
+				} else {
+					tr = append(tr, fmt.Sprintf("%.0f", v))
+				}
 			}
-			title := fmt.Sprintf("Today (%s): %.1f%%  —  last 7 days: %s", role, today, strings.Join(tr, "  "))
+			todayStr := fmt.Sprintf("%.1f%%", today)
+			if accuracyIsNS(app, app.userName(), time.Now().Format("2006-01-02")) {
+				todayStr = "NS (Not Scheduled)"
+			}
+			title := fmt.Sprintf("Today (%s): %s  —  last 7 days: %s", role, todayStr, strings.Join(tr, "  "))
 			return rows, title, nil
 		},
 	}
+}
+
+// accuracyIsNS reports whether date should show as "Not Scheduled" instead of
+// a percentage: only possible once the clock-in gate is actually on
+// (config.RequireClockIn) — before that, nobody has rota data, so every day
+// would wrongly show NS. See internal/lego.RequireClockedIn for the same gate.
+func accuracyIsNS(app *App, username, date string) bool {
+	if config.Get(config.RequireClockIn) != "1" {
+		return false
+	}
+	sched, err := app.legoDB.IsScheduled(username, date)
+	return err == nil && !sched
 }
 
 func fmtNonZero(n int) string {

@@ -141,6 +141,36 @@ so there's nothing extra to set up. Reached from the phone the same way (an admi
 `POST /mobile/admin/reopen-ticket`); orders can be reopened the same way from there even though
 there's no dedicated TUI key for it yet.
 
+## Clock-in and the rota
+
+```bash
+wms attendance clock-in dave
+wms attendance clock-out dave
+wms attendance status dave
+
+wms attendance rota set dave 2026-10-10 09:00 17:00 --note "covering lates"
+wms attendance rota show 2026-10-10        # everyone scheduled that day
+wms attendance rota clear dave 2026-10-10
+wms attendance rota override dave          # quick NS override: let dave work today anyway
+```
+
+There's no CLI login session the way the TUI/mobile have one, so every `attendance` command takes
+the username explicitly — run it from wherever you'd run any other admin command.
+
+**Off by default** (`WMS_REQUIRE_CLOCK_IN=0`). With it off, clock-in/rota data can be recorded and
+viewed, but nothing is actually gated — matches today's behaviour exactly, so there's nothing to
+break by adopting this gradually. Set `WMS_REQUIRE_CLOCK_IN=1` once your rota is actually populated
+to start enforcing it: claiming a ticket (TUI) and the pick/check walk (mobile, `/mobile/next` and
+`/mobile/confirm`) both require being clocked in **and** either on today's rota or covered by a
+quick NS override — turning it on with an empty rota locks everyone out, so populate it first.
+
+A day with no rota entry isn't a percentage — *My Accuracy* shows **NS (Not Scheduled)** for that
+day instead (today's figure and each day in the 7-day trend), once the gate above is on. Before
+that, nothing reads as NS, since there's no rota data to judge it against yet.
+
+Viewing things — history, messages, the handover note — is never gated by any of this, only
+actually claiming or advancing a pick/check is.
+
 ## Accuracy
 
 *My Accuracy* (also in the palette) shows today's percentage and the last 7 days, per role — a

@@ -209,6 +209,10 @@ func (s *Server) lineViewAtOrder(o *lego.Order, pos int, username string) lineVi
 // "position" just steps through like the TUI's guided walk does,
 // client-driven (the server holds no walk-position state of its own).
 func (s *Server) handleNext(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if err := s.legoDB.RequireClockedIn(sess.Username); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	pos, _ := strconv.Atoi(r.URL.Query().Get("pos"))
 	if pos < 0 {
 		pos = 0
@@ -260,6 +264,10 @@ type confirmRequest struct {
 // (how many just showed up), not a total, since that's what ReceiveLine
 // itself expects.
 func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if err := s.legoDB.RequireClockedIn(sess.Username); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		return
+	}
 	var req confirmRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
