@@ -56,7 +56,7 @@ if gh repo view "$REPO" >/dev/null 2>&1; then
 	# (both have happened by hand here before) — squashing changes the commit
 	# count and message but never the resulting file content, so the tree hash
 	# still lands on exactly the right local commit to resume after.
-	remote_tree="$(git rev-parse origin/main^{tree})"
+	remote_tree="$(git rev-parse "origin/main^{tree}")"
 	match=""
 	while IFS= read -r h; do
 		if [ "$(git rev-parse "$h^{tree}")" = "$remote_tree" ]; then
