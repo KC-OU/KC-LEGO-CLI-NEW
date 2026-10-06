@@ -46,24 +46,42 @@ func (s *session) pump() {
 			s.mu.Unlock()
 			if c != nil {
 				if _, werr := c.Write(buf[:n]); werr != nil {
-					s.mu.Lock()
-					if s.current == c {
-						s.current = nil
-						done := s.currentDone
-						s.currentDone = nil
-						s.mu.Unlock()
-						if done != nil {
-							done()
-						}
-					} else {
-						s.mu.Unlock()
-					}
+					s.signalCurrentDone(c)
 				}
 			}
 		}
 		if err != nil {
+			// The child exited (or its PTY slave otherwise closed) on its
+			// own — not triggered by the attached connection going away.
+			// Whoever's currently attached needs to know the session is
+			// over just the same, or they'd sit waiting for output from a
+			// process that's already gone (matches the original io.Copy's
+			// EOF-ends-the-session behaviour before this type existed).
+			s.mu.Lock()
+			c := s.current
+			s.mu.Unlock()
+			if c != nil {
+				s.signalCurrentDone(c)
+			}
 			return
 		}
+	}
+}
+
+// signalCurrentDone detaches c (only if it's still the attached connection)
+// and calls its closeDone, if any.
+func (s *session) signalCurrentDone(c net.Conn) {
+	s.mu.Lock()
+	if s.current != c {
+		s.mu.Unlock()
+		return
+	}
+	s.current = nil
+	done := s.currentDone
+	s.currentDone = nil
+	s.mu.Unlock()
+	if done != nil {
+		done()
 	}
 }
 
