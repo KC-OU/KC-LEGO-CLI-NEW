@@ -47,7 +47,15 @@ const (
 	// `wms sys mobile-setup-qr <url>` so later runs don't need it typed
 	// again, the same pattern as TUITheme and the other Settings-saved
 	// values (see config.Get's override-file precedence).
-	MobileAppURL               = "SENTRY_MOBILE_APP_URL"
+	MobileAppURL = "SENTRY_MOBILE_APP_URL"
+	// StirlingPDFURL is a self-hosted Stirling-PDF instance's editor address
+	// (https://github.com/Stirling-Tools/Stirling-PDF) — a separate deployment
+	// this project doesn't own, same pattern as MobileAppURL. When set, a
+	// generated PDF's output (e.g. `wms lego missing-sheet`) mentions it as
+	// somewhere to merge, annotate or otherwise touch up the file before
+	// printing; this project doesn't call its API — upload the file there
+	// yourself, same as you would any other PDF.
+	StirlingPDFURL             = "WMS_STIRLING_PDF_URL"
 	PartDBURL                  = "PARTDB_URL"
 	ModernWMSURL               = "MODERNWMS_URL"
 	LegoDBPath                 = "LEGO_DB_PATH"
@@ -122,6 +130,7 @@ func Defaults() map[string]string {
 		TwoFAFile:               "/root/docker-server/wms/2fa.json",
 		PartDBURL:               "", // your Part-DB address, e.g. https://partdb.example.com/ (links are omitted when empty)
 		ModernWMSURL:            "", // your ModernWMS address
+		StirlingPDFURL:          "", // your Stirling-PDF instance's editor address, e.g. https://pdf.example.com/editor (hint omitted when empty)
 		LegoDBPath:              "/root/docker-server/wms/lego.db",
 		SettingsFile:            "/root/docker-server/wms/settings.json",
 		TwoFAGraceMinutes:       "30",

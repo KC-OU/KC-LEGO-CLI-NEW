@@ -44,3 +44,27 @@ func TestMobileSetupQRSavesAndReusesTheURL(t *testing.T) {
 		t.Errorf("expected the updated URL to replace the old one, got:\n%s", stdout)
 	}
 }
+
+// TestPDFEditorSavesAndReusesTheURL is pdf-editor's counterpart to
+// TestMobileSetupQRSavesAndReusesTheURL — same Settings-style save/reuse
+// contract, just a different config key (config.StirlingPDFURL).
+func TestPDFEditorSavesAndReusesTheURL(t *testing.T) {
+	t.Setenv(config.SettingsFile, filepath.Join(t.TempDir(), "settings.json"))
+
+	if _, code := run(t, "sys", "pdf-editor"); code != exitUsage {
+		t.Errorf("no URL saved yet = %d, want %d", code, exitUsage)
+	}
+
+	stdout, code := run(t, "sys", "pdf-editor", "https://pdf.example.com/editor")
+	if code != 0 || !strings.Contains(stdout, "https://pdf.example.com/editor") {
+		t.Fatalf("pdf-editor <url>: code=%d out=%q", code, stdout)
+	}
+	if lines := strings.Count(stdout, "\n"); lines < 10 {
+		t.Errorf("expected a multi-line QR code in the output, got %d line(s):\n%s", lines, stdout)
+	}
+
+	stdout, code = run(t, "sys", "pdf-editor")
+	if code != 0 || !strings.Contains(stdout, "https://pdf.example.com/editor") {
+		t.Fatalf("pdf-editor (no arg, reusing the saved URL): code=%d out=%q", code, stdout)
+	}
+}

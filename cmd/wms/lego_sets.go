@@ -694,6 +694,11 @@ func newLegoMissingSheetCmd() *cobra.Command {
 				return err
 			}
 			say(ui.Status(ui.New(), true, fmt.Sprintf("Wrote a %d-line missing-parts sheet (%d set(s), %d skipped) to %s", len(lines), len(args)-len(skipped), len(skipped), abs)))
+			if strings.ToLower(format) == "pdf" {
+				if pdfURL := config.Get(config.StirlingPDFURL); pdfURL != "" {
+					say(ui.New().Muted.Render("To merge or touch this up before printing: " + pdfURL + " (wms sys pdf-editor)"))
+				}
+			}
 			return emit(map[string]any{"file": abs, "lines": len(lines), "sets": len(args) - len(skipped), "skipped": skipped, "size": s.ID})
 		},
 	}

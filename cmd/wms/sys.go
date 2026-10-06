@@ -312,6 +312,37 @@ func newSysCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
+		Use:   "pdf-editor [url]",
+		Short: "QR code / link for your Stirling-PDF instance, to touch up a generated PDF before printing",
+		Long: "Prints a self-hosted Stirling-PDF instance's editor address (https://github.com/Stirling-Tools/\n" +
+			"Stirling-PDF) as a QR code — scan it to open the editor on your phone, or just follow the link, and\n" +
+			"upload whatever this project wrote (e.g. `wms lego missing-sheet -o x.pdf`) to merge, annotate, redact\n" +
+			"or otherwise touch it up before printing. That's a separate deployment this project doesn't own and\n" +
+			"doesn't call the API of — give the URL once and it's saved (same Settings-style pattern as\n" +
+			"`wms sys mobile-setup-qr`), or give it again any time to update it.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			url := config.Get(config.StirlingPDFURL)
+			if len(args) == 1 {
+				url = strings.TrimSpace(args[0])
+				if err := config.SetOverride(config.StirlingPDFURL, url); err != nil {
+					return err
+				}
+			}
+			if url == "" {
+				return usageError("no URL saved yet — run: wms sys pdf-editor <https://your-stirling-pdf-url>")
+			}
+			t := ui.New()
+			say(t.Strong.Render(url))
+			say("")
+			say(uiapp.QRCode(url))
+			say("")
+			say(t.Muted.Render("Upload a generated PDF here to merge, annotate, redact or otherwise edit it before printing."))
+			return emit(map[string]any{"url": url})
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
 		Use:   "guide",
 		Short: "A short card of the commands worth remembering",
 		Args:  cobra.NoArgs,

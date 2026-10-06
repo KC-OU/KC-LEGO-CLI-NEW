@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
@@ -118,5 +120,41 @@ func TestMissingSheetCombinesSeveralSetsAndSkipsUnchecked(t *testing.T) {
 
 	if _, code := run(t, "lego", "missing-sheet", "9999-1"); code == 0 {
 		t.Error("every given set unchecked (or nothing missing) should be a usage error, not a quiet success")
+	}
+}
+
+// TestMissingSheetHintsAtTheConfiguredPDFEditorForPDFOutputOnly covers the
+// Stirling-PDF integration: the hint only shows up for --format pdf (there's
+// nothing to touch up about an html sheet the same way) and only when an
+// editor URL has actually been configured.
+func TestMissingSheetHintsAtTheConfiguredPDFEditorForPDFOutputOnly(t *testing.T) {
+	db := legoEnv(t)
+	seedCatalog(t, db)
+	checkedSetShort(t, db, 1, "1-1", 3)
+	out := filepath.Join(t.TempDir(), "sheet.pdf")
+
+	stdout, code := run(t, "lego", "missing-sheet", "1-1", "--format", "pdf", "-o", out)
+	if code != 0 {
+		t.Fatalf("missing-sheet --format pdf: code=%d out=%q", code, stdout)
+	}
+	if strings.Contains(stdout, "pdf-editor") {
+		t.Errorf("no WMS_STIRLING_PDF_URL configured — expected no hint, got:\n%s", stdout)
+	}
+
+	t.Setenv(config.StirlingPDFURL, "https://pdf.example.com/editor")
+	stdout, code = run(t, "lego", "missing-sheet", "1-1", "--format", "pdf", "-o", out)
+	if code != 0 {
+		t.Fatalf("missing-sheet --format pdf (with editor configured): code=%d out=%q", code, stdout)
+	}
+	if !strings.Contains(stdout, "https://pdf.example.com/editor") {
+		t.Errorf("expected the configured editor URL to be hinted at, got:\n%s", stdout)
+	}
+
+	stdout, code = run(t, "lego", "missing-sheet", "1-1", "--format", "html")
+	if code != 0 {
+		t.Fatalf("missing-sheet --format html: code=%d out=%q", code, stdout)
+	}
+	if strings.Contains(stdout, "pdf-editor") {
+		t.Errorf("html output shouldn't hint at a PDF editor, got:\n%s", stdout)
 	}
 }
