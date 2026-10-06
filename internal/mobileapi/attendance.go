@@ -47,11 +47,18 @@ func (s *Server) handleAttendanceStatus(w http.ResponseWriter, r *http.Request, 
 
 func (s *Server) handleClockIn(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
 	if _, err := s.legoDB.ClockIn(sess.Username); err != nil {
-		if errors.Is(err, lego.ErrAlreadyClockedIn) {
+		switch {
+		case errors.Is(err, lego.ErrAlreadyClockedIn):
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "already clocked in"})
-			return
+		case errors.Is(err, lego.ErrNotScheduled):
+			// Same status RequireClockedIn itself uses for this (handleNext/
+			// handleConfirm) — not on today's rota, needs an admin's quick NS
+			// override first (wms attendance rota override), granted in
+			// advance; nothing to retry without that happening.
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "not scheduled to work today"})
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	s.handleAttendanceStatus(w, r, sess)

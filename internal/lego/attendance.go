@@ -35,7 +35,14 @@ func (e ClockEvent) Open() bool { return e.ClockOutAt.IsZero() }
 
 // ClockIn starts a new open clock event for username — an error
 // (ErrAlreadyClockedIn) if one is already open, rather than silently
-// layering a second one.
+// layering a second one. Once the clock-in gate is on
+// (config.RequireClockIn), clocking in itself also needs today's rota to
+// already say yes — a real planned shift, or an admin's quick NS override
+// (IsScheduled covers both) — rather than letting anyone clock in and only
+// finding out they can't do anything once they try to pick/check
+// (RequireClockedIn's own, later check). An admin grants the override in
+// advance with `wms attendance rota override`; there's no live "approve
+// this attempt" exchange, so nobody's waiting on one.
 func (d *DB) ClockIn(username string) (*ClockEvent, error) {
 	in, err := d.IsClockedIn(username)
 	if err != nil {
@@ -43,6 +50,15 @@ func (d *DB) ClockIn(username string) (*ClockEvent, error) {
 	}
 	if in {
 		return nil, ErrAlreadyClockedIn
+	}
+	if config.Get(config.RequireClockIn) == "1" {
+		sched, err := d.IsScheduled(username, today())
+		if err != nil {
+			return nil, err
+		}
+		if !sched {
+			return nil, ErrNotScheduled
+		}
 	}
 	now := time.Now()
 	res, err := d.Exec(`INSERT INTO clock_events (username, clock_in_at, clock_out_at) VALUES (?, ?, '')`,

@@ -30,6 +30,40 @@ func attDB(t *testing.T) *DB {
 	return db
 }
 
+// TestClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn is the direct test
+// for "refuse clock-in until an admin pre-approves": off by default (gate
+// unset), clocking in never checks the rota at all — only once
+// config.RequireClockIn is on does an unscheduled clock-in get refused, and
+// only a real rota entry or a quick NS override (SetRota/QuickNSOverride —
+// IsScheduled covers both) unblocks it. No live "approve this attempt"
+// exchange: the admin grants it in advance, same action either way.
+func TestClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn(t *testing.T) {
+	db := attDB(t)
+
+	// Gate off (the default): clock-in is never gated by the rota.
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatalf("gate off: ClockIn = %v, want nil regardless of the rota", err)
+	}
+	if err := db.ClockOut("dave"); err != nil {
+		t.Fatal(err)
+	}
+
+	enableClockInGate(t)
+	if _, err := db.ClockIn("sam"); !errors.Is(err, ErrNotScheduled) {
+		t.Fatalf("gate on, not scheduled: ClockIn = %v, want ErrNotScheduled", err)
+	}
+	if in, _ := db.IsClockedIn("sam"); in {
+		t.Error("a refused clock-in must not have created an open shift")
+	}
+
+	if err := db.SetRota("sam", today(), "09:00", "17:00", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClockIn("sam"); err != nil {
+		t.Fatalf("scheduled: ClockIn = %v, want nil", err)
+	}
+}
+
 func TestClockInOutRoundTrip(t *testing.T) {
 	db := attDB(t)
 
@@ -235,18 +269,28 @@ func TestRequireClockedInCoversBothGates(t *testing.T) {
 		t.Errorf("not clocked in at all = %v, want ErrNotClockedIn", err)
 	}
 
-	if _, err := db.ClockIn("dave"); err != nil {
+	// ClockIn itself now also needs today's rota, once the gate is on.
+	if _, err := db.ClockIn("dave"); !errors.Is(err, ErrNotScheduled) {
+		t.Fatalf("clocking in while unscheduled = %v, want ErrNotScheduled", err)
+	}
+	if err := db.SetRota("dave", today(), "09:00", "17:00", "", "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.RequireClockedIn("dave"); !errors.Is(err, ErrNotScheduled) {
-		t.Errorf("clocked in but not on today's rota = %v, want ErrNotScheduled", err)
-	}
-
-	if err := db.SetRota("dave", today(), "09:00", "17:00", "", "admin"); err != nil {
+	if _, err := db.ClockIn("dave"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RequireClockedIn("dave"); err != nil {
 		t.Errorf("clocked in and scheduled today = %v, want nil", err)
+	}
+
+	// An admin revoking the schedule after dave's already clocked in still
+	// refuses pick/check work — RequireClockedIn checks fresh every time,
+	// not just at clock-in.
+	if err := db.ClearRota("dave", today()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequireClockedIn("dave"); !errors.Is(err, ErrNotScheduled) {
+		t.Errorf("rota cleared after clocking in = %v, want ErrNotScheduled", err)
 	}
 }
 
@@ -333,10 +377,10 @@ func TestBreakStartEndRoundTrip(t *testing.T) {
 func TestRequireClockedInRefusesDuringABreak(t *testing.T) {
 	enableClockInGate(t)
 	db := attDB(t)
-	if _, err := db.ClockIn("dave"); err != nil {
+	if err := db.SetRota("dave", today(), "09:00", "17:00", "", "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetRota("dave", today(), "09:00", "17:00", "", "admin"); err != nil {
+	if _, err := db.ClockIn("dave"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RequireClockedIn("dave"); err != nil {
@@ -441,13 +485,16 @@ func TestTeamSummaryHoursAndAccuracy(t *testing.T) {
 func TestRequireClockedInAllowsAQuickNSOverride(t *testing.T) {
 	enableClockInGate(t)
 	db := attDB(t)
-	if _, err := db.ClockIn("dave"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RequireClockedIn("dave"); !errors.Is(err, ErrNotScheduled) {
-		t.Fatalf("before the override = %v, want ErrNotScheduled", err)
+
+	// A quick NS override now unlocks clocking in itself, not just the
+	// later pick/check gate — dave can't even clock in before it's granted.
+	if _, err := db.ClockIn("dave"); !errors.Is(err, ErrNotScheduled) {
+		t.Fatalf("clocking in before the override = %v, want ErrNotScheduled", err)
 	}
 	if err := db.QuickNSOverride("dave", today(), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClockIn("dave"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.RequireClockedIn("dave"); err != nil {

@@ -144,3 +144,32 @@ func TestMobileAttendanceStatusShowsTodaysRota(t *testing.T) {
 		t.Fatalf("expected today's rota entry reflected in status, got %+v", status)
 	}
 }
+
+// TestMobileClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn is the
+// mobile half of "refuse clock-in until an admin pre-approves": a proper
+// 403 with a clear message (not a 500 the app would show as a generic
+// server error), clearing the moment an admin grants a quick NS override.
+func TestMobileClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn(t *testing.T) {
+	s, db := attendanceEnv(t)
+	srv := newAttendanceTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+	t.Setenv("WMS_REQUIRE_CLOCK_IN", "1")
+
+	resp := authed(t, http.MethodPost, srv.URL+"/mobile/attendance/clock-in", token, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("clock-in while unscheduled: status=%d, want 403", resp.StatusCode)
+	}
+	body := decodeMap(t, resp)
+	if body["error"] != "not scheduled to work today" {
+		t.Errorf("expected a clear rota-related message, got %+v", body)
+	}
+
+	if err := db.QuickNSOverride("dave", time.Now().Format("2006-01-02"), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	resp = authed(t, http.MethodPost, srv.URL+"/mobile/attendance/clock-in", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clock-in after the override: status=%d", resp.StatusCode)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
@@ -157,5 +158,27 @@ func TestClockOutWarnsWhenStillHoldingATicket(t *testing.T) {
 	stdout, code = run(t, "attendance", "clock-out", "dave")
 	if code != 0 || strings.Contains(stdout, "still holding") {
 		t.Errorf("no open ticket left: expected no warning, got code=%d out=%q", code, stdout)
+	}
+}
+
+// TestAttendanceClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn is the
+// CLI's half of "refuse clock-in until an admin pre-approves": a clear,
+// actionable error (not a bare "not scheduled to work today"), and the
+// suggested override command actually works.
+func TestAttendanceClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn(t *testing.T) {
+	legoEnv(t)
+	t.Setenv(config.RequireClockIn, "1")
+
+	stdout, code := run(t, "attendance", "clock-in", "dave")
+	if code != exitUsage || !strings.Contains(stdout, "isn't on today's rota") || !strings.Contains(stdout, "rota override dave") {
+		t.Fatalf("clock-in while unscheduled: code=%d out=%q", code, stdout)
+	}
+
+	if _, code := run(t, "attendance", "rota", "override", "dave"); code != 0 {
+		t.Fatalf("rota override: code=%d", code)
+	}
+	stdout, code = run(t, "attendance", "clock-in", "dave")
+	if code != 0 || !strings.Contains(stdout, "dave clocked in") {
+		t.Fatalf("clock-in after the override: code=%d out=%q", code, stdout)
 	}
 }

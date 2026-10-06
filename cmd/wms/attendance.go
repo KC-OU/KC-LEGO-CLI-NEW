@@ -40,8 +40,11 @@ func newAttendanceClockInCmd() *cobra.Command {
 			defer db.Close()
 			ev, err := db.ClockIn(args[0])
 			if err != nil {
-				if errors.Is(err, lego.ErrAlreadyClockedIn) {
+				switch {
+				case errors.Is(err, lego.ErrAlreadyClockedIn):
 					return usageError("%s is already clocked in", args[0])
+				case errors.Is(err, lego.ErrNotScheduled):
+					return usageError("%s isn't on today's rota — run: wms attendance rota override %s", args[0], args[0])
 				}
 				return err
 			}

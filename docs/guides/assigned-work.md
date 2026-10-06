@@ -166,9 +166,13 @@ screen.
 **Off by default** (`WMS_REQUIRE_CLOCK_IN=0`). With it off, clock-in/rota data can be recorded and
 viewed, but nothing is actually gated — matches today's behaviour exactly, so there's nothing to
 break by adopting this gradually. Set `WMS_REQUIRE_CLOCK_IN=1` once your rota is actually populated
-to start enforcing it: claiming a ticket (TUI) and the pick/check walk (mobile, `/mobile/next` and
-`/mobile/confirm`) both require being clocked in **and** either on today's rota or covered by a
-quick NS override — turning it on with an empty rota locks everyone out, so populate it first.
+to start enforcing it: **clocking in itself** now needs today's rota to already say yes — a real
+planned shift, or an admin's quick NS override granted in advance (`wms attendance rota override`)
+— refused outright otherwise, not just blocked later at the pick/check step. Once clocked in,
+claiming a ticket (TUI) and the pick/check walk (mobile, `/mobile/next` and `/mobile/confirm`) both
+still require being on today's rota too — an admin clearing someone's schedule after they've
+already clocked in refuses those immediately, even though they're still clocked in. Turning this on
+with an empty rota locks everyone out, so populate it first.
 
 A day with no rota entry isn't a percentage — *My Accuracy* shows **NS (Not Scheduled)** for that
 day instead (today's figure and each day in the 7-day trend), once the gate above is on. Before
