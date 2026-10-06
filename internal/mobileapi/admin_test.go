@@ -19,6 +19,7 @@ func newAdminTestServer(s *Server) *httptest.Server {
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
 	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
 	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
+	mux.HandleFunc("GET /mobile/admin/rota", s.withSession(s.handleAdminRota))
 	return httptest.NewServer(mux)
 }
 

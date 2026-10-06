@@ -93,6 +93,35 @@ func (s *Server) handleBreakStart(w http.ResponseWriter, r *http.Request, sess l
 	s.handleAttendanceStatus(w, r, sess)
 }
 
+type rotaDayRow struct {
+	Date    string           `json:"date"`
+	Entries []lego.RotaEntry `json:"entries"`
+}
+
+// handleAdminRota is the weekly rota view's mobile data: the next 7 days
+// starting today, same source as the TUI's Admin hub screen
+// (internal/uiapp/rota_screen.go) — admin-only, same reasoning as the other
+// /mobile/admin/* endpoints (this is "who's scheduled", not "am I").
+func (s *Server) handleAdminRota(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_VIEW_ROTA") {
+		return
+	}
+	days := make([]rotaDayRow, 0, 7)
+	for i := 0; i < 7; i++ {
+		date := time.Now().AddDate(0, 0, i).Format("2006-01-02")
+		entries, err := s.legoDB.RotaForDate(date)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if entries == nil {
+			entries = []lego.RotaEntry{}
+		}
+		days = append(days, rotaDayRow{Date: date, Entries: entries})
+	}
+	writeJSON(w, http.StatusOK, days)
+}
+
 func (s *Server) handleBreakEnd(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
 	if err := s.legoDB.EndBreak(sess.Username); err != nil {
 		switch {

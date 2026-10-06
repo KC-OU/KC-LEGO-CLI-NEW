@@ -106,6 +106,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /mobile/attendance/clock-out", s.withSession(s.handleClockOut))
 	mux.HandleFunc("POST /mobile/attendance/break-start", s.withSession(s.handleBreakStart))
 	mux.HandleFunc("POST /mobile/attendance/break-end", s.withSession(s.handleBreakEnd))
+	mux.HandleFunc("GET /mobile/admin/rota", s.withSession(s.handleAdminRota))
 	mux.HandleFunc("GET /mobile/admin/users", s.withSession(s.handleAdminUsers))
 	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))

@@ -101,10 +101,14 @@ func (d *DB) CurrentShift(username string) (*ClockEvent, error) {
 
 // RotaEntry is one user's schedule for one date.
 type RotaEntry struct {
-	Username, Date, StartTime, EndTime, Note string
-	EmergencyOverride                        bool
-	CreatedBy                                string
-	CreatedAt                                time.Time
+	Username          string    `json:"username"`
+	Date              string    `json:"date"`
+	StartTime         string    `json:"start_time"`
+	EndTime           string    `json:"end_time"`
+	Note              string    `json:"note"`
+	EmergencyOverride bool      `json:"emergency_override"`
+	CreatedBy         string    `json:"created_by"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // SetRota schedules username to work date (upserting any existing entry for

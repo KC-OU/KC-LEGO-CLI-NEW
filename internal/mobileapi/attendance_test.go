@@ -1,6 +1,7 @@
 package mobileapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -86,6 +87,41 @@ func TestMobileAttendanceClockInOutAndBreak(t *testing.T) {
 	}
 	if resp := authed(t, http.MethodPost, srv.URL+"/mobile/attendance/clock-out", token, nil); resp.StatusCode != http.StatusConflict {
 		t.Errorf("clocking out twice = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
+func TestMobileAdminRotaRequiresAdminAndListsTheNextSevenDays(t *testing.T) {
+	s, db := attendanceEnv(t)
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	if resp := authed(t, http.MethodGet, srv.URL+"/mobile/admin/rota", token, nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin: status=%d, want 403", resp.StatusCode)
+	}
+
+	asAdmin(t, "dave")
+	today := time.Now().Format("2006-01-02")
+	if err := db.SetRota("dave", today, "09:00", "17:00", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := authed(t, http.MethodGet, srv.URL+"/mobile/admin/rota", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin: status=%d, want 200", resp.StatusCode)
+	}
+	var days []rotaDayRow
+	if err := json.NewDecoder(resp.Body).Decode(&days); err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 7 {
+		t.Fatalf("expected 7 days, got %d", len(days))
+	}
+	if days[0].Date != today || len(days[0].Entries) != 1 || days[0].Entries[0].Username != "dave" {
+		t.Fatalf("expected today's entry for dave first, got %+v", days[0])
+	}
+	if len(days[1].Entries) != 0 {
+		t.Errorf("expected tomorrow to have no entries, got %+v", days[1])
 	}
 }
 
