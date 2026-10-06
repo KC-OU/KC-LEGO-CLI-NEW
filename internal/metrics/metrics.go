@@ -36,6 +36,7 @@ var (
 
 	TelnetConnections = counter("wms_telnet_connections_total", "Telnet sessions accepted.")
 	TelnetThrottled   = counter("wms_telnet_throttled_total", "Telnet connections refused by the rate limiter.")
+	TelnetReconnected = counter("wms_telnet_reconnected_total", "Telnet sessions resumed on reconnect instead of starting fresh.")
 
 	// NotifyDeliveries is by outcome ("success"/"failure"), not by provider —
 	// providers are user-configured free text, not a bounded label set.

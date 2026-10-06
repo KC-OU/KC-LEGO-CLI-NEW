@@ -78,7 +78,7 @@ func TestHandleTelnetSessionPicksTheRightBinary(t *testing.T) {
 		th.KeepLoopback = true
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go acceptLoop(ctx, ln, live, testBinaryPath, nil, th)
+		go acceptLoop(ctx, ln, live, testBinaryPath, nil, th, newReconnectRegistry(0))
 
 		c, err := net.Dial("tcp", ln.Addr().String())
 		if err != nil {

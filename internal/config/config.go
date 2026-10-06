@@ -91,6 +91,12 @@ const (
 	ArchiveDir                 = "WMS_ARCHIVE_DIR"
 	TestBinaryPath             = "WMS_TEST_BINARY_PATH"
 	TestEnvFile                = "WMS_TEST_ENV_FILE"
+	// TelnetReconnectSeconds: a dropped telnet connection's TUI process is
+	// kept alive this long so the same client address reconnecting resumes
+	// mid-session instead of starting over. "0" (the default) is off — see
+	// internal/gateway's reconnectRegistry doc comment for the shared-NAT
+	// risk this trades off before turning it on.
+	TelnetReconnectSeconds = "WMS_TELNET_RECONNECT_SECONDS"
 )
 
 func Defaults() map[string]string {
@@ -156,8 +162,9 @@ func Defaults() map[string]string {
 		// telnet-and-web.md). TestBinaryPath is the dev-built binary (e.g.
 		// /usr/local/bin/wms-go-test); TestEnvFile is that instance's own EnvironmentFile
 		// (e.g. /root/.config/wms-go/test.env), read the same way systemd would.
-		TestBinaryPath: "",
-		TestEnvFile:    "",
+		TestBinaryPath:         "",
+		TestEnvFile:            "",
+		TelnetReconnectSeconds: "0",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's

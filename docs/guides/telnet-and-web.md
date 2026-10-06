@@ -51,6 +51,31 @@ Telnet was never actually the problem here — two telnet connections are alread
 independent processes. The **web terminal** was: see the next section for what "one persistent,
 shared session" means and `/solo` for a second, genuinely independent one.
 
+## Reconnecting after a dropped connection
+
+Off by default. A handheld scanner's Wi-Fi radio drops and reassociates far more often than a
+desktop's connection does, and normally that means restarting at the sign-on screen — mid-pick,
+mid-check, every time. Setting `WMS_TELNET_RECONNECT_SECONDS` to a number of seconds turns on a
+short grace window: a dropped telnet connection's `wms tui` process is kept alive for that long,
+and a new connection from the **same address** within the window resumes it — same screen, same
+signed-in session, instead of a fresh login.
+
+```bash
+WMS_TELNET_RECONNECT_SECONDS=90   # tune to how long a real Wi-Fi blip on your fleet actually takes
+```
+
+**Read this before turning it on.** The grace window is keyed purely by the client's IP address —
+there's no handshake proving the reconnecting device is the same physical one. That's exactly
+right for a device with its own address (a WT41N0-class scanner with a per-device DHCP lease on
+its own SSID, which is the case this was built for), and exactly wrong behind shared NAT: any other
+device sharing that address within the window would be dropped straight into the previous user's
+already-authenticated session, no password asked. If your scanner fleet sits behind NAT rather than
+getting its own address each, leave this at the default (`0`, off).
+
+A resumed session picks up wherever the screen was left — nothing is replayed, so any output the
+app produced while nobody was attached isn't shown, only what comes after. The reconnect also
+re-sends the window size, which prompts the TUI to redraw in full.
+
 ## Two-factor authentication
 
 ```bash

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -25,9 +24,14 @@ import (
 // Live/Test picker (see WMS_TEST_BINARY_PATH/WMS_TEST_ENV_FILE,
 // docs/guides/telnet-and-web.md) — the common, unconfigured case is
 // unaffected: no prompt, no behaviour change.
-func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, wmsBinaryPath, testBinaryPath string, testEnv []string) error {
+// reconnectGraceSeconds is 0 (off) unless the caller (cmd/wms/gateway.go, from
+// config.TelnetReconnectSeconds) turns it on — see reconnectRegistry's doc
+// comment for why this defaults off.
+func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, wmsBinaryPath, testBinaryPath string, testEnv []string, reconnectGraceSeconds int) error {
 	var wg sync.WaitGroup
 	th := NewThrottle()
+	rc := newReconnectRegistry(time.Duration(reconnectGraceSeconds) * time.Second)
+	defer rc.closeAll()
 
 	for _, port := range listenPorts {
 		ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, strconv.Itoa(port)))
@@ -37,7 +41,7 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 		wg.Add(1)
 		go func(ln net.Listener) {
 			defer wg.Done()
-			acceptLoop(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th)
+			acceptLoop(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th, rc)
 		}(ln)
 
 		go func(ln net.Listener) {
@@ -50,7 +54,7 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 	return nil
 }
 
-func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle) {
+func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry) {
 	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
@@ -74,7 +78,7 @@ func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryP
 			continue
 		}
 		backoff = 0
-		go handleTelnetSession(ctx, conn, wmsBinaryPath, testBinaryPath, testEnv, th)
+		go handleTelnetSession(ctx, conn, wmsBinaryPath, testBinaryPath, testEnv, th, rc)
 	}
 }
 
@@ -156,7 +160,7 @@ func clampDim(v, max uint16) uint16 {
 // runs forever.
 const telnetIdleTimeout = 30 * time.Minute
 
-func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle) {
+func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry) {
 	defer conn.Close()
 
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
@@ -173,32 +177,43 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, test
 		return
 	}
 
-	binaryPath, extraEnv := wmsBinaryPath, []string(nil)
-	if testBinaryPath != "" && promptLiveOrTest(conn) == "2" {
-		binaryPath, extraEnv = testBinaryPath, testEnv
-	}
+	var sess *session
 
-	cmd := exec.CommandContext(ctx, binaryPath, "tui")
-	cmd.Env = append(mergeEnv(childEnv(), extraEnv), "WMS_TRANSPORT=telnet")
-	if host != "" {
-		// Lets the TUI pin a 2FA grace window to this client's address.
-		cmd.Env = append(cmd.Env, "WMS_REMOTE_ADDR="+host)
-	}
+	if ps := rc.claim(host); ps != nil {
+		metrics.TelnetReconnected.Inc()
+		sess = ps.sess
+	} else {
+		binaryPath, extraEnv := wmsBinaryPath, []string(nil)
+		if testBinaryPath != "" && promptLiveOrTest(conn) == "2" {
+			binaryPath, extraEnv = testBinaryPath, testEnv
+		}
 
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return
+		cmd := exec.CommandContext(ctx, binaryPath, "tui")
+		cmd.Env = append(mergeEnv(childEnv(), extraEnv), "WMS_TRANSPORT=telnet")
+		if host != "" {
+			// Lets the TUI pin a 2FA grace window to this client's address.
+			cmd.Env = append(cmd.Env, "WMS_REMOTE_ADDR="+host)
+		}
+
+		ptmx, err := pty.Start(cmd)
+		if err != nil {
+			return
+		}
+		sess = newSession(cmd, ptmx)
 	}
-	defer ptmx.Close()
 	// 80x24 (the classic terminal) until the client reports its real window size via NAWS (see
 	// FilterIAC/TakeResize below); a client that never does keeps this. 24 rather than 25: a
 	// 25-row picture on a 24-row window scrolls the header off, while the reverse only leaves a
-	// blank line.
-	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 24, Cols: 80})
+	// blank line. Re-applied on a resumed session too since this is a fresh TCP connection whose
+	// own NAWS report (if any) hasn't arrived yet, and the resize also makes the TUI (bubbletea)
+	// repaint its full screen — the resumed client's one and only "redraw" after reattaching.
+	_ = pty.Setsize(sess.ptmx, &pty.Winsize{Rows: 24, Cols: 80})
 
 	done := make(chan struct{})
 	var once sync.Once
 	closeDone := func() { once.Do(func() { close(done) }) }
+
+	sess.attach(conn, closeDone)
 
 	go func() {
 		st := &IACState{}
@@ -211,10 +226,10 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, test
 				if cols, rows, ok := st.TakeResize(); ok {
 					// The kernel signals SIGWINCH to the child, so the TUI
 					// re-lays itself out at the client's full window size.
-					_ = pty.Setsize(ptmx, &pty.Winsize{Rows: clampDim(rows, maxRows), Cols: clampDim(cols, maxCols)})
+					_ = pty.Setsize(sess.ptmx, &pty.Winsize{Rows: clampDim(rows, maxRows), Cols: clampDim(cols, maxCols)})
 				}
 				if len(clean) > 0 {
-					if _, werr := ptmx.Write(clean); werr != nil {
+					if _, werr := sess.ptmx.Write(clean); werr != nil {
 						closeDone()
 						return
 					}
@@ -227,20 +242,19 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, test
 		}
 	}()
 
-	go func() {
-		_, _ = io.Copy(conn, ptmx)
-		closeDone()
-	}()
-
 	<-done
-	_ = cmd.Process.Kill()
-	waitDone := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(waitDone) }()
-	select {
-	case <-waitDone:
-		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == ExitTooManyFailures {
-			th.Strike(host)
-		}
-	case <-time.After(time.Second):
+	sess.detach(conn)
+
+	// Reconnect enabled and this client is identifiable by address: keep the
+	// child alive for the grace window instead of killing it now, so a
+	// reconnect from the same host resumes mid-session (see reconnectRegistry).
+	if rc != nil && rc.grace > 0 && host != "" {
+		rc.park(host, sess)
+		return
+	}
+
+	killSession(sess)
+	if sess.cmd.ProcessState != nil && sess.cmd.ProcessState.ExitCode() == ExitTooManyFailures {
+		th.Strike(host)
 	}
 }

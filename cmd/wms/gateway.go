@@ -91,10 +91,12 @@ func newGatewayServeCmd() *cobra.Command {
 				}
 			}
 
+			reconnectSeconds, _ := strconv.Atoi(strings.TrimSpace(config.Get(config.TelnetReconnectSeconds)))
+
 			g, gctx := errgroup.WithContext(ctx)
 			host := config.Get(config.GatewayListenHost)
 			g.Go(func() error {
-				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv)
+				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv, reconnectSeconds)
 			})
 
 			// botSrv is shared between the loopback-only /bot/action webhook
