@@ -129,6 +129,7 @@ func adminHubScreen() screenModel {
 		{"9", "user_mgmt", "Shift Handover Note", scrHandover},
 		{"a", "user_mgmt", "Recent Activity", scrAdminEvents},
 		{"b", "user_mgmt", "Alerts", scrAlerts},
+		{"c", "user_mgmt", "Weekly Rota", scrRotaView},
 	})
 }
 
