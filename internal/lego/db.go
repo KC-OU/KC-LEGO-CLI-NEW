@@ -204,6 +204,17 @@ func ensureSchema(db *sql.DB) error {
 		// category is Stickers, so every sticker is covered with nothing to migrate, and
 		// toggling any part (sticker or not) here overrides that default either way.
 		`CREATE TABLE IF NOT EXISTS part_optional (part_num TEXT PRIMARY KEY, optional INTEGER NOT NULL)`,
+		// An admin's explicit "this part goes in the small bag, not the main
+		// one" override (see bagging.go's PartBagSize) — easy-to-lose parts
+		// like loose 1x1s or minifig accessories. Absent here defaults to the
+		// main bag, same no-row-means-default convention as part_optional.
+		`CREATE TABLE IF NOT EXISTS part_bag_size (part_num TEXT PRIMARY KEY, size TEXT NOT NULL)`,
+		// The small bag's own barcode/number, confirmed against a specific
+		// check — the "verified link" (not just a printed label) between a
+		// physical bag and the set it belongs to. One per check: a recount
+		// gets its own new set_checks row, so its own bag confirmation too.
+		`CREATE TABLE IF NOT EXISTS check_bags (
+			check_id INTEGER PRIMARY KEY, bag_code TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
 		// A unit of assigned work: an admin points a picker/checker at a set to check or
 		// an order to pick, either by name (assigned_to set) or left for the open queue
 		// (assigned_to ""). Claiming it just means starting the underlying check/order
@@ -328,7 +339,8 @@ func ensureSchema(db *sql.DB) error {
 // override of a set's catalog picture, read ahead of cat_sets.img_url so it
 // survives the next Rebrickable catalog sync — see DB.CatalogSet). Version 3
 // added rota_entries/clock_events, version 4 clock_breaks (see attendance.go).
-const schemaVersion = 4
+// Version 5 added part_bag_size/check_bags (see bagging.go).
+const schemaVersion = 5
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -436,6 +448,18 @@ func migrate(db *sql.DB) error {
 		for _, s := range stmts {
 			if _, err := conn.ExecContext(ctx, s); err != nil {
 				return fmt.Errorf("migrating in clock_breaks: %w (%s)", err, s)
+			}
+		}
+	}
+	if version < 5 {
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS part_bag_size (part_num TEXT PRIMARY KEY, size TEXT NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS check_bags (
+				check_id INTEGER PRIMARY KEY, bag_code TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		}
+		for _, s := range stmts {
+			if _, err := conn.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("migrating in part_bag_size/check_bags: %w (%s)", err, s)
 			}
 		}
 	}

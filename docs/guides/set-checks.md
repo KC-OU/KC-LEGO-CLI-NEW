@@ -89,6 +89,33 @@ can replace it there (`--image-url` from the shell; blank clears it, back to the
 everywhere that set's picture shows — the TUI, label sheets, the mobile app's check/pick screen — the next time any of
 them loads it, with nothing to re-sync by hand.
 
+## The small-parts bag
+
+Some parts are too easy to lose loose in with everything else — a loose 1x1, a minifig accessory.
+Mark them once:
+
+```bash
+wms-go lego bag-size 3024              # show where it's currently filed
+wms-go lego bag-size 3024 small        # goes in the small bag from now on
+wms-go lego bag-size 3024 main         # back to the ordinary bag
+```
+
+Every part defaults to the main bag until marked otherwise — nothing changes for a set with no
+small parts in it. Once a check has at least one small-bag line, **finishing it holds for the small
+bag's own barcode or number** — typed or scanned, confirming (and from then on, recording) exactly
+which physical bag goes with which set, not just a printed label claiming it does. Supply it the
+same moment you finish (`force`/`bag_code` on the mobile `/mobile/finish` call; the TUI's F key
+opens a one-field prompt for it) — one confirmation per check, not per part.
+
+```bash
+wms-go lego small-bag-label 75192                  # blank label: set number, name, "SMALL PARTS"
+wms-go lego small-bag-label 75192 BAG-0042 -o b.pdf # the label's own barcode becomes the bag's code
+```
+
+Printing with a code already decided (rather than generating one from whatever gets scanned back
+in) means the same code on the label is exactly what gets confirmed at finish time — scan the label
+once to print it, scan it again to close out the check.
+
 ## From the shell
 
 ```bash

@@ -30,6 +30,7 @@ type CheckLine struct {
 	BLColor                     int
 	Need, Have, Extra           int
 	Optional                    bool // doesn't count toward missing/completion totals — see DB.IsOptional
+	SmallBag                    bool // goes in the small-parts bag, not the main one — see DB.PartBagSize
 }
 
 // Missing is how many of the line the set is short — always 0 for an optional line.
@@ -111,8 +112,9 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 		}
 		seen[[2]any{it.PartNum, it.ColorID}] = len(c.Lines)
 		optional, _ := d.IsOptional(it.PartNum, cat)
+		bagSize, _ := d.PartBagSize(it.PartNum)
 		c.Lines = append(c.Lines, CheckLine{PartNum: it.PartNum, PartName: it.PartName, Category: cat, ColorID: it.ColorID,
-			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n, Optional: optional})
+			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n, Optional: optional, SmallBag: bagSize == BagSmall})
 	}
 	sortLinesByColorThenCategory(c.Lines)
 	return c, nil
@@ -177,6 +179,9 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 			return nil, err
 		}
 		l.Optional, _ = d.IsOptional(l.PartNum, l.Category) // recomputed fresh, in case it changed since this line was saved
+		if bagSize, err := d.PartBagSize(l.PartNum); err == nil {
+			l.SmallBag = bagSize == BagSmall
+		}
 		c.Lines = append(c.Lines, l)
 	}
 	sortLinesByColorThenCategory(c.Lines)

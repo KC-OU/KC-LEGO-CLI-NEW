@@ -128,6 +128,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrLiveSessions:        liveSessionsScreen(),
 		scrHandover:            handoverScreen(),
 		scrRotaView:            rotaViewScreen(),
+		scrBagCodePrompt:       bagCodePromptScreen(),
 		scrMyExports:           myExportsScreen(),
 		scrAdminEvents:         adminEventsScreen(),
 		scrAdminEventsClear:    adminEventsClearScreen(),

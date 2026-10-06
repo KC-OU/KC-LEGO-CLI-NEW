@@ -44,6 +44,11 @@ type checkState struct {
 	// through the job queue) just means that part of the line is omitted.
 	claimedAt       time.Time
 	estimateSeconds int64
+	// pendingBagCode is set by bagCodePromptScreen once the small bag's
+	// barcode has actually been scanned/typed, then consumed by finishCheck
+	// right after FinishCheck succeeds (c.ID isn't final before that for a
+	// check that's never been saved — see RecordCheckBag's call site below).
+	pendingBagCode string
 }
 
 type setCheckScreen struct {
@@ -647,6 +652,46 @@ func (st *checkState) undoLast() {
 	}
 }
 
+// scrBagCodePrompt interrupts F (finish) once, the first time a check with
+// any small-bag line reaches it with no bag code confirmed yet — "the worker
+// types or scans the small bag's own barcode/bag number to confirm... which
+// physical bag goes with which set", not just a printed label. Stores the
+// code on checkState rather than writing it immediately: the check may not
+// have a real ID yet (never saved before), which FinishCheck's own save
+// resolves — see finishCheck's RecordCheckBag call, after that succeeds.
+const scrBagCodePrompt = "bag_code_prompt"
+
+func bagCodePromptScreen() screenModel {
+	return &formScreen{
+		panelID: "BAGCODE",
+		title:   "Small Bag Barcode",
+		preamble: func(app *App) string {
+			if app.checking == nil {
+				return ""
+			}
+			n := len(lego.SmallBagLines(app.checking.check))
+			return app.theme.Muted.Render(fmt.Sprintf("%d small-bag part(s) in this set. Scan or type the small bag's own barcode/number before finishing.", n))
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Bag barcode/number"}}
+		},
+		submit: func(app *App, values []string) {
+			if app.checking == nil {
+				app.onBack()
+				return
+			}
+			code := strings.TrimSpace(values[0])
+			if code == "" {
+				app.setMsg("A bag code is required.", true)
+				return
+			}
+			app.checking.pendingBagCode = code
+			app.onBack()
+			finishCheck(app)
+		},
+	}
+}
+
 // finishCheck records the check, pushes the set to Part-DB (when a token is set),
 // adds extras as loose parts, and flags or clears the set. The Part-DB push (up to
 // 5 minutes) runs off the key-handling path via startBusy, so the screen stays
@@ -659,10 +704,20 @@ func finishCheck(app *App) {
 		return
 	}
 	c := st.check
+	if small := lego.SmallBagLines(c); len(small) > 0 && st.pendingBagCode == "" {
+		if existing, _ := app.legoDB.CheckBagCode(c.ID); existing == "" {
+			app.goTo(scrBagCodePrompt)
+			return
+		}
+	}
 	extras, err := app.legoDB.FinishCheck(c)
 	if err != nil {
 		app.setMsg("Could not finish: "+err.Error(), true)
 		return
+	}
+	if st.pendingBagCode != "" {
+		_ = app.legoDB.RecordCheckBag(c.ID, st.pendingBagCode, app.userName())
+		st.pendingBagCode = ""
 	}
 	pieces, _, missing, extra, _ := c.Totals()
 	user, role := c.CheckedBy, ""

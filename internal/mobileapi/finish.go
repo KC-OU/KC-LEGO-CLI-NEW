@@ -24,19 +24,22 @@ type missingLine struct {
 }
 
 type finishSummary struct {
-	Kind        string        `json:"kind"` // "check" | "order"
-	Pieces      int           `json:"pieces,omitempty"`
-	Have        int           `json:"have,omitempty"`
-	Missing     int           `json:"missing"`
-	Extra       int           `json:"extra,omitempty"`
-	Lines       []missingLine `json:"lines,omitempty"` // only the still-missing ones
-	Finished    bool          `json:"finished"`        // false = a warning only, nothing was recorded
-	AccuracyPct float64       `json:"accuracy_pct"`
-	PartDBNote  string        `json:"part_db_note,omitempty"`
+	Kind          string        `json:"kind"` // "check" | "order"
+	Pieces        int           `json:"pieces,omitempty"`
+	Have          int           `json:"have,omitempty"`
+	Missing       int           `json:"missing"`
+	Extra         int           `json:"extra,omitempty"`
+	Lines         []missingLine `json:"lines,omitempty"` // only the still-missing ones
+	Finished      bool          `json:"finished"`        // false = a warning only, nothing was recorded
+	AccuracyPct   float64       `json:"accuracy_pct"`
+	PartDBNote    string        `json:"part_db_note,omitempty"`
+	NeedsBagCode  bool          `json:"needs_bag_code,omitempty"`
+	SmallBagParts []string      `json:"small_bag_parts,omitempty"` // which lines are why a bag code is needed
 }
 
 type finishRequest struct {
-	Force bool `json:"force"`
+	Force   bool   `json:"force"`
+	BagCode string `json:"bag_code"` // the small bag's own barcode/number, scanned or typed — see lego.RecordCheckBag
 }
 
 // handleFinish is the one thing /next and /confirm never covered: actually
@@ -64,7 +67,7 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request, sess lego.
 		return
 	}
 	if c != nil {
-		s.finishCheckMobile(w, sess, c, req.Force)
+		s.finishCheckMobile(w, sess, c, req.Force, req.BagCode)
 		return
 	}
 
@@ -91,7 +94,7 @@ func missingCheckLines(c *lego.SetCheck) []missingLine {
 	return out
 }
 
-func (s *Server) finishCheckMobile(w http.ResponseWriter, sess lego.MobileSession, c *lego.SetCheck, force bool) {
+func (s *Server) finishCheckMobile(w http.ResponseWriter, sess lego.MobileSession, c *lego.SetCheck, force bool, bagCode string) {
 	pieces, have, missing, extra, _ := c.Totals()
 	if missing > 0 && !force {
 		writeJSON(w, http.StatusConflict, finishSummary{
@@ -101,10 +104,38 @@ func (s *Server) finishCheckMobile(w http.ResponseWriter, sess lego.MobileSessio
 		return
 	}
 
+	// At least one small-bag line and no bag code confirmed yet (this request or
+	// an earlier one): hold the finish — "a verified link", not just a printed
+	// label, so this isn't optional the way bagging itself is. Only a read here
+	// (c.ID may still be 0 for a check that's never been saved before — that's
+	// fine for a lookup, CheckBagCode just reports "no code yet" for it; the
+	// actual RecordCheckBag call happens after FinishCheck below, once c.ID is
+	// guaranteed to be the real, final one).
+	small := lego.SmallBagLines(c)
+	if len(small) > 0 {
+		if existing, _ := s.legoDB.CheckBagCode(c.ID); existing == "" && bagCode == "" {
+			parts := make([]string, len(small))
+			for i, l := range small {
+				parts[i] = l.PartNum
+			}
+			writeJSON(w, http.StatusConflict, finishSummary{
+				Kind: "check", Pieces: pieces, Have: have, Missing: missing, Extra: extra,
+				Finished: false, NeedsBagCode: true, SmallBagParts: parts,
+			})
+			return
+		}
+	}
+
 	extrasParts, err := s.legoDB.FinishCheck(c)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if len(small) > 0 && bagCode != "" {
+		if err := s.legoDB.RecordCheckBag(c.ID, bagCode, sess.Username); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	action := "SET_CHECKED"
 	if c.Kind == lego.CheckRecount {
