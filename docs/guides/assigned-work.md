@@ -152,10 +152,16 @@ wms attendance rota set dave 2026-10-10 09:00 17:00 --note "covering lates"
 wms attendance rota show 2026-10-10        # everyone scheduled that day
 wms attendance rota clear dave 2026-10-10
 wms attendance rota override dave          # quick NS override: let dave work today anyway
+
+wms attendance break-start dave   # paid break: still clocked in, pick/check work pauses
+wms attendance break-end dave
 ```
 
 There's no CLI login session the way the TUI/mobile have one, so every `attendance` command takes
-the username explicitly — run it from wherever you'd run any other admin command.
+the username explicitly — run it from wherever you'd run any other admin command. The mobile app
+has the same clock-in/out, break and status actions at `/mobile/attendance` (and
+`/mobile/attendance/clock-in`, `/clock-out`, `/break-start`, `/break-end`) for its own clock-in
+screen.
 
 **Off by default** (`WMS_REQUIRE_CLOCK_IN=0`). With it off, clock-in/rota data can be recorded and
 viewed, but nothing is actually gated — matches today's behaviour exactly, so there's nothing to
@@ -170,6 +176,19 @@ that, nothing reads as NS, since there's no rota data to judge it against yet.
 
 Viewing things — history, messages, the handover note — is never gated by any of this, only
 actually claiming or advancing a pick/check is.
+
+**Alerts**, both sent through the same channels as everything else in *Admin → Notifications*:
+
+- **No-show**: once `WMS_REQUIRE_CLOCK_IN=1`, the gateway checks every 5 minutes for a rota entry
+  with a start time more than 10 minutes in the past and still nobody clocked in for it — one
+  alert per person per day, not a repeat every 5 minutes.
+- **Clocked out still holding a ticket**: fires the moment `wms attendance clock-out` (or the
+  mobile app's clock-out) succeeds while an open ticket is still claimed in their name. Never
+  blocks the clock-out itself — it releases nothing, just flags it.
+- **Daily team summary**: set `WMS_TEAM_SUMMARY_HOUR` (0-23, local time) to have the gateway send
+  one message a day listing everyone with clock activity that day — hours worked, plus picker/
+  checker accuracy for whoever actually did scored work (nobody gets a made-up 100% for a role
+  they didn't touch). Off (`""`, the default) until set.
 
 ## Accuracy
 

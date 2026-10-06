@@ -298,6 +298,15 @@ func ensureSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,
 			clock_in_at TEXT NOT NULL, clock_out_at TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_clock_events_user ON clock_events(username, clock_in_at)`,
+		// A paid break within an open shift (see attendance.go's StartBreak/
+		// EndBreak/OnBreak) — end_at "" means still on break, same convention
+		// as clock_events.clock_out_at. A shift's breaks don't need their own
+		// username column: clock_event_id already ties each one to exactly
+		// one shift, which already has one.
+		`CREATE TABLE IF NOT EXISTS clock_breaks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, clock_event_id INTEGER NOT NULL,
+			start_at TEXT NOT NULL, end_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_clock_breaks_event ON clock_breaks(clock_event_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -318,8 +327,8 @@ func ensureSchema(db *sql.DB) error {
 // colour to owned_parts. Version 2 added set_state.image_url (an admin's
 // override of a set's catalog picture, read ahead of cat_sets.img_url so it
 // survives the next Rebrickable catalog sync — see DB.CatalogSet). Version 3
-// added rota_entries/clock_events (see attendance.go).
-const schemaVersion = 3
+// added rota_entries/clock_events, version 4 clock_breaks (see attendance.go).
+const schemaVersion = 4
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -414,6 +423,19 @@ func migrate(db *sql.DB) error {
 		for _, s := range stmts {
 			if _, err := conn.ExecContext(ctx, s); err != nil {
 				return fmt.Errorf("migrating in rota_entries/clock_events: %w (%s)", err, s)
+			}
+		}
+	}
+	if version < 4 {
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS clock_breaks (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, clock_event_id INTEGER NOT NULL,
+				start_at TEXT NOT NULL, end_at TEXT NOT NULL DEFAULT '')`,
+			`CREATE INDEX IF NOT EXISTS idx_clock_breaks_event ON clock_breaks(clock_event_id)`,
+		}
+		for _, s := range stmts {
+			if _, err := conn.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("migrating in clock_breaks: %w (%s)", err, s)
 			}
 		}
 	}

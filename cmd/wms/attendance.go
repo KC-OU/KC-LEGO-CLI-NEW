@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/notify"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
 
@@ -20,7 +21,8 @@ func timeNowDate() string { return time.Now().Format("2006-01-02") }
 // username explicitly rather than assuming "whoever's running this".
 func newAttendanceCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "attendance", Short: "Clock in/out and the rota — see docs/guides/assigned-work.md"}
-	cmd.AddCommand(newAttendanceClockInCmd(), newAttendanceClockOutCmd(), newAttendanceStatusCmd(), newAttendanceRotaCmd())
+	cmd.AddCommand(newAttendanceClockInCmd(), newAttendanceClockOutCmd(), newAttendanceStatusCmd(), newAttendanceRotaCmd(),
+		newAttendanceBreakStartCmd(), newAttendanceBreakEndCmd())
 	return cmd
 }
 
@@ -68,6 +70,7 @@ func newAttendanceClockOutCmd() *cobra.Command {
 				return err
 			}
 			say(ui.Status(ui.New(), true, args[0]+" clocked out"))
+			warnIfStillHoldingATicket(db, args[0])
 			return emit(map[string]any{"username": args[0]})
 		},
 	}
@@ -92,6 +95,9 @@ func newAttendanceStatusCmd() *cobra.Command {
 			}
 			if shift != nil {
 				say(ui.Fact(t, "Clocked in", "since "+shift.ClockInAt.Format("15:04")))
+				if on, err := db.OnBreak(args[0]); err == nil && on {
+					say(ui.Fact(t, "On a break", "yes"))
+				}
 			} else {
 				say(ui.Fact(t, "Clocked in", "no"))
 			}
@@ -228,4 +234,75 @@ func newAttendanceRotaCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+// warnIfStillHoldingATicket is the "clocked-out-but-still-holding-a-ticket"
+// alert: best effort, never fails the clock-out itself over it.
+func warnIfStillHoldingATicket(db *lego.DB, username string) {
+	t, err := db.CurrentTicket(username)
+	if err != nil || t == nil {
+		return
+	}
+	label := t.Label
+	if label == "" {
+		label = t.Target
+	}
+	say(ui.New().Warning.Render(fmt.Sprintf("Note: %s is still holding an open %s ticket (%s) — it wasn't released.", username, t.Kind, label)))
+	notify.Dispatch("attendance_clocked_out_with_ticket",
+		fmt.Sprintf("%s clocked out while still holding a ticket", username),
+		fmt.Sprintf("%s clocked out but is still assigned an open %s ticket: %s. It wasn't released — reassign it or check in with them.", username, t.Kind, label))
+}
+
+func newAttendanceBreakStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "break-start <username>",
+		Short: "Start a paid break (stays clocked in; pauses pick/check work while it's on)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			if err := db.StartBreak(args[0]); err != nil {
+				switch {
+				case errors.Is(err, lego.ErrNotClockedIn):
+					return usageError("%s isn't clocked in", args[0])
+				case errors.Is(err, lego.ErrAlreadyOnBreak):
+					return usageError("%s is already on a break", args[0])
+				}
+				return err
+			}
+			say(ui.Status(ui.New(), true, args[0]+" is now on a break"))
+			return emit(map[string]any{"username": args[0]})
+		},
+	}
+}
+
+func newAttendanceBreakEndCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "break-end <username>",
+		Short: "End a paid break",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			if err := db.EndBreak(args[0]); err != nil {
+				switch {
+				case errors.Is(err, lego.ErrNotClockedIn):
+					return usageError("%s isn't clocked in", args[0])
+				case errors.Is(err, lego.ErrNotOnBreak):
+					return usageError("%s isn't on a break", args[0])
+				}
+				return err
+			}
+			say(ui.Status(ui.New(), true, args[0]+"'s break has ended"))
+			return emit(map[string]any{"username": args[0]})
+		},
+	}
 }

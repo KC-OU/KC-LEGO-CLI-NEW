@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
 func TestAttendanceClockInOut(t *testing.T) {
@@ -86,5 +88,74 @@ func TestAttendanceStatusShowsNSWhenNotScheduled(t *testing.T) {
 	stdout, code := run(t, "attendance", "status", "dave")
 	if code != 0 || !strings.Contains(stdout, "NS") {
 		t.Fatalf("status with no rota entry for today: code=%d out=%q", code, stdout)
+	}
+}
+
+func TestAttendanceBreakStartEnd(t *testing.T) {
+	legoEnv(t)
+
+	if _, code := run(t, "attendance", "break-start", "dave"); code != exitUsage {
+		t.Errorf("starting a break with no shift = %d, want %d", code, exitUsage)
+	}
+	if _, code := run(t, "attendance", "clock-in", "dave"); code != 0 {
+		t.Fatal("clock-in failed")
+	}
+
+	stdout, code := run(t, "attendance", "break-start", "dave")
+	if code != 0 || !strings.Contains(stdout, "now on a break") {
+		t.Fatalf("break-start: code=%d out=%q", code, stdout)
+	}
+	if _, code := run(t, "attendance", "break-start", "dave"); code != exitUsage {
+		t.Errorf("starting a second break = %d, want %d", code, exitUsage)
+	}
+
+	stdout, _ = run(t, "attendance", "status", "dave")
+	if !strings.Contains(stdout, "On a break") {
+		t.Errorf("status should show the open break, got %q", stdout)
+	}
+
+	stdout, code = run(t, "attendance", "break-end", "dave")
+	if code != 0 || !strings.Contains(stdout, "break has ended") {
+		t.Fatalf("break-end: code=%d out=%q", code, stdout)
+	}
+	if _, code := run(t, "attendance", "break-end", "dave"); code != exitUsage {
+		t.Errorf("ending an already-ended break = %d, want %d", code, exitUsage)
+	}
+}
+
+// TestClockOutWarnsWhenStillHoldingATicket covers the "clocked-out-but-
+// still-holding-a-ticket" alert: it must not block the clock-out itself,
+// just warn about it.
+func TestClockOutWarnsWhenStillHoldingATicket(t *testing.T) {
+	db := legoEnv(t)
+	tk, err := db.AssignTicket(lego.TicketCheck, "75192-1", "Millennium Falcon", "", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, "attendance", "clock-in", "dave"); code != 0 {
+		t.Fatal("clock-in failed")
+	}
+
+	stdout, code := run(t, "attendance", "clock-out", "dave")
+	if code != 0 {
+		t.Fatalf("clock-out must still succeed: code=%d out=%q", code, stdout)
+	}
+	if !strings.Contains(stdout, "still holding an open") {
+		t.Errorf("expected a warning about the still-claimed ticket, got %q", stdout)
+	}
+
+	// Nothing to warn about once the ticket's actually released.
+	if err := db.FinishTicket(lego.TicketCheck, "75192-1", "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := run(t, "attendance", "clock-in", "dave"); code != 0 {
+		t.Fatal("clock-in failed")
+	}
+	stdout, code = run(t, "attendance", "clock-out", "dave")
+	if code != 0 || strings.Contains(stdout, "still holding") {
+		t.Errorf("no open ticket left: expected no warning, got code=%d out=%q", code, stdout)
 	}
 }

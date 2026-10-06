@@ -78,6 +78,9 @@ func newGatewayServeCmd() *cobra.Command {
 			if hours, err := strconv.Atoi(strings.TrimSpace(config.Get(config.RetirementAutoRefreshHours))); err == nil && hours > 0 {
 				go retirementAutoRefresh(ctx, time.Duration(hours)*time.Hour)
 			}
+			if config.Get(config.RequireClockIn) == "1" || strings.TrimSpace(config.Get(config.TeamSummaryHour)) != "" {
+				go attendanceWatch(ctx)
+			}
 
 			testBinaryPath := config.Get(config.TestBinaryPath)
 			var testEnv []string
@@ -165,6 +168,79 @@ func newGatewayServeCmd() *cobra.Command {
 // autoRefreshCatalog keeps the offline catalog current (CATALOG_AUTO_REFRESH_HOURS, off by default).
 // Rebrickable allows automated downloads once a day, so the interval is never shorter than that,
 // and RefreshCatalog itself skips files that have not changed.
+// attendanceWatch is the no-show alert and the daily team summary, both
+// built on top of the clock-in/rota data (internal/lego's attendance.go).
+// Polls every 5 minutes — cheap compared to catalog refresh, and fine
+// resolution for "a few minutes after their start time" to actually mean
+// something. Both checks are no-ops of their own accord when unconfigured
+// (NoShowCandidates returns nothing unless config.RequireClockIn is on;
+// the team summary needs config.TeamSummaryHour set), so this only needs
+// one on/off decision at the call site: whether to start the loop at all.
+func attendanceWatch(ctx context.Context) {
+	logger := audit.New()
+	wait := time.Minute // let the gateway settle first
+	seenNoShow := map[string]bool{}
+	lastSummaryDate := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = 5 * time.Minute
+
+		db, err := openLego()
+		if err != nil {
+			logger.Log("system", "", "ATTENDANCE_WATCH", "FAILED", err.Error())
+			continue
+		}
+
+		today := time.Now().Format("2006-01-02")
+		if today != lastSummaryDate {
+			seenNoShow = map[string]bool{} // yesterday's alerts don't block today's
+		}
+
+		if cands, err := db.NoShowCandidates(10); err == nil {
+			for _, c := range cands {
+				key := c.Username + "|" + c.Date
+				if seenNoShow[key] {
+					continue
+				}
+				seenNoShow[key] = true
+				notify.Dispatch("attendance_no_show",
+					c.Username+" hasn't clocked in",
+					fmt.Sprintf("%s was due to start at %s today and hasn't clocked in yet.", c.Username, c.StartTime))
+			}
+		}
+
+		if hourStr := strings.TrimSpace(config.Get(config.TeamSummaryHour)); hourStr != "" {
+			if hour, err := strconv.Atoi(hourStr); err == nil && time.Now().Hour() == hour && lastSummaryDate != today {
+				if lines, err := db.TeamSummary(today); err == nil && len(lines) > 0 {
+					notify.Dispatch("attendance_team_summary", "Today's team summary", formatTeamSummary(lines))
+				}
+				lastSummaryDate = today
+			}
+		}
+
+		db.Close()
+	}
+}
+
+func formatTeamSummary(lines []lego.TeamSummaryLine) string {
+	var b strings.Builder
+	for _, l := range lines {
+		fmt.Fprintf(&b, "%s: %.1fh", l.Username, l.HoursWorked)
+		if l.PickerAccuracy != nil {
+			fmt.Fprintf(&b, ", picker %.0f%%", *l.PickerAccuracy)
+		}
+		if l.CheckerAccuracy != nil {
+			fmt.Fprintf(&b, ", checker %.0f%%", *l.CheckerAccuracy)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func autoRefreshCatalog(ctx context.Context, every time.Duration) {
 	logger := audit.New()
 	wait := time.Minute // let the gateway settle first

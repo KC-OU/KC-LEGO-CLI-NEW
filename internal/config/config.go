@@ -112,6 +112,11 @@ const (
 	// admin populates it (`wms attendance rota set`), so it's an explicit
 	// opt-in once that's actually in place, not a day-one default.
 	RequireClockIn = "WMS_REQUIRE_CLOCK_IN"
+	// TeamSummaryHour is the local hour (0-23) the gateway sends the daily
+	// team summary (hours + accuracy for everyone with clock activity that
+	// day) — "" (the default) is off. Only meaningful alongside
+	// RequireClockIn, same reasoning: no clock data, nothing to summarize.
+	TeamSummaryHour = "WMS_TEAM_SUMMARY_HOUR"
 )
 
 func Defaults() map[string]string {
@@ -182,6 +187,7 @@ func Defaults() map[string]string {
 		TestEnvFile:            "",
 		TelnetReconnectSeconds: "0",
 		RequireClockIn:         "0",
+		TeamSummaryHour:        "",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's

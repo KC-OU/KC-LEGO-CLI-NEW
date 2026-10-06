@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 )
@@ -181,6 +182,51 @@ func TestRotaForDateListsEveryoneScheduledThatDay(t *testing.T) {
 	}
 }
 
+// TestMigrationAddsClockBreaksTable confirms a pre-v4 lego.db (rota_entries/
+// clock_events already present, no clock_breaks) picks it up on open.
+func TestMigrationAddsClockBreaksTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lego.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`
+		CREATE TABLE owned_parts (id INTEGER PRIMARY KEY AUTOINCREMENT, part_num TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+			category TEXT NOT NULL DEFAULT '', color_id INTEGER NOT NULL DEFAULT -1, color_name TEXT NOT NULL DEFAULT '',
+			qty INTEGER NOT NULL DEFAULT 0, min_qty INTEGER NOT NULL DEFAULT 0, synced_part_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+		CREATE TABLE set_state (set_num TEXT PRIMARY KEY, location TEXT NOT NULL DEFAULT '', condition TEXT NOT NULL DEFAULT '',
+			condition_note TEXT NOT NULL DEFAULT '', missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0,
+			pdb_location_id INTEGER NOT NULL DEFAULT 0, image_url TEXT NOT NULL DEFAULT '');
+		CREATE TABLE rota_entries (username TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL DEFAULT '',
+			end_time TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', emergency_override INTEGER NOT NULL DEFAULT 0,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY (username, date));
+		CREATE TABLE clock_events (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,
+			clock_in_at TEXT NOT NULL, clock_out_at TEXT NOT NULL DEFAULT '');
+		PRAGMA user_version = 3`)
+	raw.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (migrating v3 -> v4): %v", err)
+	}
+	defer db.Close()
+
+	var version int
+	_ = db.QueryRow("PRAGMA user_version").Scan(&version)
+	if version != schemaVersion {
+		t.Errorf("user_version = %d, want %d", version, schemaVersion)
+	}
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatalf("ClockIn after migration: %v", err)
+	}
+	if err := db.StartBreak("dave"); err != nil {
+		t.Fatalf("StartBreak after migration: %v", err)
+	}
+}
+
 func TestRequireClockedInCoversBothGates(t *testing.T) {
 	enableClockInGate(t)
 	db := attDB(t)
@@ -242,6 +288,153 @@ func TestMigrationAddsRotaAndClockTables(t *testing.T) {
 	}
 	if err := db.SetRota("dave", "2026-10-10", "09:00", "17:00", "", "admin"); err != nil {
 		t.Fatalf("SetRota after migration: %v", err)
+	}
+}
+
+func TestBreakStartEndRoundTrip(t *testing.T) {
+	db := attDB(t)
+
+	if err := db.StartBreak("dave"); !errors.Is(err, ErrNotClockedIn) {
+		t.Errorf("starting a break with no shift = %v, want ErrNotClockedIn", err)
+	}
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := db.OnBreak("dave"); err != nil || on {
+		t.Fatalf("not on a break yet: %v, %v", on, err)
+	}
+	if err := db.EndBreak("dave"); !errors.Is(err, ErrNotOnBreak) {
+		t.Errorf("ending a break that was never started = %v, want ErrNotOnBreak", err)
+	}
+
+	if err := db.StartBreak("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := db.OnBreak("dave"); err != nil || !on {
+		t.Fatalf("should be on a break now: %v, %v", on, err)
+	}
+	if err := db.StartBreak("dave"); !errors.Is(err, ErrAlreadyOnBreak) {
+		t.Errorf("starting a second break = %v, want ErrAlreadyOnBreak", err)
+	}
+
+	if err := db.EndBreak("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := db.OnBreak("dave"); err != nil || on {
+		t.Fatalf("break should be over: %v, %v", on, err)
+	}
+
+	// Still clocked in throughout — a break never touches the shift itself.
+	if in, err := db.IsClockedIn("dave"); err != nil || !in {
+		t.Fatalf("a break must not clock dave out: %v, %v", in, err)
+	}
+}
+
+func TestRequireClockedInRefusesDuringABreak(t *testing.T) {
+	enableClockInGate(t)
+	db := attDB(t)
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRota("dave", today(), "09:00", "17:00", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequireClockedIn("dave"); err != nil {
+		t.Fatalf("before the break: %v, want nil", err)
+	}
+	if err := db.StartBreak("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequireClockedIn("dave"); !errors.Is(err, ErrOnBreak) {
+		t.Errorf("during the break = %v, want ErrOnBreak", err)
+	}
+	if err := db.EndBreak("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequireClockedIn("dave"); err != nil {
+		t.Errorf("after the break = %v, want nil", err)
+	}
+}
+
+func TestNoShowCandidatesOnlyFlagsLateUnclockedScheduledStarts(t *testing.T) {
+	enableClockInGate(t)
+	db := attDB(t)
+
+	// Not on the rota at all today: never a no-show candidate.
+	if cands, err := db.NoShowCandidates(10); err != nil || len(cands) != 0 {
+		t.Fatalf("nobody scheduled: %+v, %v, want none", cands, err)
+	}
+
+	past := time.Now().Add(-30 * time.Minute).Format("15:04")
+	future := time.Now().Add(30 * time.Minute).Format("15:04")
+	if err := db.SetRota("dave", today(), past, "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRota("sam", today(), future, "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRota("ann", today(), "", "", "", "admin"); err != nil { // no start time: never flagged
+		t.Fatal(err)
+	}
+
+	cands, err := db.NoShowCandidates(10)
+	if err != nil || len(cands) != 1 || cands[0].Username != "dave" {
+		t.Fatalf("NoShowCandidates = %+v, %v, want just dave (late, unclocked)", cands, err)
+	}
+
+	// Once dave clocks in, he drops off the list.
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if cands, err := db.NoShowCandidates(10); err != nil || len(cands) != 0 {
+		t.Fatalf("after clocking in: %+v, %v, want none", cands, err)
+	}
+}
+
+func TestNoShowCandidatesIsOffUntilTheGateIsOn(t *testing.T) {
+	db := attDB(t) // gate NOT enabled
+	past := time.Now().Add(-30 * time.Minute).Format("15:04")
+	if err := db.SetRota("dave", today(), past, "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if cands, err := db.NoShowCandidates(10); err != nil || len(cands) != 0 {
+		t.Fatalf("gate off: %+v, %v, want none regardless of the rota", cands, err)
+	}
+}
+
+func TestTeamSummaryHoursAndAccuracy(t *testing.T) {
+	db := attDB(t)
+	date := "2026-10-10"
+
+	// A finished shift that day, and one accuracy event.
+	in, _ := time.Parse(time.RFC3339, date+"T09:00:00Z")
+	out, _ := time.Parse(time.RFC3339, date+"T13:00:00Z")
+	if _, err := db.Exec(`INSERT INTO clock_events (username, clock_in_at, clock_out_at) VALUES (?, ?, ?)`,
+		"dave", in.Format(time.RFC3339), out.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO accuracy_log (username, role, day, kind, target, pieces, missing, delta, created_at)
+		VALUES ('dave', ?, ?, 'set_check', '1-1', 10, 2, -3, ?)`, AccuracyChecker, date, in.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := db.TeamSummary(date)
+	if err != nil || len(lines) != 1 {
+		t.Fatalf("TeamSummary = %+v, %v, want 1 line", lines, err)
+	}
+	l := lines[0]
+	if l.Username != "dave" || l.HoursWorked != 4 {
+		t.Errorf("expected dave, 4 hours worked, got %+v", l)
+	}
+	if l.CheckerAccuracy == nil || *l.CheckerAccuracy != 97 {
+		t.Errorf("expected checker accuracy 97%%, got %v", l.CheckerAccuracy)
+	}
+	if l.PickerAccuracy != nil {
+		t.Errorf("no picker activity that day: expected nil, got %v", *l.PickerAccuracy)
+	}
+
+	if lines, err := db.TeamSummary("2026-10-11"); err != nil || len(lines) != 0 {
+		t.Fatalf("a day with no activity: %+v, %v, want none", lines, err)
 	}
 }
 
