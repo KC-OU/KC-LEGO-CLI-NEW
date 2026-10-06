@@ -50,15 +50,21 @@ if gh repo view "$REPO" >/dev/null 2>&1; then
 	git remote remove origin
 	git remote add origin "https://github.com/$REPO.git"
 	git fetch -q origin main
-	remote_msg="$(git log -1 --format=%B origin/main)"
+	# Matched by full tree content (the repo's complete snapshot at that commit),
+	# not commit message: immune to a message being trimmed/edited after publish,
+	# AND to the published tip actually being a squash of several local commits
+	# (both have happened by hand here before) — squashing changes the commit
+	# count and message but never the resulting file content, so the tree hash
+	# still lands on exactly the right local commit to resume after.
+	remote_tree="$(git rev-parse origin/main^{tree})"
 	match=""
 	while IFS= read -r h; do
-		if [ "$(git log -1 --format=%B "$h")" = "$remote_msg" ]; then
+		if [ "$(git rev-parse "$h^{tree}")" = "$remote_tree" ]; then
 			match="$h"
 			break
 		fi
 	done < <(git log --format=%H HEAD)
-	[ -n "$match" ] || die "couldn't find a local commit matching the published tip's message — resolve by hand (see the script's header comment)."
+	[ -n "$match" ] || die "couldn't find a local commit whose full tree matches the published tip — resolve by hand (see the script's header comment)."
 	echo "last published: $(git rev-parse --short "$match") \"$(git log -1 --format=%s "$match")\""
 
 	mapfile -t new_commits < <(git rev-list --reverse "$match..HEAD")
