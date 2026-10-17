@@ -103,6 +103,35 @@ restrictions in the sign-on screen itself: a numeric ID/PIN is already everythin
 scanner's number keys need, with no awkward alpha-shift layer to hunt through. Existing Picker/Checker
 accounts keep working exactly as they are — this only applies the next time one is created or reset.
 
+## Renaming a numeric login ID
+
+A numeric Picker/Checker ID *is* that account's permanent username — there's nowhere else for it to
+live, since an MC9090 (or any numeric-keypad-only handheld) can't type anything else. If one needs to
+change (a reissued device, a digit typo baked in early, two accounts clashing), rename it instead of
+recreating the account from scratch:
+
+```bash
+wms-go access user rename 7354 7421 --source local
+```
+
+This moves everything that follows the account: its policy entry (groups, permissions, 2FA setting,
+full name), its 2FA enrollment, its login-lockout state, and — in the LEGO database — every ticket,
+accuracy record, kanban note, backlog release, attendance entry and message it's attached to. A live
+session still signed in under the old ID is dropped (not silently left with a stale permission lookup)
+and has to reconnect.
+
+Two things deliberately **don't** move:
+
+- **The new ID must be digits only** — the whole point is staying usable on a numeric keypad, so a
+  rename refuses anything else.
+- **The audit log is never rewritten.** It's tamper-evident and hash-chained precisely so nothing —
+  including an admin tool — can edit history after the fact. Sign-ins and actions from before the
+  rename stay attributed to the old ID forever; finding that account's full history means checking
+  for both IDs (`grep` the audit log, or `wms audit head` for the latest lines).
+
+There's no TUI screen for this yet — `wms access user rename` is CLI-only, same as `set-password` and
+`set-name`.
+
 ## Barcode badge sign-in
 
 A username can be swapped for a scanned barcode at the sign-on screen: scan (or type) the badge into the

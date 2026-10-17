@@ -460,6 +460,35 @@ func Disable(username, source string) error {
 	return s.save(entries)
 }
 
+// Rename moves an account's 2FA enrollment (if any) from oldUsername to
+// newUsername, for an admin renaming a numeric login ID. A no-op if the old
+// username was never enrolled; an error if the new username already has its
+// own entry, so a rename never silently clobbers someone else's secret.
+func Rename(oldUsername, newUsername, source string) error {
+	s := newStore()
+	unlock, lerr := s.lock()
+	if lerr != nil {
+		return lerr
+	}
+	defer unlock()
+
+	entries, err := s.load()
+	if err != nil {
+		return err
+	}
+	oldKey, newKey := key(oldUsername, source), key(newUsername, source)
+	e, ok := entries[oldKey]
+	if !ok {
+		return nil
+	}
+	if _, taken := entries[newKey]; taken {
+		return fmt.Errorf("%s already has a 2FA enrollment", newUsername)
+	}
+	delete(entries, oldKey)
+	entries[newKey] = e
+	return s.save(entries)
+}
+
 func IsEnabled(username, source string) bool {
 	s := newStore()
 	unlock, lerr := s.lock()

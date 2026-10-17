@@ -183,3 +183,30 @@ func ClearFailures(username string) error {
 	_, err := update(username, func(e *entry) { *e = entry{} })
 	return err
 }
+
+// Rename moves a failed-attempt/lockout entry (if any) from oldUsername to
+// newUsername, for an admin renaming a numeric login ID. A no-op if the old
+// username has no entry; an error if the new username already has one.
+func Rename(oldUsername, newUsername string) error {
+	path := storePath()
+	unlock, err := lock(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	entries, err := load(path)
+	if err != nil {
+		return err
+	}
+	oldKey, newKey := key(oldUsername), key(newUsername)
+	e, ok := entries[oldKey]
+	if !ok {
+		return nil
+	}
+	if _, taken := entries[newKey]; taken {
+		return errors.New(newUsername + " already has a login-lock entry")
+	}
+	delete(entries, oldKey)
+	entries[newKey] = e
+	return save(path, entries)
+}

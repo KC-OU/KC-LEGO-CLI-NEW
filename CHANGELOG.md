@@ -29,12 +29,23 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   it's a good time, since someone may already be mid-check elsewhere. Pickers/checkers get a
   **Kanban** entry (replacing "My Current Jobs") showing their own job, recent history and the
   shared backlog, plus private or admin-shared notes on their current job. Admins get a full board
-  (all users, both checks and picks, filterable to one person) and the backlog release action.
+  (all users, both checks and picks, filterable to one person) and the backlog release action. On a
+  terminal 70 columns or wider, Backlog/Active/Done render as three bordered, colour-coded columns
+  side by side with a live card count, falling back to a plain stacked list on anything narrower.
   Reachable with **Shift+F1** (F13 fallback) from either hub. A check line at or above a
   quantity threshold (default 50, `KANBAN_BACKLOG_QTY_THRESHOLD`) is automatically flagged to be
   done last, without leaving the job. The board is read-only — claiming, finishing and abandoning
   jobs all still happen exactly where they already did. See
   [Kanban board](docs/guides/kanban.md).
+- **Renaming a numeric Picker/Checker login ID.** An MC9090 (or any numeric-keypad-only handheld)
+  can't type anything but digits, so that account's ID is effectively its permanent username —
+  there was previously no supported way to change one once created. `wms access user rename
+  <old-id> <new-id>` moves the policy entry, 2FA enrollment and login-lockout state, and every
+  ticket/accuracy/kanban/attendance/messaging record in the LEGO database, in one go; a live
+  session under the old ID is dropped so it reconnects instead of silently losing its permission
+  lookup. The audit log is deliberately never rewritten — history from before a rename stays under
+  the old ID. See
+  [Access control](docs/guides/access-control.md#renaming-a-numeric-login-id).
 - **Accuracy, always visible, with a real name for numeric accounts.** Every screen's header now
   shows the signed-in user's current accuracy (e.g. `7354 - Kieran Collins (100%)`), not just the
   dedicated accuracy screen. `wms access user set-name <id> "<full name>"` gives a numeric-login

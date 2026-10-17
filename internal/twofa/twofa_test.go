@@ -161,6 +161,34 @@ func TestDisableRemovesEntry(t *testing.T) {
 	}
 }
 
+func TestRenameMovesEnrollmentAndRejectsCollision(t *testing.T) {
+	withTempStore(t)
+	secret, _, _ := Enroll("7354", "modernwms")
+	code, _ := totp.GenerateCode(secret, time.Now())
+	if _, err := Confirm("7354", "modernwms", code); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Rename("nobody", "7999", "modernwms"); err != nil {
+		t.Fatalf("renaming an unenrolled account should no-op, got %v", err)
+	}
+
+	if err := Rename("7354", "7421", "modernwms"); err != nil {
+		t.Fatal(err)
+	}
+	if IsEnabled("7354", "modernwms") {
+		t.Error("the old ID should no longer have an enrollment")
+	}
+	if !IsEnabled("7421", "modernwms") {
+		t.Error("the new ID should carry the enrollment forward")
+	}
+
+	Enroll("7500", "modernwms")
+	if err := Rename("7421", "7500", "modernwms"); err == nil {
+		t.Error("renaming onto an already-enrolled ID should fail, not clobber it")
+	}
+}
+
 // enrolled returns a store with alice enrolled and enabled.
 func enrolled(t *testing.T) {
 	t.Helper()

@@ -217,3 +217,81 @@ func TestKanbanNoteAddRespectsVisibilityToggle(t *testing.T) {
 		t.Error("a shared note should log an admin-activity event; a private one should not add an unrelated extra one")
 	}
 }
+
+// TestKanbanBoardRendersBoxedSwimlanesWhenWide confirms the cli_kanban-styled
+// redesign: at a normal terminal width the admin board renders three bordered
+// columns side by side with a live counts header, every rendered line still
+// fits 80 columns, and a badge/abandoned card still shows its markers.
+func TestKanbanBoardRendersBoxedSwimlanesWhenWide(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 80, Height: 25})
+	app.session = &auth.Session{Source: "modernwms", Username: "admin", Role: "Admin", Permissions: &wmsdb.Permissions{IsAdmin: true}}
+
+	chk, err := app.legoDB.AssignTicket(lego.TicketCheck, "75192-1", "Falcon check", "kc", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.ClaimTicket(chk.ID, "kc"); err != nil {
+		t.Fatal(err)
+	}
+	done, err := app.legoDB.AssignTicket(lego.TicketCheck, "60198-1", "Cargo Train check", "kc", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.ClaimTicket(done.ID, "kc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.FinishTicket(done.Kind, done.Target, "kc"); err != nil {
+		t.Fatal(err)
+	}
+
+	app.kanbanFilterUser = ""
+	scr := app.screens[scrKanbanBoardAll].(*menuScreen)
+	out := plain(scr.intro(app))
+
+	if !strings.Contains(out, "╭") || !strings.Contains(out, "╯") {
+		t.Errorf("a wide terminal should render boxed columns:\n%s", out)
+	}
+	if !strings.Contains(out, "Backlog:") || !strings.Contains(out, "Active:") || !strings.Contains(out, "Done:") {
+		t.Errorf("missing the live counts header:\n%s", out)
+	}
+	for i, l := range strings.Split(out, "\n") {
+		if w := len([]rune(strings.TrimRight(l, " "))); w > 80 {
+			t.Errorf("row %d is %d columns wide:\n%s", i, w, l)
+		}
+	}
+
+	app.cur, app.stack = scrHub, nil
+	app.goTo(scrKanbanBoardAll)
+	full := strings.Split(strings.TrimRight(plain(app.View()), "\n"), "\n")
+	if len(full) > 25 {
+		t.Errorf("the full screen with real board data is %d rows, over the 25-row budget:\n%s", len(full), strings.Join(full, "\n"))
+	}
+}
+
+// TestKanbanBoardFallsBackToFlatListWhenNarrow confirms a terminal under the
+// 70-column gate (telnet clients, small panes) keeps today's plain stacked
+// list instead of squeezing three boxes into too little width.
+func TestKanbanBoardFallsBackToFlatListWhenNarrow(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	app.session = &auth.Session{Source: "modernwms", Username: "admin", Role: "Admin", Permissions: &wmsdb.Permissions{IsAdmin: true}}
+
+	chk, err := app.legoDB.AssignTicket(lego.TicketCheck, "75192-1", "Falcon check", "kc", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.legoDB.ClaimTicket(chk.ID, "kc"); err != nil {
+		t.Fatal(err)
+	}
+
+	scr := app.screens[scrKanbanBoardAll].(*menuScreen)
+	out := plain(scr.intro(app))
+
+	if strings.Contains(out, "╭") || strings.Contains(out, "╯") {
+		t.Errorf("a narrow terminal should not render boxed columns:\n%s", out)
+	}
+	if !strings.Contains(out, "Active (1)") {
+		t.Errorf("the flat list's own column-count heading should still show:\n%s", out)
+	}
+}

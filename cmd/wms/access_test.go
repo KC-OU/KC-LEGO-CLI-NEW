@@ -7,6 +7,7 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
 func accessEnv(t *testing.T) {
@@ -134,5 +135,95 @@ func TestAccessUserSetNameSetsFullName(t *testing.T) {
 	p, _ = access.Load()
 	if got := p.Users["local:7354"].FullName; got != "" {
 		t.Errorf("FullName after clearing = %q, want empty", got)
+	}
+}
+
+func renameEnv(t *testing.T) {
+	t.Helper()
+	accessEnv(t)
+	dir := t.TempDir()
+	t.Setenv("LEGO_DB_PATH", filepath.Join(dir, "lego.db"))
+	t.Setenv("TWOFA_FILE", filepath.Join(dir, "2fa.json"))
+	t.Setenv(config.LoginLockFile, filepath.Join(dir, "login_lock.json"))
+}
+
+// TestAccessUserRenameMovesPolicyEntry covers an admin renaming a numeric
+// Picker/Checker login ID: the access.Policy entry moves to the new key,
+// the old key is gone, and the account's ticket history (internal/lego)
+// follows it.
+func TestAccessUserRenameMovesPolicyEntry(t *testing.T) {
+	renameEnv(t)
+	if _, code := run(t, "access", "user", "set-name", "7354", "Kieran Collins", "--source", "local"); code != 0 {
+		t.Fatalf("seeding the account: code=%d", code)
+	}
+
+	db, err := openLego()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := db.AssignTicket(lego.TicketCheck, "75192-1", "Falcon check", "7354", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "7354"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	stdout, code := run(t, "access", "user", "rename", "7354", "7421", "--json")
+	if code != 0 {
+		t.Fatalf("rename: code=%d out=%q", code, stdout)
+	}
+
+	p, err := access.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Users["local:7354"] != nil {
+		t.Error("the old key should be gone after a rename")
+	}
+	u := p.Users["local:7421"]
+	if u == nil || u.FullName != "Kieran Collins" {
+		t.Fatalf("local:7421 = %+v, want the moved entry with its FullName intact", u)
+	}
+
+	db, err = openLego()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got, err := db.CurrentTicket("7421"); err != nil || got == nil || got.ID != tk.ID {
+		t.Fatalf("CurrentTicket(7421) = %v, %v, want ticket %d", got, err, tk.ID)
+	}
+	if got, err := db.CurrentTicket("7354"); err != nil || got != nil {
+		t.Fatalf("CurrentTicket(7354) after rename = %v, %v, want nil", got, err)
+	}
+}
+
+// TestAccessUserRenameRejectsNonNumericAndCollision covers the two refusal
+// cases: a new ID that wouldn't work on the MC9090's numeric keypad, and a
+// new ID that's already someone else's.
+func TestAccessUserRenameRejectsNonNumericAndCollision(t *testing.T) {
+	renameEnv(t)
+	if _, code := run(t, "access", "user", "set-name", "7354", "Kieran Collins", "--source", "local"); code != 0 {
+		t.Fatalf("seeding 7354: code=%d", code)
+	}
+	if _, code := run(t, "access", "user", "set-name", "7421", "Someone Else", "--source", "local"); code != 0 {
+		t.Fatalf("seeding 7421: code=%d", code)
+	}
+
+	if _, code := run(t, "access", "user", "rename", "7354", "not-numeric"); code == 0 {
+		t.Error("a non-numeric new ID should be refused")
+	}
+	if _, code := run(t, "access", "user", "rename", "7354", "7421"); code == 0 {
+		t.Error("renaming onto an ID that already has an entry should be refused, not clobber it")
+	}
+
+	p, err := access.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Users["local:7354"] == nil || p.Users["local:7421"] == nil {
+		t.Error("a rejected rename must not have moved or deleted either entry")
 	}
 }

@@ -13,6 +13,38 @@ func testEnv(t *testing.T) {
 	t.Setenv(config.LoginLockFile, filepath.Join(t.TempDir(), "login_lock.json"))
 }
 
+func TestRenameMovesEntryAndRejectsCollision(t *testing.T) {
+	testEnv(t)
+
+	if err := Rename("nobody", "7999"); err != nil {
+		t.Fatalf("renaming an entry-less username should no-op, got %v", err)
+	}
+
+	if _, _, err := RecordFailure("7354"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename("7354", "7421"); err != nil {
+		t.Fatal(err)
+	}
+	if until, locked, err := Locked("7354"); err != nil || locked || !until.IsZero() {
+		t.Errorf("Locked(%q) after rename = %v, %v, %v, want cleared", "7354", until, locked, err)
+	}
+	if _, _, err := RecordFailure("7421"); err != nil {
+		t.Fatal(err)
+	}
+	e, err := update("7421", func(e *entry) {})
+	if err != nil || e.Fails != 2 {
+		t.Fatalf("the renamed account's failure count = %+v, %v, want 2 (1 moved + 1 new)", e, err)
+	}
+
+	if _, _, err := RecordFailure("7500"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rename("7421", "7500"); err == nil {
+		t.Error("renaming onto an already-tracked username should fail, not clobber it")
+	}
+}
+
 func TestLocksAfterMaxFailuresAndClearsOnSuccess(t *testing.T) {
 	testEnv(t)
 	username := "dave"

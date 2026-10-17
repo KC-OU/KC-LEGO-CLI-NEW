@@ -5,6 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -103,7 +106,7 @@ func kanbanBoardScreen() screenModel {
 			if err != nil {
 				return app.theme.Danger.Render(err.Error())
 			}
-			return renderKanbanCards(app, board, false)
+			return kanbanBoard(app, board, false)
 		},
 	}
 }
@@ -258,7 +261,7 @@ func kanbanBoardAllScreen() screenModel {
 			if err != nil {
 				return app.theme.Danger.Render(err.Error())
 			}
-			return app.theme.Muted.Render("Viewing: "+title) + "\n" + renderKanbanCards(app, board, app.kanbanFilterUser == "")
+			return app.theme.Muted.Render("Viewing: "+title) + "\n" + kanbanBoard(app, board, app.kanbanFilterUser == "")
 		},
 	}
 }
@@ -293,6 +296,36 @@ var kanbanColumns = []struct{ key, label string }{
 	{lego.KanbanColDone, "Done"},
 }
 
+// kanbanCardLine is one card's text, shared by both the flat and the boxed
+// swimlane renderer so the fields shown never drift apart.
+func kanbanCardLine(t ui.Theme, c lego.KanbanCard, showAssignee bool) string {
+	name := c.Ticket.Label
+	if name == "" {
+		name = c.Ticket.Target
+	}
+	line := name
+	if showAssignee && c.Ticket.AssignedTo != "" {
+		line += "  [" + c.Ticket.AssignedTo + "]"
+	}
+	if c.Summary != "" {
+		badge := c.Summary
+		switch {
+		case strings.Contains(badge, "M"):
+			badge = t.Danger.Render(badge)
+		case strings.Contains(badge, "E"):
+			badge = t.Info.Render(badge)
+		}
+		line += "  " + badge
+	}
+	if c.Abandoned {
+		line += "  " + t.Warning.Render("(abandoned)")
+	}
+	if c.Age > 0 {
+		line += "  " + t.Muted.Render(formatKanbanAge(c.Age))
+	}
+	return line
+}
+
 func renderKanbanCards(app *App, cards []lego.KanbanCard, showAssignee bool) string {
 	if len(cards) == 0 {
 		return app.theme.Muted.Render("Nothing on the board right now.")
@@ -310,34 +343,80 @@ func renderKanbanCards(app *App, cards []lego.KanbanCard, showAssignee bool) str
 		}
 		b.WriteString(t.Accent.Render(fmt.Sprintf("%s (%d)", col.label, len(rows))) + "\n")
 		for _, c := range rows {
-			name := c.Ticket.Label
-			if name == "" {
-				name = c.Ticket.Target
-			}
-			line := "  " + name
-			if showAssignee && c.Ticket.AssignedTo != "" {
-				line += "  [" + c.Ticket.AssignedTo + "]"
-			}
-			if c.Summary != "" {
-				badge := c.Summary
-				switch {
-				case strings.Contains(badge, "M"):
-					badge = t.Danger.Render(badge)
-				case strings.Contains(badge, "E"):
-					badge = t.Info.Render(badge)
-				}
-				line += "  " + badge
-			}
-			if c.Abandoned {
-				line += "  " + t.Warning.Render("(abandoned)")
-			}
-			if c.Age > 0 {
-				line += "  " + t.Muted.Render(formatKanbanAge(c.Age))
-			}
-			b.WriteString(line + "\n")
+			b.WriteString("  " + kanbanCardLine(t, c, showAssignee) + "\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// kanbanBoard is what both kanban screens' intro() actually calls: the boxed,
+// cli_kanban-styled 3-column swimlane view on a terminal wide enough to show
+// it side by side (the same 70-column gate theme_picker.go uses for its own
+// horizontal/vertical layout choice), falling back to today's flat stacked
+// list — renderKanbanCards — on anything narrower (telnet clients included).
+func kanbanBoard(app *App, cards []lego.KanbanCard, showAssignee bool) string {
+	if app.theme.W() >= 70 {
+		return renderKanbanSwimlanes(app, cards, showAssignee)
+	}
+	return renderKanbanCards(app, cards, showAssignee)
+}
+
+// kanbanColBorder is the semantic theme token each column's panel borders
+// with — never a hardcoded hex, so every theme (including NO_COLOR) stays
+// legible.
+func kanbanColBorder(t ui.Theme, key string) lipgloss.Style {
+	switch key {
+	case lego.KanbanColActive:
+		return t.Info
+	case lego.KanbanColDone:
+		return t.Success
+	default:
+		return t.Accent
+	}
+}
+
+func renderKanbanSwimlanes(app *App, cards []lego.KanbanCard, showAssignee bool) string {
+	if len(cards) == 0 {
+		return app.theme.Muted.Render("Nothing on the board right now.")
+	}
+	t := app.theme
+	byCol := map[string][]lego.KanbanCard{}
+	for _, c := range cards {
+		byCol[c.Column] = append(byCol[c.Column], c)
+	}
+
+	n := len(kanbanColumns)
+	colW := (t.W() - (n - 1)) / n
+	if colW < 10 {
+		colW = 10
+	}
+	inner := colW - 4
+	if inner < 1 {
+		inner = 1
+	}
+
+	counts := make([]string, 0, n)
+	parts := make([]string, 0, 2*n-1)
+	for i, col := range kanbanColumns {
+		rows := byCol[col.key]
+		counts = append(counts, fmt.Sprintf("%s: %d", col.label, len(rows)))
+		var b strings.Builder
+		for j, c := range rows {
+			if j > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(ansi.Truncate("• "+kanbanCardLine(t, c, showAssignee), inner, "…"))
+		}
+		body := b.String()
+		if body == "" {
+			body = t.Muted.Render("—")
+		}
+		if i > 0 {
+			parts = append(parts, " ")
+		}
+		parts = append(parts, ui.RenderPanelRoundedWidth(t, kanbanColBorder(t, col.key), col.label, body, colW))
+	}
+	return t.Muted.Render(strings.Join(counts, " | ")) + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 func formatKanbanAge(d time.Duration) string {

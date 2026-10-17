@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -16,9 +17,16 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
 )
+
+// numericIDRE is what a renamed login ID must match: MC9090 handhelds are
+// numeric-keypad-only, so a Picker/Checker account's ID has to stay usable
+// on one.
+var numericIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // `wms access`: the permission policy (groups, per-user permissions, 2FA
 // exemptions, sign-in limits and timings) from the shell. The policy file is
@@ -557,6 +565,77 @@ func newAccessUserCmd() *cobra.Command {
 		},
 	}
 
+	renameCmd := &cobra.Command{
+		Use:   "rename <old-id> <new-id>",
+		Short: "Rename a numeric Picker/Checker login ID (the MC9090's keypad-only login means the ID is the permanent username)",
+		Long: "Moves the account's ticket, accuracy, kanban, attendance and messaging history, its 2FA enrollment and its\n" +
+			"login-lockout state to the new ID, and drops any live session under the old one so it reconnects instead of\n" +
+			"silently losing its policy lookup mid-session. The audit log is never rewritten: past sign-ins and actions\n" +
+			"stay attributed to the old ID forever — search both IDs for a full history. See docs/guides/access-control.md.",
+		Example: "  wms access user rename 7354 7421 --source local",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			oldID, newID := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
+			if !numericIDRE.MatchString(newID) {
+				return usageError("the new ID must be digits only (MC9090 logins are numeric-keypad only), got %q", newID)
+			}
+			p, err := access.Load()
+			if err != nil {
+				return err
+			}
+			oldKey := userKey(p, oldID)
+			if p.Users[oldKey] == nil {
+				return fmt.Errorf("%s has no entry", oldKey)
+			}
+			source, _, _ := strings.Cut(oldKey, ":")
+			newKey := access.Key(source, newID)
+			if p.Users[newKey] != nil {
+				return fmt.Errorf("%s already has an entry", newKey)
+			}
+
+			// Safest-first ordering: move the data stores before the policy entry,
+			// so if anything here fails the account still signs in under the old
+			// ID — nothing user-visible has changed yet — rather than leaving a
+			// renamed login with orphaned history.
+			db, err := openLego()
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			if err := db.RenameUser(oldID, newID); err != nil {
+				return withCode(exitFailure, fmt.Errorf("ticket/accuracy/kanban history was not moved, nothing changed: %w", err))
+			}
+			t := ui.New()
+			if err := twofa.Rename(oldID, newID, source); err != nil {
+				say(ui.Warn(t, "2FA enrollment was not moved: "+err.Error()))
+			}
+			if err := loginlock.Rename(oldID, newID); err != nil {
+				say(ui.Warn(t, "login-lockout state was not moved: "+err.Error()))
+			}
+
+			if _, err := changePolicy("user rename "+oldID+" "+newID, func(p *access.Policy) error {
+				key := userKey(p, oldID)
+				u := p.Users[key]
+				if u == nil {
+					return fmt.Errorf("%s has no entry", key)
+				}
+				src, _, _ := strings.Cut(key, ":")
+				nk := access.Key(src, newID)
+				if p.Users[nk] != nil {
+					return fmt.Errorf("%s already has an entry", nk)
+				}
+				delete(p.Users, key)
+				p.Users[nk] = u
+				return nil
+			}); err != nil {
+				return err
+			}
+			_ = audit.New().Log(cliUser(), "", "USER_RENAMED", "SUCCESS", fmt.Sprintf("old=%s new=%s source=%s", oldID, newID, source))
+			say(ui.Status(t, true, oldID+" renamed to "+newID))
+			return emit(map[string]any{"old": oldID, "new": newID, "source": source})
+		},
+	}
+
 	remove := &cobra.Command{
 		Use: "remove <user>", Short: "Delete the user's entry (they go back to their ModernWMS role's access)", Args: cobra.ExactArgs(1),
 		Example: "  wms access user remove alex",
@@ -576,7 +655,7 @@ func newAccessUserCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, badgeCmd, setPasswordCmd, setNameCmd, remove)
+	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, badgeCmd, setPasswordCmd, setNameCmd, renameCmd, remove)
 	return cmd
 }
 

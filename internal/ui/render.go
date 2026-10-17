@@ -196,18 +196,23 @@ func RenderPrompt(t Theme, label, value string, active bool) string {
 // column of padding inside. border picks the color (t.Brand for the login
 // card, t.Warning for the forced-password-change card).
 func RenderPanel(t Theme, border lipgloss.Style, title, body string) string {
-	return renderPanel(t, border, title, body, "┌", "┐", "└", "┘")
+	return renderPanel(t, border, title, body, t.W(), "┌", "┐", "└", "┘")
 }
 
 // RenderPanelRounded is RenderPanel with soft corners instead of square ones — used
 // for hub/menu screens and the alert popup, so the rest of the app reads closer to
 // the sign-on card's look rather than inventing a second panel style.
 func RenderPanelRounded(t Theme, border lipgloss.Style, title, body string) string {
-	return renderPanel(t, border, title, body, "╭", "╮", "╰", "╯")
+	return renderPanel(t, border, title, body, t.W(), "╭", "╮", "╰", "╯")
 }
 
-func renderPanel(t Theme, border lipgloss.Style, title, body, topLeft, topRight, bottomLeft, bottomRight string) string {
-	w := t.W()
+// RenderPanelRoundedWidth is RenderPanelRounded for a panel narrower than the full
+// terminal width — e.g. one column of a side-by-side board.
+func RenderPanelRoundedWidth(t Theme, border lipgloss.Style, title, body string, width int) string {
+	return renderPanel(t, border, title, body, width, "╭", "╮", "╰", "╯")
+}
+
+func renderPanel(t Theme, border lipgloss.Style, title, body string, w int, topLeft, topRight, bottomLeft, bottomRight string) string {
 	inner := w - 4
 	if inner < 1 {
 		inner = 1

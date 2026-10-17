@@ -5,6 +5,11 @@ backlog, active and done jobs, at a glance, with notes. It never changes a job's
 claiming, finishing or abandoning still happens on the normal check/order screens, exactly as
 before. The board is a window onto that data, not a second way to work it.
 
+On a terminal 70 columns or wider, Backlog/Active/Done render as three bordered columns side by
+side with a live `Backlog: N | Active: N | Done: N` count, each card a short bulleted line. A
+narrower terminal (a small telnet pane, some mobile clients) falls back to the same information
+as a plain stacked list instead of squeezing three boxes into too little width.
+
 ## New sets start in a backlog, not checkable right away
 
 Adding a brand-new set (*LEGO Collection → Add a Set*) now queues it in the kanban backlog instead
