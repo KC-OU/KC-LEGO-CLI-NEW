@@ -255,31 +255,37 @@ func fmtPrice(v float64) string {
 
 func newLegoOrdersCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "orders", Short: "Orders for missing parts: supplier, prices, shipping, invoice, tracking, received"}
+	var listWatch time.Duration
 	list := &cobra.Command{
 		Use: "list", Short: "All orders (--status wanted|ordered|shipped|received|cancelled|open)", Args: cobra.NoArgs,
+		Example: "  wms lego orders list --status open\n  wms lego orders list --status open --watch 1m",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status, _ := cmd.Flags().GetString("status")
-			db, err := openLego()
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			orders, err := db.ListOrders(status)
-			if err != nil {
-				return err
-			}
-			rows := [][]string{}
-			for _, o := range orders {
-				rows = append(rows, []string{"#" + strconv.FormatInt(o.ID, 10), o.SupplierKind + " " + o.Supplier, strings.ToUpper(o.Status), strconv.Itoa(o.Pieces()),
-					fmt.Sprintf("%.2f %s", o.Total(), o.Currency), orDash(o.InvoiceNo), orDash(o.TrackingNo)})
-			}
-			say(ui.RenderColumns(ui.New(), []string{"Order", "Supplier", "Status", "Parts", "Total", "Invoice", "Tracking"}, rows, fmt.Sprintf("%d order(s)", len(rows))))
-			return emit(orders)
+			return runWatchable(listWatch, func() error {
+				db, err := openLego()
+				if err != nil {
+					return err
+				}
+				defer db.Close()
+				orders, err := db.ListOrders(status)
+				if err != nil {
+					return err
+				}
+				rows := [][]string{}
+				for _, o := range orders {
+					rows = append(rows, []string{"#" + strconv.FormatInt(o.ID, 10), o.SupplierKind + " " + o.Supplier, strings.ToUpper(o.Status), strconv.Itoa(o.Pieces()),
+						fmt.Sprintf("%.2f %s", o.Total(), o.Currency), orDash(o.InvoiceNo), orDash(o.TrackingNo)})
+				}
+				say(ui.RenderColumns(ui.New(), []string{"Order", "Supplier", "Status", "Parts", "Total", "Invoice", "Tracking"}, rows, fmt.Sprintf("%d order(s)", len(rows))))
+				return emit(orders)
+			})
 		},
 	}
 	list.Flags().String("status", "", "only this status")
+	addWatchFlag(list, &listWatch)
 	show := &cobra.Command{
 		Use: "show <id>", Short: "An order and its lines", Args: cobra.ExactArgs(1),
+		Example: "  wms lego orders show 12",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, o, err := openOrder(args[0])
 			if err != nil {
@@ -350,6 +356,7 @@ func newLegoOrdersCmd() *cobra.Command {
 	var line lego.OrderLine
 	addLine := &cobra.Command{
 		Use: "add-line <id>", Short: "Add a part to an order", Args: cobra.ExactArgs(1),
+		Example: "  wms lego orders add-line 12 --part 3001 --color red --qty 4 --price 0.08",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, ord, err := openOrder(args[0])
 			if err != nil {
@@ -374,6 +381,7 @@ func newLegoOrdersCmd() *cobra.Command {
 	lf.StringVar(&line.SetNum, "set", "", "the set it is for (receiving it fills that set)")
 	status := &cobra.Command{
 		Use: "status <id> <wanted|ordered|shipped|received|cancelled>", Short: "Move an order along (received fills the sets it was for)", Args: cobra.ExactArgs(2),
+		Example: "  wms lego orders status 12 shipped\n  wms lego orders status 12 received",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, ord, err := openOrder(args[0])
 			if err != nil {
@@ -717,9 +725,11 @@ func labelSizes() string {
 }
 
 func newLegoSetInfoCmd() *cobra.Command {
-	var location, condition, note, imageURL string
+	var location, condition, note, imageURL, bagGating, boxBarcode, instructionBook string
+	var maxBags, instructionBookCount int
 	cmd := &cobra.Command{
 		Use: "set-info <set>", Short: "Where a set is kept and its condition (sealed, built, in pieces, displayed)", Args: cobra.ExactArgs(1),
+		Example: "  wms lego set-info 75192\n  wms lego set-info 75192 --location \"Shelf A3\" --condition built\n  wms lego set-info 75192 --max-bags 3\n  wms lego set-info 75192 --bag-gating off\n  wms lego set-info 75192 --box-barcode 673419331765\n  wms lego set-info 75192 --instruction-book 6644777 --instruction-book-count 1",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := openLego()
 			if err != nil {
@@ -728,6 +738,21 @@ func newLegoSetInfoCmd() *cobra.Command {
 			defer db.Close()
 			num := catalogNum(args[0])
 			st := db.GetSetState(num)
+			if cmd.Flags().Changed("instruction-book") || cmd.Flags().Changed("instruction-book-count") {
+				owned, err := db.GetSetByNum(num)
+				if err != nil {
+					return err
+				}
+				if !cmd.Flags().Changed("instruction-book") {
+					instructionBook = owned.InstructionBookNumber
+				}
+				if !cmd.Flags().Changed("instruction-book-count") {
+					instructionBookCount = owned.InstructionBookCount
+				}
+				if err := db.SetInstructionBook(num, instructionBook, instructionBookCount); err != nil {
+					return err
+				}
+			}
 			if !cmd.Flags().Changed("location") {
 				location = st.Location
 			}
@@ -745,6 +770,22 @@ func newLegoSetInfoCmd() *cobra.Command {
 					return err
 				}
 			}
+			if cmd.Flags().Changed("box-barcode") {
+				if err := db.SetBoxBarcode(num, boxBarcode); err != nil {
+					return usageError("%v", err)
+				}
+			}
+			if cmd.Flags().Changed("max-bags") || cmd.Flags().Changed("bag-gating") {
+				if !cmd.Flags().Changed("max-bags") {
+					maxBags = st.MaxBags
+				}
+				if !cmd.Flags().Changed("bag-gating") {
+					bagGating = st.BagGating
+				}
+				if err := db.SetBagPolicy(num, maxBags, bagGating); err != nil {
+					return usageError("%v", err)
+				}
+			}
 			st = db.GetSetState(num)
 			t := ui.New()
 			say(ui.Fact(t, "Set", num))
@@ -753,6 +794,17 @@ func newLegoSetInfoCmd() *cobra.Command {
 			if st.ImageURL != "" {
 				say(ui.Fact(t, "Image override", st.ImageURL))
 			}
+			if st.BoxBarcode != "" {
+				say(ui.Fact(t, "Box barcode", st.BoxBarcode))
+			}
+			if owned, err := db.GetSetByNum(num); err == nil && owned.InstructionBookNumber != "" {
+				say(ui.Fact(t, "Instruction book #", fmt.Sprintf("%s (%d book(s))", owned.InstructionBookNumber, owned.InstructionBookCount)))
+			}
+			gating := "on"
+			if !st.BagGatingOn() {
+				gating = "off"
+			}
+			say(ui.Fact(t, "Bag scan gate", fmt.Sprintf("%s, max %d bag(s)", gating, st.MaxBags)))
 			check := "not checked"
 			if c := st.LastCheck; c != nil {
 				check = fmt.Sprintf("%s by %s — %d missing, %d on order", c.FinishedAt.Local().Format("2 Jan 2006"), c.CheckedBy, st.MissingQty, st.OnOrderQty)
@@ -765,5 +817,10 @@ func newLegoSetInfoCmd() *cobra.Command {
 	cmd.Flags().StringVar(&condition, "condition", "", "sealed, built, in pieces or displayed")
 	cmd.Flags().StringVar(&note, "note", "", "condition note")
 	cmd.Flags().StringVar(&imageURL, "image-url", "", "override the catalog picture (blank clears it, back to Rebrickable's own)")
+	cmd.Flags().StringVar(&boxBarcode, "box-barcode", "", "the retail box's own UPC/EAN -- a second way to look this set up (blank clears it)")
+	cmd.Flags().StringVar(&instructionBook, "instruction-book", "", "instruction booklet number(s) -- slash-separated for more than one (e.g. 6644777/6644778)")
+	cmd.Flags().IntVar(&instructionBookCount, "instruction-book-count", 0, "how many instruction booklets this set has")
+	cmd.Flags().IntVar(&maxBags, "max-bags", 0, "how many bag instances a check of this set may register (default 2: small + main)")
+	cmd.Flags().StringVar(&bagGating, "bag-gating", "", "\"off\" exempts this set from the live bag-scan gate; anything else (or unset) leaves it on")
 	return cmd
 }

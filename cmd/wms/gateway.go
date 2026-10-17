@@ -81,6 +81,7 @@ func newGatewayServeCmd() *cobra.Command {
 			if config.Get(config.RequireClockIn) == "1" || strings.TrimSpace(config.Get(config.TeamSummaryHour)) != "" {
 				go attendanceWatch(ctx)
 			}
+			go ticketWatch(ctx)
 
 			testBinaryPath := config.Get(config.TestBinaryPath)
 			var testEnv []string
@@ -127,9 +128,14 @@ func newGatewayServeCmd() *cobra.Command {
 			// unconditionally, same as botapi's own legoDB above.
 			webPDB, err := partdb.Open("")
 			if err != nil {
-				return fmt.Errorf("opening Part-DB for the web gateway's exports page: %w", err)
+				if config.Get(config.SoloMode) != "1" {
+					return fmt.Errorf("opening Part-DB for the web gateway's exports page: %w", err)
+				}
+				webPDB = nil // solo mode: see docs/guides/solo-mode.md
 			}
-			defer webPDB.Close()
+			if webPDB != nil {
+				defer webPDB.Close()
+			}
 
 			g.Go(func() error {
 				return gateway.RunWebGateway(gctx, host, gatewayPort, ttydPort, wmsBinaryPath, testBinaryPath, testEnv, strings.TrimSpace(config.Get(config.WebSoloDirectPort)), botSrv, discordPublicKey, wmsdb.NewClient(), webPDB)
@@ -148,9 +154,14 @@ func newGatewayServeCmd() *cobra.Command {
 			if mobileAPIPort := strings.TrimSpace(config.Get(config.MobileAPIPort)); mobileAPIPort != "" {
 				pdb, err := partdb.Open("")
 				if err != nil {
-					return fmt.Errorf("opening Part-DB for the mobile API: %w", err)
+					if config.Get(config.SoloMode) != "1" {
+						return fmt.Errorf("opening Part-DB for the mobile API: %w", err)
+					}
+					pdb = nil // solo mode: see docs/guides/solo-mode.md
 				}
-				defer pdb.Close()
+				if pdb != nil {
+					defer pdb.Close()
+				}
 				legoDB, err := openLego()
 				if err != nil {
 					return fmt.Errorf("opening lego db for the mobile API: %w", err)
@@ -168,19 +179,23 @@ func newGatewayServeCmd() *cobra.Command {
 // autoRefreshCatalog keeps the offline catalog current (CATALOG_AUTO_REFRESH_HOURS, off by default).
 // Rebrickable allows automated downloads once a day, so the interval is never shorter than that,
 // and RefreshCatalog itself skips files that have not changed.
-// attendanceWatch is the no-show alert and the daily team summary, both
-// built on top of the clock-in/rota data (internal/lego's attendance.go).
-// Polls every 5 minutes — cheap compared to catalog refresh, and fine
-// resolution for "a few minutes after their start time" to actually mean
-// something. Both checks are no-ops of their own accord when unconfigured
-// (NoShowCandidates returns nothing unless config.RequireClockIn is on;
-// the team summary needs config.TeamSummaryHour set), so this only needs
-// one on/off decision at the call site: whether to start the loop at all.
+// attendanceWatch is the no-show alert, the overlong-break alert, and the
+// daily team summary, all built on top of the clock-in/rota data
+// (internal/lego's attendance.go). Polls every 5 minutes — cheap compared to
+// catalog refresh, and fine resolution for "a few minutes after their start
+// time" to actually mean something. All three checks are no-ops of their
+// own accord when unconfigured (NoShowCandidates/OverlongBreakCandidates
+// return nothing unless config.RequireClockIn is on — toggle with `wms
+// attendance gate`; the team summary needs config.TeamSummaryHour set), so
+// this only needs one on/off decision at the call site: whether to start
+// the loop at all.
 func attendanceWatch(ctx context.Context) {
 	logger := audit.New()
 	wait := time.Minute // let the gateway settle first
 	seenNoShow := map[string]bool{}
+	seenOverlongBreak := map[string]bool{}
 	lastSummaryDate := ""
+	lastWeeklySummaryDate := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -213,12 +228,80 @@ func attendanceWatch(ctx context.Context) {
 			}
 		}
 
+		if cands, err := db.OverlongBreakCandidates(45); err == nil {
+			for _, c := range cands {
+				key := c.Username + "|" + c.StartedAt.Format(time.RFC3339)
+				if seenOverlongBreak[key] {
+					continue
+				}
+				seenOverlongBreak[key] = true
+				notify.Dispatch("attendance_overlong_break",
+					c.Username+" has been on a break a while",
+					fmt.Sprintf("%s's break has been running %d minutes.", c.Username, c.Minutes))
+			}
+		}
+
 		if hourStr := strings.TrimSpace(config.Get(config.TeamSummaryHour)); hourStr != "" {
 			if hour, err := strconv.Atoi(hourStr); err == nil && time.Now().Hour() == hour && lastSummaryDate != today {
 				if lines, err := db.TeamSummary(today); err == nil && len(lines) > 0 {
 					notify.Dispatch("attendance_team_summary", "Today's team summary", formatTeamSummary(lines))
 				}
 				lastSummaryDate = today
+			}
+			weekday := strings.ToLower(strings.TrimSpace(config.Get(config.WeeklyTeamSummaryWeekday)))
+			if weekday != "" && weekday == strings.ToLower(time.Now().Weekday().String()) {
+				if hour, err := strconv.Atoi(hourStr); err == nil && time.Now().Hour() == hour && lastWeeklySummaryDate != today {
+					start := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+					if lines, err := db.WeeklyTeamSummary(start); err == nil && len(lines) > 0 {
+						notify.Dispatch("attendance_weekly_team_summary", "This week's team summary", formatTeamSummary(lines))
+					}
+					lastWeeklySummaryDate = today
+				}
+			}
+		}
+
+		db.Close()
+	}
+}
+
+// ticketWatch is the supervisor idle-nudge: a claimed ticket nobody's
+// touched in a while. Unlike attendanceWatch's checks, this has no
+// dependency on clock-in/rota data at all -- claiming and working a ticket
+// happens whether or not attendance tracking is turned on -- so it always
+// runs, never gated behind config.RequireClockIn/TeamSummaryHour.
+func ticketWatch(ctx context.Context) {
+	logger := audit.New()
+	wait := time.Minute // let the gateway settle first
+	seenIdleTicket := map[string]bool{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = 5 * time.Minute
+
+		db, err := openLego()
+		if err != nil {
+			logger.Log("system", "", "TICKET_WATCH", "FAILED", err.Error())
+			continue
+		}
+
+		if cands, err := db.IdleTicketCandidates(60); err == nil {
+			for _, c := range cands {
+				key := fmt.Sprintf("%d|%s", c.ID, c.ClaimedAt.Format(time.RFC3339))
+				if seenIdleTicket[key] {
+					continue
+				}
+				// Already explained -- a break, or an admin-applied Delay/No
+				// Work card (see status_cards.go) -- so don't nag about it.
+				if has, err := db.HasActiveCard(c.AssignedTo); err == nil && has {
+					continue
+				}
+				seenIdleTicket[key] = true
+				notify.Dispatch("ticket_idle",
+					c.AssignedTo+" has had a ticket idle a while",
+					fmt.Sprintf("%s's ticket (%s) has been claimed for %d minutes with no sign of progress.", c.AssignedTo, c.Target, c.IdleMinutes))
 			}
 		}
 

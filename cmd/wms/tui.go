@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
@@ -20,7 +21,14 @@ import (
 func runTUI(cmd *cobra.Command, args []string) error {
 	db, err := partdb.Open("")
 	if err != nil {
-		return fmt.Errorf("opening Part-DB: %w", err)
+		if config.Get(config.SoloMode) != "1" {
+			return fmt.Errorf("opening Part-DB: %w", err)
+		}
+		// Solo mode: no Part-DB sqlite file to open, by design — every
+		// DB method returns partdb.ErrUnavailable instead of this aborting
+		// startup (same nil-DB convention already used in cmd/wms/lego_sets.go).
+		// See docs/guides/solo-mode.md.
+		db = nil
 	}
 	legoDB, err := openLego()
 	if err != nil {

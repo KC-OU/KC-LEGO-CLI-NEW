@@ -3,6 +3,8 @@ package lego
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
@@ -88,7 +90,10 @@ func (d *DB) ClockOut(username string) error {
 	if n == 0 {
 		return ErrNotClockedIn
 	}
-	return nil
+	// Clocking out ends whatever the day's status card was explaining, too
+	// (see status_cards.go) -- there's nothing left for it to excuse once
+	// the shift itself is over.
+	return d.ClearStatusCard(username, username)
 }
 
 // IsClockedIn reports whether username has an open clock event right now.
@@ -343,6 +348,52 @@ func (d *DB) NoShowCandidates(graceMinutes int) ([]NoShowCandidate, error) {
 	return out, rows.Err()
 }
 
+// OverlongBreakCandidate is one currently-open break that's run longer than
+// the configured limit.
+type OverlongBreakCandidate struct {
+	Username  string
+	StartedAt time.Time
+	Minutes   int // how long it's been open so far, rounded down
+}
+
+// OverlongBreakCandidates is attendanceWatch's other alert, alongside
+// NoShowCandidates: every open break (clock_breaks.end_at = ”) on a shift
+// that's still open (clock_events.clock_out_at = ”) whose start_at is more
+// than maxMinutes in the past. Gated behind config.RequireClockIn the same
+// way NoShowCandidates is — before anyone's deliberately turned attendance
+// tracking on, an old open break row is as likely to be test data as a real
+// problem.
+func (d *DB) OverlongBreakCandidates(maxMinutes int) ([]OverlongBreakCandidate, error) {
+	if config.Get(config.RequireClockIn) != "1" {
+		return nil, nil
+	}
+	rows, err := d.Query(`SELECT e.username, b.start_at FROM clock_breaks b
+		JOIN clock_events e ON e.id = b.clock_event_id
+		WHERE b.end_at = '' AND e.clock_out_at = ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OverlongBreakCandidate
+	now := time.Now()
+	for rows.Next() {
+		var username, startRaw string
+		if err := rows.Scan(&username, &startRaw); err != nil {
+			return nil, err
+		}
+		startedAt, err := time.Parse(time.RFC3339, startRaw)
+		if err != nil {
+			continue // an unparsable start_at never alerts
+		}
+		mins := int(now.Sub(startedAt).Minutes())
+		if mins < maxMinutes {
+			continue
+		}
+		out = append(out, OverlongBreakCandidate{Username: username, StartedAt: startedAt, Minutes: mins})
+	}
+	return out, rows.Err()
+}
+
 // TeamSummaryLine is one person's day: how long they were clocked in, and
 // their accuracy if they did any picker/checker-scored work that day.
 type TeamSummaryLine struct {
@@ -390,6 +441,70 @@ func (d *DB) TeamSummary(date string) ([]TeamSummaryLine, error) {
 		if pct, hasAny, err := d.accuracyForDayIfAny(u, AccuracyChecker, date); err != nil {
 			return nil, err
 		} else if hasAny {
+			line.CheckerAccuracy = &pct
+		}
+		out = append(out, line)
+	}
+	return out, nil
+}
+
+// WeeklyTeamSummary rolls TeamSummary up across the 7 days starting at
+// startDate (inclusive, "2006-01-02") -- every username with clock activity
+// on any of those days, hours summed across the whole week, and each
+// accuracy (picker/checker) averaged only across the days they actually had
+// scored activity for it -- nil if none all week, the same "no misleading
+// 100%" rule TeamSummary itself follows, not a 0% drag from days they
+// simply didn't do that kind of work.
+func (d *DB) WeeklyTeamSummary(startDate string) ([]TeamSummaryLine, error) {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("parsing start date %q: %w", startDate, err)
+	}
+
+	type totals struct {
+		hours                   float64
+		pickerSum, checkerSum   float64
+		pickerDays, checkerDays int
+	}
+	byUser := map[string]*totals{}
+	var order []string
+
+	for i := 0; i < 7; i++ {
+		date := start.AddDate(0, 0, i).Format("2006-01-02")
+		lines, err := d.TeamSummary(date)
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range lines {
+			tot, ok := byUser[l.Username]
+			if !ok {
+				tot = &totals{}
+				byUser[l.Username] = tot
+				order = append(order, l.Username)
+			}
+			tot.hours += l.HoursWorked
+			if l.PickerAccuracy != nil {
+				tot.pickerSum += *l.PickerAccuracy
+				tot.pickerDays++
+			}
+			if l.CheckerAccuracy != nil {
+				tot.checkerSum += *l.CheckerAccuracy
+				tot.checkerDays++
+			}
+		}
+	}
+
+	sort.Strings(order)
+	out := make([]TeamSummaryLine, 0, len(order))
+	for _, u := range order {
+		tot := byUser[u]
+		line := TeamSummaryLine{Username: u, HoursWorked: tot.hours}
+		if tot.pickerDays > 0 {
+			pct := tot.pickerSum / float64(tot.pickerDays)
+			line.PickerAccuracy = &pct
+		}
+		if tot.checkerDays > 0 {
+			pct := tot.checkerSum / float64(tot.checkerDays)
 			line.CheckerAccuracy = &pct
 		}
 		out = append(out, line)

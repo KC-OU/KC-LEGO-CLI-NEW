@@ -381,7 +381,12 @@ func jobQueueScreen() screenModel {
 	return &tableScreen{
 		panelID: "JOBQUE",
 		title:   "Open Assignments",
-		columns: []string{"Kind", "Target", "Assigned To", "Status", "Created"},
+		columns: []string{"Kind", "Target", "Assigned To", "Status", "Card", "Created"},
+		extra: func(app *App, msg tea.KeyMsg) {
+			if isKey(msg, 'v') {
+				app.goTo(scrStatusCards)
+			}
+		},
 		fetch: func(app *App) ([][]string, string, error) {
 			ts, err := app.legoDB.AllOpenTickets()
 			rows := make([][]string, len(ts))
@@ -390,9 +395,13 @@ func jobQueueScreen() screenModel {
 				if t.AssignedTo == "" {
 					who = "(open queue)"
 				}
-				rows[i] = []string{t.Kind, t.Label, who, t.Status, t.CreatedAt.Format("Jan 2 15:04")}
+				card := ""
+				if who != "(open queue)" {
+					card, _ = app.legoDB.CurrentStatus(t.AssignedTo)
+				}
+				rows[i] = []string{t.Kind, t.Label, who, t.Status, orDash(card), t.CreatedAt.Format("Jan 2 15:04")}
 			}
-			return rows, fmt.Sprintf("%d open assignment(s)", len(rows)), err
+			return rows, fmt.Sprintf("%d open assignment(s) — V: status cards", len(rows)), err
 		},
 	}
 }

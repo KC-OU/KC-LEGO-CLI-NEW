@@ -73,40 +73,50 @@ func lowStockLines() []string {
 
 func newLegoLowCmd() *cobra.Command {
 	var fail bool
+	var watch time.Duration
 	cmd := &cobra.Command{
-		Use:   "low",
-		Short: "List the parts that are below the minimum you set",
-		Args:  cobra.NoArgs,
+		Use:     "low",
+		Short:   "List the parts that are below the minimum you set",
+		Example: "  wms lego low\n  wms lego low --watch 1m\n  wms lego low --fail   # for cron",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t := ui.New()
-			db, err := openLego()
+			var lowCount int
+			err := runWatchable(watch, func() error {
+				t := ui.New()
+				db, err := openLego()
+				if err != nil {
+					return err
+				}
+				defer db.Close()
+				low, err := db.LowStock()
+				if err != nil {
+					return err
+				}
+				lowCount = len(low)
+				if len(low) == 0 {
+					say(ui.Status(t, true, "Nothing is below its minimum."))
+				} else {
+					say(ui.RenderColumns(t, []string{"Part #", "Colour", "Name", "Have", "Min", "Short"}, lowRows(low), fmt.Sprintf("%d part(s) LOW", len(low))))
+				}
+				items := make([]map[string]any, len(low))
+				for i, p := range low {
+					items[i] = map[string]any{"part": p.PartNum, "colour": p.ColorName, "name": p.Name, "have": p.Qty, "min": p.MinQty, "short": p.MinQty - p.Qty}
+				}
+				return emit(map[string]any{"low": items})
+			})
 			if err != nil {
 				return err
 			}
-			defer db.Close()
-			low, err := db.LowStock()
-			if err != nil {
-				return err
-			}
-			if len(low) == 0 {
-				say(ui.Status(t, true, "Nothing is below its minimum."))
-			} else {
-				say(ui.RenderColumns(t, []string{"Part #", "Colour", "Name", "Have", "Min", "Short"}, lowRows(low), fmt.Sprintf("%d part(s) LOW", len(low))))
-			}
-			items := make([]map[string]any, len(low))
-			for i, p := range low {
-				items[i] = map[string]any{"part": p.PartNum, "colour": p.ColorName, "name": p.Name, "have": p.Qty, "min": p.MinQty, "short": p.MinQty - p.Qty}
-			}
-			if err := emit(map[string]any{"low": items}); err != nil {
-				return err
-			}
-			if fail && len(low) > 0 {
-				return withCode(exitFailure, fmt.Errorf("%d part(s) below their minimum", len(low)))
+			// Unreachable while watch keeps looping (only Ctrl-C ends it) --
+			// --fail is a cron/monitor flag, watch is for a human's terminal.
+			if fail && lowCount > 0 {
+				return withCode(exitFailure, fmt.Errorf("%d part(s) below their minimum", lowCount))
 			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&fail, "fail", false, "exit 1 when anything is low (for cron and monitors)")
+	addWatchFlag(cmd, &watch)
 	return cmd
 }
 
@@ -277,59 +287,64 @@ func newLegoMissingCmd() *cobra.Command {
 	var copies int
 	var all bool
 	var equiv string
+	var watch time.Duration
 	cmd := &cobra.Command{
-		Use:   "missing <set_num>",
-		Short: "What a set still needs, compared with the loose parts you hold (part + colour)",
-		Args:  cobra.ExactArgs(1),
+		Use:     "missing <set_num>",
+		Short:   "What a set still needs, compared with the loose parts you hold (part + colour)",
+		Example: "  wms lego missing 10312-1\n  wms lego missing 10312-1 --watch 30s   # leave it open while you sort parts",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			t := ui.New()
-			db, rb, err := openLegoWithClient()
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			eq, err := equivFlag(equiv)
-			if err != nil {
-				return err
-			}
-			r, source, err := inventoryReport(ctx, db, rb, args[0], copies, eq)
-			if err != nil {
-				return err
-			}
-			say(ui.Fact(t, "Set", fmt.Sprintf("%s x%d (parts list: %s)", args[0], r.Copies, source)))
-			say(ui.Fact(t, "Counting", eq.Label()))
-			if r.SubstitutedPieces > 0 {
-				say(ui.Warn(t, fmt.Sprintf("%d piece(s) are held as equivalent parts (alternates/moulds), not the exact number: check the 'Covered by' column.", r.SubstitutedPieces)))
-			}
-			say(ui.Fact(t, "You hold", fmt.Sprintf("%d%% (%d of %d pieces); %d of %d lines complete", r.Percent(), r.PiecesHeld, r.PiecesNeeded, r.Complete, r.Lines)))
-			shown := r.Missing
-			if !all && len(shown) > 40 {
-				shown = shown[:40]
-			}
-			rows := make([][]string, len(shown))
-			for i, m := range shown {
-				rows[i] = []string{m.PartNum, orDash(m.ColorName), m.PartName, strconv.Itoa(m.Need), strconv.Itoa(m.Have), strconv.Itoa(m.Short), orDash(strings.Join(m.Substituted, ", "))}
-			}
-			if len(rows) > 0 {
-				say(ui.RenderColumns(t, []string{"Part #", "Colour", "Name", "Need", "Have", "Short", "Covered by"}, rows, fmt.Sprintf("%d line(s) missing", len(r.Missing))))
-				if len(shown) < len(r.Missing) {
-					say(t.Muted.Render(fmt.Sprintf("   … and %d more (--all shows everything)", len(r.Missing)-len(shown))))
+			return runWatchable(watch, func() error {
+				t := ui.New()
+				db, rb, err := openLegoWithClient()
+				if err != nil {
+					return err
 				}
-			}
-			missing := make([]map[string]any, len(r.Missing))
-			for i, m := range r.Missing {
-				missing[i] = map[string]any{"part": m.PartNum, "colour": m.ColorName, "colour_id": m.ColorID, "name": m.PartName, "need": m.Need, "have": m.Have, "short": m.Short, "covered_by": m.Substituted}
-			}
-			return emit(map[string]any{"set": args[0], "equivalents": string(eq), "substituted_pieces": r.SubstitutedPieces, "copies": r.Copies, "percent": r.Percent(), "pieces_needed": r.PiecesNeeded, "pieces_held": r.PiecesHeld,
-				"lines": r.Lines, "lines_complete": r.Complete, "source": source, "missing": missing})
+				defer db.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				eq, err := equivFlag(equiv)
+				if err != nil {
+					return err
+				}
+				r, source, err := inventoryReport(ctx, db, rb, args[0], copies, eq)
+				if err != nil {
+					return err
+				}
+				say(ui.Fact(t, "Set", fmt.Sprintf("%s x%d (parts list: %s)", args[0], r.Copies, source)))
+				say(ui.Fact(t, "Counting", eq.Label()))
+				if r.SubstitutedPieces > 0 {
+					say(ui.Warn(t, fmt.Sprintf("%d piece(s) are held as equivalent parts (alternates/moulds), not the exact number: check the 'Covered by' column.", r.SubstitutedPieces)))
+				}
+				say(ui.Fact(t, "You hold", fmt.Sprintf("%d%% (%d of %d pieces); %d of %d lines complete", r.Percent(), r.PiecesHeld, r.PiecesNeeded, r.Complete, r.Lines)))
+				shown := r.Missing
+				if !all && len(shown) > 40 {
+					shown = shown[:40]
+				}
+				rows := make([][]string, len(shown))
+				for i, m := range shown {
+					rows[i] = []string{m.PartNum, orDash(m.ColorName), m.PartName, strconv.Itoa(m.Need), strconv.Itoa(m.Have), strconv.Itoa(m.Short), orDash(strings.Join(m.Substituted, ", "))}
+				}
+				if len(rows) > 0 {
+					say(ui.RenderColumns(t, []string{"Part #", "Colour", "Name", "Need", "Have", "Short", "Covered by"}, rows, fmt.Sprintf("%d line(s) missing", len(r.Missing))))
+					if len(shown) < len(r.Missing) {
+						say(t.Muted.Render(fmt.Sprintf("   … and %d more (--all shows everything)", len(r.Missing)-len(shown))))
+					}
+				}
+				missing := make([]map[string]any, len(r.Missing))
+				for i, m := range r.Missing {
+					missing[i] = map[string]any{"part": m.PartNum, "colour": m.ColorName, "colour_id": m.ColorID, "name": m.PartName, "need": m.Need, "have": m.Have, "short": m.Short, "covered_by": m.Substituted}
+				}
+				return emit(map[string]any{"set": args[0], "equivalents": string(eq), "substituted_pieces": r.SubstitutedPieces, "copies": r.Copies, "percent": r.Percent(), "pieces_needed": r.PiecesNeeded, "pieces_held": r.PiecesHeld,
+					"lines": r.Lines, "lines_complete": r.Complete, "source": source, "missing": missing})
+			})
 		},
 	}
 	cmd.Flags().IntVar(&copies, "copies", 1, "how many copies you want to build")
 	cmd.Flags().BoolVar(&all, "all", false, "list every missing line, not just the first 40")
 	cmd.Flags().StringVar(&equiv, "equivalents", "", "parts that count as the same: default (alternates+moulds), none, or alt,mold,print (setting: WMS_EQUIVALENTS)")
+	addWatchFlag(cmd, &watch)
 	return cmd
 }
 
@@ -613,9 +628,10 @@ func newLegoSearchCmd() *cobra.Command {
 	}
 	find := func(kind string) *cobra.Command {
 		return &cobra.Command{
-			Use:   kind + " <words...>",
-			Short: "Search " + kind,
-			Args:  cobra.MinimumNArgs(1),
+			Use:     kind + " <words...>",
+			Short:   "Search " + kind,
+			Example: "  wms lego search " + kind + " falcon",
+			Args:    cobra.MinimumNArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				cmd.SilenceUsage = true
 				t := ui.New()
@@ -695,7 +711,8 @@ func newLegoBackupCmd() *cobra.Command {
 			"--github also uploads the sealed file as a release on a private GitHub repo (implies --encrypt — a\n" +
 			"plaintext backup is never uploaded) using the same `gh` CLI scripts/publish.sh already needs; nothing\n" +
 			"reaches GitHub unless you run this flag yourself, same as publish.sh and promote-dev.sh.",
-		Args: cobra.NoArgs,
+		Example: "  wms lego backup\n  wms lego backup --encrypt --github",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()
@@ -868,9 +885,10 @@ func newLegoWatchCmd() *cobra.Command {
 		},
 	}
 	rm := &cobra.Command{
-		Use:   "rm <id>",
-		Short: "Stop watching",
-		Args:  cobra.ExactArgs(1),
+		Use:     "rm <id>",
+		Short:   "Stop watching",
+		Example: "  wms lego watch rm 7",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
@@ -954,7 +972,8 @@ func newLegoValueCmd() *cobra.Command {
 		Long: "Prices are stored per item, so this works out the value without new calls. --refresh N first fetches up to N\n" +
 			"missing or week-old prices (oldest first, within the daily call budget); run it daily to fill the picture in.\n" +
 			"Lines BrickLink has no sales for are left out and counted as unpriced — never as zero.",
-		Args: cobra.NoArgs,
+		Example: "  wms lego value\n  wms lego value --refresh 50 --condition N",
+		Args:    cobra.NoArgs,
 		RunE: withBL(func(ctx context.Context, db *lego.DB, c *bricklink.Client, _ []string) error {
 			t := ui.New()
 			if cond == "" {
@@ -1062,9 +1081,10 @@ func newLegoHistoryCmd() *cobra.Command {
 	var part string
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "history",
-		Short: "What changed in your collection, who changed it, and from what to what",
-		Args:  cobra.NoArgs,
+		Use:     "history",
+		Short:   "What changed in your collection, who changed it, and from what to what",
+		Example: "  wms lego history\n  wms lego history --part 3001 --limit 10",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()
@@ -1129,9 +1149,10 @@ func newLegoSnapshotsCmd() *cobra.Command {
 		},
 	}
 	take := &cobra.Command{
-		Use:   "take",
-		Short: "Take a snapshot now",
-		Args:  cobra.NoArgs,
+		Use:     "take",
+		Short:   "Take a snapshot now",
+		Example: "  wms lego snapshots take\n  wms lego snapshots take --label \"before bulk import\"",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := openLego()
 			if err != nil {
@@ -1222,7 +1243,8 @@ func newLegoResetCmd() *cobra.Command {
 			"(wms lego catalog refresh re-downloads that anyway), BrickLink/BrickOwl price caches, and your\n" +
 			"users/access/2FA settings are untouched. A full backup is taken first automatically (see\n" +
 			"`wms lego backup`) — undo by stopping the gateway and copying that file over lego.db.",
-		Args: cobra.NoArgs,
+		Example: "  wms lego reset --dry-run\n  wms lego reset --yes",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()

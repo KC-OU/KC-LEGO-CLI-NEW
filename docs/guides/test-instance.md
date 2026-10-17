@@ -3,6 +3,10 @@
 A second, local-only copy of the gateway (`wms-gateway-test.service`) for trying out in-progress work — especially
 the login/auth changes — without touching the live instance you actually use day to day.
 
+Needs access to the same ModernWMS/Part-DB containers as live (it's meant to run on the same box, or one that can
+reach them). For a personal copy on a machine that has neither — a second Arch box at home, say — see
+[Solo mode](solo-mode.md) instead.
+
 ## What's separate, what's shared
 
 | | Live | Test |

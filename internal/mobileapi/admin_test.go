@@ -1,6 +1,7 @@
 package mobileapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,10 @@ func newAdminTestServer(s *Server) *httptest.Server {
 	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
 	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
 	mux.HandleFunc("GET /mobile/admin/rota", s.withSession(s.handleAdminRota))
+	mux.HandleFunc("GET /mobile/admin/status-cards", s.withSession(s.handleAdminStatusCards))
+	mux.HandleFunc("POST /mobile/admin/status-card", s.withSession(s.handleAdminSetStatusCard))
+	mux.HandleFunc("POST /mobile/admin/status-card/clear", s.withSession(s.handleAdminClearStatusCard))
+	mux.HandleFunc("GET /mobile/admin/check-history", s.withSession(s.handleAdminCheckHistory))
 	return httptest.NewServer(mux)
 }
 
@@ -210,5 +215,64 @@ func TestFlagLocationNotifiesWithoutBlockingTheLine(t *testing.T) {
 	resp = authed(t, http.MethodPost, srv.URL+"/mobile/flag-location", token, map[string]string{"part_num": "3001"})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("flag-location without a location = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestAdminCheckHistoryIsAdminOnly mirrors TestNonAdminCannotAssignOrListTickets.
+func TestAdminCheckHistoryIsAdminOnly(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	resp := authed(t, http.MethodGet, srv.URL+"/mobile/admin/check-history", token, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("GET admin/check-history as a non-admin = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestAdminCheckHistoryFiltersBySetAndChecker is "track down a check" from
+// the phone: filtering by checker is a substring match (same as the CLI's
+// report history --by), so finding one checker's work doesn't need their
+// exact username.
+func TestAdminCheckHistoryFiltersBySetAndChecker(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	asAdmin(t, "dave")
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	c, err := db.NewCheck(context.Background(), nil, "75192-1", lego.CheckIntake, "alex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.Lines {
+		c.Lines[i].Have = c.Lines[i].Need
+	}
+	if _, err := db.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := authed(t, http.MethodGet, srv.URL+"/mobile/admin/check-history?by=alex", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET admin/check-history?by=alex = %d, want 200", resp.StatusCode)
+	}
+	var rows []checkHistoryRow
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].CheckedBy != "alex" || rows[0].Set != "75192-1" {
+		t.Fatalf("filtering by checker: %+v", rows)
+	}
+
+	resp = authed(t, http.MethodGet, srv.URL+"/mobile/admin/check-history?by=nobody", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET admin/check-history?by=nobody = %d, want 200", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("filtering by a checker with no checks: %+v", rows)
 	}
 }

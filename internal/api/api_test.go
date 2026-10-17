@@ -55,6 +55,33 @@ func testServer(t *testing.T) (*Server, string) {
 	return NewServer(engine, db, credsPath, linksPath), credsPath
 }
 
+func TestCORSOnlyAppliesToPublicGETRoutes(t *testing.T) {
+	s, _ := testServer(t)
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("GET /api/health must still allow cross-origin reads, got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	rec2 := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/change-password", nil)
+	s.ServeHTTP(rec2, req)
+	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("POST /api/change-password must not get a CORS header (even on an unauthenticated request), got %q", got)
+	}
+
+	// A CORS preflight for the same mutating route must be refused too --
+	// the browser asks "can I POST here" via OPTIONS with this header set.
+	rec3 := httptest.NewRecorder()
+	preflight := httptest.NewRequest(http.MethodOptions, "/api/change-password", nil)
+	preflight.Header.Set("Access-Control-Request-Method", "POST")
+	s.ServeHTTP(rec3, preflight)
+	if got := rec3.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("OPTIONS preflight for a POST route must not get a CORS header, got %q", got)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	s, _ := testServer(t)
 	rec := httptest.NewRecorder()

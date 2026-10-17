@@ -30,6 +30,7 @@ type sysStatus struct {
 	BackupAge     time.Duration    `json:"backup_age_ns"` // -1 when there is none
 	LegoBackupAge time.Duration    `json:"lego_backup_age_ns"`
 	LowStock      int              `json:"low_stock"`
+	PaperPending  int              `json:"paper_pending"` // sets paper-done but not yet entered in the CLI — see wms lego checks pending
 	MemUsed       string           `json:"memory,omitempty"`
 	DiskUsed      string           `json:"disk,omitempty"`
 	Uptime        string           `json:"uptime,omitempty"`
@@ -87,6 +88,9 @@ func collectStatus(ctx context.Context, full bool) sysStatus {
 		if db, err := openLego(); err == nil {
 			if low, err := db.LowStock(); err == nil {
 				st.LowStock = len(low)
+			}
+			if pending, err := db.PendingPaperChecks(); err == nil {
+				st.PaperPending = len(pending)
 			}
 			db.Close()
 		}
@@ -187,11 +191,15 @@ func bannerLine(st sysStatus, t ui.Theme) string {
 	if st.LowStock > 0 {
 		parts = append(parts, warn(fmt.Sprintf("%d low", st.LowStock)))
 	}
+	if st.PaperPending > 0 {
+		parts = append(parts, warn(fmt.Sprintf("%d need CLI entry", st.PaperPending)))
+	}
 	return strings.Join(parts, t.Muted.Render(" · ")) + t.Muted.Render("   q launcher · guide")
 }
 
 func newSysCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "sys", Short: "Small system helpers used by the launcher and the login banner"}
+	cmd := &cobra.Command{Use: "sys", Short: "Small system helpers used by the launcher and the login banner",
+		Example: "  wms sys status\n  wms sys connect\n  wms sys mobile-setup-qr https://wms-mobile.example.com"}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "banner",
@@ -206,38 +214,46 @@ func newSysCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "System health: memory, disk, containers, gateway, backups",
-		Args:  cobra.NoArgs,
+	var statusWatch time.Duration
+	statusCmd := &cobra.Command{
+		Use:     "status",
+		Short:   "System health: memory, disk, containers, gateway, backups",
+		Example: "  wms sys status\n  wms sys status --watch 10s",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t := ui.New()
-			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-			defer cancel()
-			st := collectStatus(ctx, true)
-			say(ui.Fact(t, "Memory", st.MemUsed))
-			say(ui.Fact(t, "Disk /", st.DiskUsed))
-			say(ui.Fact(t, "Uptime", st.Uptime))
-			say(ui.Fact(t, "Gateway", st.Gateway))
-			say(ui.Fact(t, "Backups", fmt.Sprintf("ModernWMS %s, LEGO %s", ageText(st.BackupAge), ageText(st.LegoBackupAge))))
-			say(ui.Fact(t, "Low stock", fmt.Sprintf("%d part(s)", st.LowStock)))
-			if !st.ContainersOK {
-				say(ui.Warn(t, "docker did not answer"))
-			}
-			for _, c := range st.Containers {
-				line := fmt.Sprintf("%-14s %s", c.Name, c.Status)
-				say(ui.Status(t, c.State == "running", line))
-			}
-			return emit(st)
+			return runWatchable(statusWatch, func() error {
+				t := ui.New()
+				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+				defer cancel()
+				st := collectStatus(ctx, true)
+				say(ui.Fact(t, "Memory", st.MemUsed))
+				say(ui.Fact(t, "Disk /", st.DiskUsed))
+				say(ui.Fact(t, "Uptime", st.Uptime))
+				say(ui.Fact(t, "Gateway", st.Gateway))
+				say(ui.Fact(t, "Backups", fmt.Sprintf("ModernWMS %s, LEGO %s", ageText(st.BackupAge), ageText(st.LegoBackupAge))))
+				say(ui.Fact(t, "Low stock", fmt.Sprintf("%d part(s)", st.LowStock)))
+				say(ui.Fact(t, "Paper pending", fmt.Sprintf("%d set(s) — wms lego checks pending", st.PaperPending)))
+				if !st.ContainersOK {
+					say(ui.Warn(t, "docker did not answer"))
+				}
+				for _, c := range st.Containers {
+					line := fmt.Sprintf("%-14s %s", c.Name, c.Status)
+					say(ui.Status(t, c.State == "running", line))
+				}
+				return emit(st)
+			})
 		},
-	})
+	}
+	addWatchFlag(statusCmd, &statusWatch)
+	cmd.AddCommand(statusCmd)
 
 	var lines int
 	var follow bool
 	audit := &cobra.Command{
-		Use:   "audit",
-		Short: "Show the newest audit log entries (-f to follow)",
-		Args:  cobra.NoArgs,
+		Use:     "audit",
+		Short:   "Show the newest audit log entries (-f to follow)",
+		Example: "  wms sys audit\n  wms sys audit -n 100\n  wms sys audit -f",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := config.Get(config.AuditLogFile)
 			if follow {
@@ -283,8 +299,9 @@ func newSysCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "mobile-setup-qr [url]",
-		Short: "QR code for a new phone's first-time KC-Parts Pick setup",
+		Use:     "mobile-setup-qr [url]",
+		Short:   "QR code for a new phone's first-time KC-Parts Pick setup",
+		Example: "  wms sys mobile-setup-qr https://wms-mobile.example.com\n  wms sys mobile-setup-qr",
 		Long: "Prints the sentry-wms mobile app's server URL as a QR code — scan it on the app's first-run SERVER URL\n" +
 			"screen instead of typing it by hand. That app is a separate deployment this project doesn't own, so the URL\n" +
 			"isn't known automatically: give it once and it's saved (Settings-style, see `wms sys connect` for the\n" +
@@ -312,8 +329,9 @@ func newSysCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "pdf-editor [url]",
-		Short: "QR code / link for your Stirling-PDF instance, to touch up a generated PDF before printing",
+		Use:     "pdf-editor [url]",
+		Short:   "QR code / link for your Stirling-PDF instance, to touch up a generated PDF before printing",
+		Example: "  wms sys pdf-editor https://pdf.example.com\n  wms sys pdf-editor",
 		Long: "Prints a self-hosted Stirling-PDF instance's editor address (https://github.com/Stirling-Tools/\n" +
 			"Stirling-PDF) as a QR code — scan it to open the editor on your phone, or just follow the link, and\n" +
 			"upload whatever this project wrote (e.g. `wms lego missing-sheet -o x.pdf`) to merge, annotate, redact\n" +

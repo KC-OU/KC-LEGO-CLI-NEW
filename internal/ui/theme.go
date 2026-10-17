@@ -40,6 +40,7 @@ type Theme struct {
 	Success       lipgloss.Style
 	Warning       lipgloss.Style
 	Danger        lipgloss.Style
+	Info          lipgloss.Style // blue — extra/overage, the counterpart to Danger's red for missing/shortage
 	Accent        lipgloss.Style // bright input-capable field text
 	Protected     lipgloss.Style // dim display-only field text
 	Strong        lipgloss.Style // bold white without Accent's underline — the Python TUI's "accent" (menu keys, list markers)
@@ -127,6 +128,7 @@ func highContrastTheme() Theme {
 		Success:       lipgloss.NewStyle().Bold(true).Foreground(white),
 		Warning:       lipgloss.NewStyle().Bold(true).Foreground(black).Background(yellow),
 		Danger:        lipgloss.NewStyle().Bold(true).Foreground(white).Background(red),
+		Info:          lipgloss.NewStyle().Bold(true).Foreground(black).Background(lipgloss.Color("12")),
 		Accent:        lipgloss.NewStyle().Bold(true).Underline(true).Foreground(white),
 		Protected:     lipgloss.NewStyle().Foreground(gray),
 		Strong:        lipgloss.NewStyle().Bold(true).Foreground(white),
@@ -152,6 +154,7 @@ func colorblindTheme() Theme {
 	t.Success = lipgloss.NewStyle().Bold(true).Foreground(lightBlue)
 	t.Warning = lipgloss.NewStyle().Bold(true).Foreground(yellow)
 	t.Danger = lipgloss.NewStyle().Bold(true).Foreground(orange)
+	t.Info = lipgloss.NewStyle().Bold(true).Foreground(lightBlue)
 	t.Text = lipgloss.NewStyle().Foreground(blue)
 	t.BadgeView = lipgloss.NewStyle().Bold(true).Foreground(black).Background(orange)
 	t.BadgeAdmin = lipgloss.NewStyle().Bold(true).Foreground(black).Background(white)
@@ -167,7 +170,7 @@ func monoTheme() Theme {
 	return Theme{
 		Name: "mono", Labels: true, Mono: true,
 		Brand: bold, Text: plain, Muted: plain, Success: bold, Warning: bold.Underline(true), Danger: rev,
-		Accent: bold.Underline(true), Protected: plain, Strong: bold,
+		Info: bold.Underline(true), Accent: bold.Underline(true), Protected: plain, Strong: bold,
 		TitleReverse: rev, HeaderReverse: rev, KeyLegend: rev,
 		BadgeAdmin: rev, BadgeOperator: rev, BadgeView: bold.Underline(true),
 	}
@@ -197,6 +200,7 @@ func paletteTheme(name string, p palette) Theme {
 		Success:       bold(p.ok),
 		Warning:       bold(p.warn),
 		Danger:        bold(p.bad),
+		Info:          bold("39"), // a fixed vivid blue, independent of each palette's own hues
 		Accent:        bold(p.accent).Underline(true),
 		Protected:     fg(p.muted),
 		Strong:        bold(p.strong),
@@ -254,6 +258,7 @@ func buildTheme(name, base, bright string) Theme {
 	white := lipgloss.Color("15")
 	red := lipgloss.Color("1")
 	yellow := lipgloss.Color("11")
+	blue := lipgloss.Color("12")
 
 	return Theme{
 		Name:          name,
@@ -263,6 +268,7 @@ func buildTheme(name, base, bright string) Theme {
 		Success:       lipgloss.NewStyle().Bold(true).Foreground(baseColor),
 		Warning:       lipgloss.NewStyle().Bold(true).Foreground(yellow),
 		Danger:        lipgloss.NewStyle().Bold(true).Foreground(red),
+		Info:          lipgloss.NewStyle().Bold(true).Foreground(blue),
 		Accent:        lipgloss.NewStyle().Bold(true).Underline(true).Foreground(white),
 		Protected:     lipgloss.NewStyle().Faint(true).Foreground(baseColor),
 		Strong:        lipgloss.NewStyle().Bold(true).Foreground(white),

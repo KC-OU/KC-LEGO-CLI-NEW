@@ -5,6 +5,7 @@ package partdb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite"
@@ -14,6 +15,22 @@ import (
 
 type DB struct {
 	*sql.DB
+}
+
+// ErrUnavailable is returned by every exported method when d (or its embedded
+// *sql.DB) is nil — the solo-mode case (see internal/config.SoloMode), where
+// cmd/wms deliberately starts with a zero-value *DB instead of aborting when
+// there's no Part-DB sqlite file to open.
+var ErrUnavailable = errors.New("Part-DB not available (solo mode)")
+
+// ready guards every exported method below against a nil *DB or a nil
+// embedded *sql.DB, so a solo-mode zero-value *DB returns a clear error
+// instead of panicking.
+func (d *DB) ready() error {
+	if d == nil || d.DB == nil {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 func Open(path string) (*DB, error) {

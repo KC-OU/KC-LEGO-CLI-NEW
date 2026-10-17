@@ -19,7 +19,7 @@ const (
 var pickerHubCatalog = []menuCatalogItem{
 	{key: "overview", hotkey: "1", label: "Overview", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrOverview) }},
 	{key: "request", hotkey: "2", label: "Request a set to check", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrRequest) }},
-	{key: "current_job", hotkey: "3", label: "My Current Jobs", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrCurrentJob) }},
+	{key: "current_job", hotkey: "3", label: "Kanban", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrKanbanBoard) }},
 	{key: "query_menu", hotkey: "4", label: "Menu for Querys", allowed: func(app *App) bool { return true }, open: func(app *App) { app.goTo(scrQueryMenu) }},
 	{key: "my_accuracy", hotkey: "5", label: "My accuracy", allowed: func(app *App) bool {
 		if app.session == nil {

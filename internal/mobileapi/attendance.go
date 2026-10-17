@@ -1,6 +1,7 @@
 package mobileapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -17,6 +18,9 @@ type attendanceStatus struct {
 	StartTime      string `json:"start_time,omitempty"`
 	EndTime        string `json:"end_time,omitempty"`
 	EmergencyCover bool   `json:"emergency_cover"`
+	// Card is an admin-applied Delay/No Work label, "" when there isn't one
+	// (never set for "on a break" -- OnBreak above already says that).
+	Card string `json:"card,omitempty"`
 }
 
 // handleAttendanceStatus is the clock-in screen's data: am I clocked in, on
@@ -34,6 +38,9 @@ func (s *Server) handleAttendanceStatus(w http.ResponseWriter, r *http.Request, 
 		out.ClockedInSince = shift.ClockInAt.Format(time.RFC3339)
 		if on, err := s.legoDB.OnBreak(sess.Username); err == nil {
 			out.OnBreak = on
+		}
+		if c, err := s.legoDB.ActiveStatusCard(sess.Username); err == nil && c != nil {
+			out.Card = lego.CardReasonName(c.Reason)
 		}
 	}
 	if rota, err := s.legoDB.GetRota(sess.Username, time.Now().Format("2006-01-02")); err == nil && rota != nil {
@@ -98,6 +105,29 @@ func (s *Server) handleBreakStart(w http.ResponseWriter, r *http.Request, sess l
 		return
 	}
 	s.handleAttendanceStatus(w, r, sess)
+}
+
+type cardScanRequest struct {
+	Code string `json:"code"`
+}
+
+// handleCardScan is the self-serve half of status cards: scanning the one
+// printed "break card" toggles the scanning user's own break on/off (see
+// DB.ScanStatusCard) — the same StartBreak/EndBreak the break-start/
+// break-end buttons already call, just reached by a scan instead of two
+// separate taps. Delay/No Work have no scan code; see handleAdminSetCard.
+func (s *Server) handleCardScan(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	var req cardScanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code is required"})
+		return
+	}
+	label, err := s.legoDB.ScanStatusCard(sess.Username, req.Code)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"result": label})
 }
 
 type rotaDayRow struct {

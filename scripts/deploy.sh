@@ -5,8 +5,13 @@
 #
 # It builds the binary, then refuses to go on unless `wms preflight deploy` says GO for this exact
 # commit (it runs the preflight itself when there is no fresh verdict). Then it backs up, applies the private
-# settings, swaps the binary, restarts the gateway (rolling back if it does not come back), and finishes the
-# first-run steps (import of old files, catalog download, LEGO backup, doctor).
+# settings, swaps the binary, restarts the gateway (rolling back if it does not come back), and refreshes
+# the offline catalog, a LEGO backup, and doctor.
+#
+# The legacy KC-LEGO-CLI data import is NOT part of this script — it used to run here automatically
+# whenever `sets` read 0, which can't tell "never imported" apart from "just deliberately reset", and
+# silently reimported old data after a wipe. It's scripts/import-legacy-data.sh now: a genuinely
+# one-time, run-by-hand step, guarded by its own sentinel file rather than the current row count.
 #
 # Private values are NOT in this repository: they come from the file named by WMS_DEPLOY_VALUES
 # (default ~/.config/wms-go/deploy.env, mode 600, KEY=value lines).
@@ -28,7 +33,7 @@ die() { printf '\033[1;31m%s\033[0m\n' "$*" >&2; exit 1; }
 cd "$REPO"
 [ "$(id -u)" -eq 0 ] || die "run as root: this replaces $BIN and restarts $UNIT"
 
-say "1/8 build the new binary"
+say "1/7 build the new binary"
 mkdir -p "$BACKUPS"
 tmp="$(mktemp "$(dirname "$BIN")/.wms-go.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
@@ -37,19 +42,19 @@ go build -trimpath -ldflags "-X main.version=${version} -X main.commit=$(git rev
 chmod 0755 "$tmp"
 "$tmp" version
 
-say "2/8 preflight (nothing below runs without a GO for commit $(git rev-parse --short HEAD))"
+say "2/7 preflight (nothing below runs without a GO for commit $(git rev-parse --short HEAD))"
 if ! "$tmp" preflight --require deploy --repo "$REPO"; then
   "$tmp" preflight deploy --repo "$REPO" || die "NO-GO: fix what the preflight lists, then run this again."
 fi
 
-say "3/8 backups into $BACKUPS"
+say "3/7 backups into $BACKUPS"
 sqlite3 "$LIVE/lego.db" ".backup $BACKUPS/lego.db.pre-deploy.$ts"
 cp -p "$LIVE/settings.json" "$BACKUPS/settings.json.pre-deploy.$ts"
 [ -f "$LIVE/2fa.json" ] && cp -p "$LIVE/2fa.json" "$BACKUPS/2fa.json.pre-deploy.$ts"
 cp -p "$BIN" "$BACKUPS/wms-go.$ts"
 echo "previous binary: $BACKUPS/wms-go.$ts"
 
-say "4/8 private settings (from $VALUES; values are not printed)"
+say "4/7 private settings (from $VALUES; values are not printed)"
 WMS_VALUES_FILE="$VALUES" WMS_SETTINGS="$LIVE/settings.json" python3 - <<'PY'
 import json, os
 want = {}
@@ -73,7 +78,7 @@ print("settings keys now:", ", ".join(sorted(data)))
 PY
 chmod 600 "$AUDIT_LOG" 2>/dev/null || true
 
-say "5/8 swap the binary and restart $UNIT (connected sessions are dropped)"
+say "5/7 swap the binary and restart $UNIT (connected sessions are dropped)"
 live="$(ss -tn state established '( sport = :23 or sport = :2323 or sport = :7681 )' 2>/dev/null | tail -n +2 | wc -l)"
 echo "$live live session(s) will be dropped"
 mv -f "$tmp" "$BIN"
@@ -88,24 +93,19 @@ if ! systemctl is-active --quiet "$UNIT"; then
 fi
 echo "$UNIT is active"
 
-say "6/8 import your old files (once: only when no sets are stored yet)"
-sets="$("$BIN" lego stats --json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("SetTitles", 0))' 2>/dev/null || echo 0)"
-if [ "$sets" = "0" ] && [ -f "$LEGACY/0.json" ]; then
-  args=(lego import --collection "$LEGACY/0.json")
-  for f in "$LEGACY"/kc_sets_export_*.json; do [ -f "$f" ] && args+=(--collection "$f"); done
-  [ -f "$LEGACY/Lego-Lookup/legolookup.json" ] && args+=(--ref-sets "$LEGACY/Lego-Lookup/legolookup.json")
-  [ -f "$LEGACY/Lego-Lookup/legolookup-part.json" ] && args+=(--ref-parts "$LEGACY/Lego-Lookup/legolookup-part.json")
-  "$BIN" "${args[@]}"
-else
-  echo "skipped (sets already stored: $sets, or no old files in $LEGACY)"
-fi
-
-say "7/8 offline catalog (about 25 s; searching keeps working meanwhile) and a LEGO backup"
+say "6/7 offline catalog (about 25 s; searching keeps working meanwhile) and a LEGO backup"
 "$BIN" lego catalog refresh
 "$BIN" lego backup || true
 
-say "8/8 doctor"
+say "7/7 doctor"
 "$BIN" doctor || true
+
+if [ ! -f "$LIVE/.legacy-import-done" ] && [ -f "$LEGACY/0.json" ]; then
+  echo
+  echo "Legacy KC-LEGO-CLI data at $LEGACY has never been imported — a one-time step,"
+  echo "run by hand (not part of this script, not run automatically on every deploy):"
+  echo "  bash $REPO/scripts/import-legacy-data.sh"
+fi
 
 if [ -t 0 ] && [ -f "$REPO/scripts/install-bashrc.sh" ]; then
   echo

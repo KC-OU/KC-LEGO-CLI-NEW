@@ -46,6 +46,12 @@ var mainMenuCatalog = []menuCatalogItem{
 	{"admin_handover", "m", "Admin: Shift Handover Note", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrHandover) }},
 	{"admin_activity", "n", "Admin: Recent Activity", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAdminEvents) }},
 	{"admin_alerts", "o", "Admin: Alerts", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrAlerts) }},
+	// Deliberately NOT also added as a row inside adminHubScreen's own submenu
+	// table below (unlike every other admin_* entry here) -- that list is
+	// already at its 80x24 fit budget (see fit_test.go); this top-level entry
+	// alone (direct hub option, Ctrl-K palette, classic tab bar) is enough to
+	// reach it.
+	{"admin_kanban", "p", "Admin: Kanban Board", func(app *App) bool { return app.moduleAllowed("user_mgmt") }, func(app *App) { app.goTo(scrKanbanAdmin) }},
 }
 
 // defaultMainMenuKeys is today's unmodified top-level menu — what every
@@ -87,7 +93,12 @@ func hubScreen() screenModel {
 // subMenu builds a submenu screen from a static option table, filtering
 // each row through auth.IsModuleAllowed exactly like the old flat hub did —
 // opsHubScreen and adminHubScreen are both just this with a different table.
-func subMenu(panelID, title string, rows []struct{ key, module, label, target string }) screenModel {
+// onReturn overrides what "0. Return" does; nil means the ordinary
+// app.onBack() stack-pop.
+func subMenu(panelID, title string, rows []struct{ key, module, label, target string }, onReturn func(app *App)) screenModel {
+	if onReturn == nil {
+		onReturn = func(app *App) { app.onBack() }
+	}
 	return &menuScreen{
 		panelID: panelID,
 		title:   title,
@@ -100,7 +111,7 @@ func subMenu(panelID, title string, rows []struct{ key, module, label, target st
 				target := o.target
 				opts = append(opts, menuOption{Key: o.key, Label: o.label, Go: func(app *App) { app.goTo(target) }})
 			}
-			opts = append(opts, menuOption{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }})
+			opts = append(opts, menuOption{Key: "0", Label: "Return", Go: onReturn})
 			return opts
 		},
 	}
@@ -113,7 +124,7 @@ func opsHubScreen() screenModel {
 		{"3", "stock_lookup", "Inventory", scrInventory},
 		{"4", "master_data", "Master Data", scrMasterData},
 		{"5", "delivery", "Outbound", scrOutbound},
-	})
+	}, nil)
 }
 
 func adminHubScreen() screenModel {
@@ -130,6 +141,17 @@ func adminHubScreen() screenModel {
 		{"a", "user_mgmt", "Recent Activity", scrAdminEvents},
 		{"b", "user_mgmt", "Alerts", scrAlerts},
 		{"c", "user_mgmt", "Weekly Rota", scrRotaView},
+	}, func(app *App) {
+		// Reached via V's credentialed admin switch (switchAdminScreen): hand
+		// the elevated identity straight back, same as pressing V again --
+		// the ordinary onBack() stack-pop would leave the admin session
+		// quietly still active on whatever screen it fell back to, instead
+		// of actually stepping back down to the account that was parked.
+		if app.parked != nil {
+			app.restoreParkedSession()
+			return
+		}
+		app.onBack()
 	})
 }
 

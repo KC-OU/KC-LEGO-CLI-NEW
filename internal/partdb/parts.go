@@ -18,6 +18,9 @@ type PartRow struct {
 // SearchParts mirrors the PartDB Hub browse query: name/MPN/category/
 // description LIKE match, joined to categories/lots/locations, newest first.
 func (d *DB) SearchParts(term string) ([]PartRow, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	like := "%" + term + "%"
 	rows, err := d.Query(`
 		SELECT p.id, p.name, p.manufacturer_product_number, COALESCE(c.name, ''),
@@ -58,6 +61,9 @@ type PartDetail struct {
 }
 
 func (d *DB) GetPart(id int) (*PartDetail, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	row := d.QueryRow(`
 		SELECT p.id, p.name, COALESCE(p.description,''), COALESCE(p.comment,''), p.manufacturer_product_number, p.minamount,
 		       COALESCE(c.name, ''), COALESCE(sl.name, ''), COALESCE((SELECT SUM(amount) FROM part_lots WHERE id_part = p.id), 0)
@@ -84,6 +90,9 @@ func (d *DB) GetPart(id int) (*PartDetail, error) {
 func (d *DB) FindPartByIPN(ipn string) (int, error) {
 	if ipn == "" {
 		return 0, nil
+	}
+	if err := d.ready(); err != nil {
+		return 0, err
 	}
 	var id int
 	err := d.QueryRow("SELECT id FROM parts WHERE ipn = ? LIMIT 1", ipn).Scan(&id)

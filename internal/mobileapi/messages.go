@@ -65,6 +65,37 @@ func (s *Server) handleMessageAdmin(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+type requestSetRequest struct {
+	Set string `json:"set"`
+	Why string `json:"why"`
+}
+
+// handleRequestSet is the phone's side of My Settings' "Request a Set"
+// (internal/uiapp/my_settings.go's requestSetScreen) -- same Recent Activity
+// + notification routing as handleMessageAdmin, just its own event kind so
+// an admin can tell a set request apart from a general feature request at a
+// glance in Recent Activity.
+func (s *Server) handleRequestSet(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	var req requestSetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.Set, req.Why = strings.TrimSpace(req.Set), strings.TrimSpace(req.Why)
+	if req.Set == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "set is required"})
+		return
+	}
+	full := req.Set
+	if req.Why != "" {
+		full += ": " + req.Why
+	}
+	_ = s.legoDB.LogEvent(lego.EventSetRequest, sess.Username, "", full)
+	go notify.Dispatch(lego.EventSetRequest, sess.Username+" requested a set: "+full, "")
+	s.audit.Log(sess.Username, sess.Role, "SET_REQUESTED", "SUCCESS", full)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 type flagLocationRequest struct {
 	PartNum   string `json:"part_num"`
 	ColorName string `json:"color_name"`

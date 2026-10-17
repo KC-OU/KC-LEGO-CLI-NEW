@@ -25,9 +25,11 @@ type CheckSummary struct {
 	Lines, Pieces, Have, Missing, Extra int
 }
 
-// CheckHistory lists finished checks, newest first: for one set (setNum != ""), or
-// across the whole collection.
-func (d *DB) CheckHistory(setNum string, limit int) ([]CheckSummary, error) {
+// CheckHistory lists finished checks, newest first: for one set (setNum != ""),
+// by one checker (checkedBy != "", a LIKE match so part of a username is
+// enough -- tracking one down doesn't require typing it exactly), or across
+// the whole collection with both blank.
+func (d *DB) CheckHistory(setNum, checkedBy string, limit int) ([]CheckSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -37,6 +39,10 @@ func (d *DB) CheckHistory(setNum string, limit int) ([]CheckSummary, error) {
 	if setNum != "" {
 		q += ` AND set_num = ?`
 		args = append(args, setNum)
+	}
+	if checkedBy != "" {
+		q += ` AND checked_by LIKE ?`
+		args = append(args, "%"+checkedBy+"%")
 	}
 	q += ` ORDER BY finished_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
@@ -90,8 +96,12 @@ func (d *DB) MissingPartsReport(sets []string) (*ExportData, error) {
 		title := setTitle(d, num)
 		setMissing, setOnOrder := 0, 0
 		for _, l := range lines {
+			bag := ""
+			if k, _ := d.RequiredBagKind(l.CheckLine, "have"); k != nil {
+				bag = k.Name
+			}
 			data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: l.PartNum, Name: l.PartName, Category: l.Category,
-				ColorID: l.ColorID, ColorName: l.ColorName, Qty: l.Short, BLColor: l.BLColor})
+				ColorID: l.ColorID, ColorName: l.ColorName, Qty: l.Short, BLColor: l.BLColor, Bag: bag})
 			setMissing += l.Short
 			setOnOrder += l.OnOrder
 		}
@@ -198,6 +208,10 @@ func (d *DB) ExtraPartsReport(sets []string) (*ExportData, error) {
 	}
 	defer rows.Close()
 	titleFor := map[string]string{}
+	extraBagName := "Extra"
+	if k, _ := d.BagKindByKey(BagExtra); k != nil {
+		extraBagName = k.Name
+	}
 	total := 0
 	for rows.Next() {
 		var partNum, name, category, colorName, originSet string
@@ -210,7 +224,7 @@ func (d *DB) ExtraPartsReport(sets []string) (*ExportData, error) {
 			title = setTitle(d, originSet)
 			titleFor[originSet] = title
 		}
-		data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: partNum, Name: name, Category: category, ColorID: colorID, ColorName: colorName, Qty: qty})
+		data.Rows = append(data.Rows, ExportRow{SetNum: title, PartNum: partNum, Name: name, Category: category, ColorID: colorID, ColorName: colorName, Qty: qty, Bag: extraBagName})
 		total += qty
 	}
 	data.Facts = [][2]string{{"Extra line(s)", fmt.Sprint(len(data.Rows))}, {"Total extra pieces", fmt.Sprint(total)}}
@@ -287,8 +301,8 @@ var reportTmpl = template.Must(template.New("report").Parse(`<!doctype html>
 </style></head><body><div class="page">
 <div class="title"><h1>{{.Title}}</h1><div class="meta">Generated {{.Date}}</div></div>
 {{if .Facts}}<table class="facts">{{range .Facts}}<tr><td>{{index . 0}}</td><td>{{index . 1}}</td></tr>{{end}}</table>{{end}}
-{{range .Groups}}<h2>{{.Title}}</h2><table class="rows"><tr><th>Part</th><th>Colour</th><th>Name</th><th class="n">Qty</th></tr>
-{{range .Rows}}<tr><td>{{.PartNum}}</td><td>{{.ColorName}}</td><td>{{.Name}}</td><td class="n">{{.Qty}}</td></tr>{{end}}
+{{range .Groups}}<h2>{{.Title}}</h2><table class="rows"><tr><th>Part</th><th>Colour</th><th>Name</th>{{if $.ShowBag}}<th>Bag</th>{{end}}<th class="n">Qty</th></tr>
+{{range .Rows}}<tr><td>{{.PartNum}}</td><td>{{.ColorName}}</td><td>{{.Name}}</td>{{if $.ShowBag}}<td>{{.Bag}}</td>{{end}}<td class="n">{{.Qty}}</td></tr>{{end}}
 </table>{{end}}
 <div class="footer">{{.Pieces}} piece(s) across {{.Lines}} line(s) · KC-PARTS</div>
 </div></body></html>`))
@@ -313,13 +327,21 @@ func ReportHTML(d *ExportData) ([]byte, error) {
 	if len(order) == 0 && len(d.Rows) > 0 {
 		gs = append(gs, group{Title: d.Title, Rows: d.Rows})
 	}
+	showBag := false
+	for _, r := range d.Rows {
+		if r.Bag != "" {
+			showBag = true
+			break
+		}
+	}
 	var b bytes.Buffer
 	err := reportTmpl.Execute(&b, struct {
 		Title, Date   string
 		Facts         [][2]string
 		Groups        []group
 		Pieces, Lines int
-	}{d.Title, d.When.Format("2 January 2006, 15:04"), d.Facts, gs, reportPieces(d.Rows), len(d.Rows)})
+		ShowBag       bool
+	}{d.Title, d.When.Format("2 January 2006, 15:04"), d.Facts, gs, reportPieces(d.Rows), len(d.Rows), showBag})
 	return b.Bytes(), err
 }
 

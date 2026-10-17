@@ -32,12 +32,17 @@ const (
 	scrLineReceive      = "order_line_receive"
 	scrSpend            = "spend"
 	scrSetInfo          = "set_info"
+	scrSetElementID     = "set_element_id"
 	scrLabelsAsk        = "labels_ask"
 	scrReports          = "reports"
 	scrReportsSet       = "reports_set"
 	scrRetiring         = "retiring"
+	scrPaperPending     = "paper_pending"
 	scrReportsStocktake = "reports_stocktake"
 	scrReportsArchive   = "reports_archive"
+	scrCheckHistory     = "check_history"
+	scrBagFindAsk       = "bag_find_ask"
+	scrBagFind          = "bag_find"
 	workshopBanner      = "workshop_banner"
 	defaultCurrency     = "GBP"
 )
@@ -66,12 +71,17 @@ func workshopScreens() map[string]screenModel {
 		scrLineReceive:      lineReceiveScreen(),
 		scrSpend:            spendScreen(),
 		scrSetInfo:          setInfoScreen(),
+		scrSetElementID:     setElementIDScreen(),
 		scrLabelsAsk:        labelsAskScreen(),
 		scrReports:          reportsHubScreen(),
 		scrReportsSet:       reportsSetAskScreen(),
 		scrReportsStocktake: reportsStocktakeAskScreen(),
 		scrReportsArchive:   &selectList{panelID: "REPARC", title: "Report Archive", rows: archiveRows, keys: archiveKeys, hint: "Enter: a fresh link for that report (kept 90 days from when it was made)"},
+		scrCheckHistory:     &tableScreen{panelID: "CHKHST", title: "Check History", columns: []string{"Date", "Set", "Kind", "By", "Pieces", "Have", "Result"}, fetch: checkHistoryRows},
 		scrRetiring:         &selectList{panelID: "RETIRE", title: "Retiring Soon", rows: retiringRows, hint: "Sets retiring within 6 months, from the retirement sheet (wms lego retirement refresh)"},
+		scrPaperPending:     &selectList{panelID: "PAPERDUE", title: "Paper Done, CLI Pending", rows: paperPendingRows, hint: "Paper checklist finished, not yet entered — run wms lego check <set> (or --stocktake for a recount) for each one"},
+		scrBagFindAsk:       bagFindAskScreen(),
+		scrBagFind:          &tableScreen{panelID: "BAGFND", title: "Find a Bag", columns: []string{"Field", "Value"}, boxed: true, fetch: func(app *App) ([][]string, string, error) { return app.bagFindRows, "Find a Bag", nil }},
 	}
 }
 
@@ -96,6 +106,8 @@ func workshopHubScreen() screenModel {
 				{Key: "6", Label: "Print labels", Go: func(app *App) { app.goTo(scrLabelsAsk) }, Perm: "labels.print"},
 				{Key: "7", Label: "Reports: stock-take, parts lists, missing/extra parts, sets, orders", Go: func(app *App) { app.goTo(scrReports) }, Perm: "lego.view"},
 				{Key: "8", Label: "Retiring soon (owned & watched sets)", Go: func(app *App) { app.goTo(scrRetiring) }, Perm: "lego.view"},
+				{Key: "9", Label: "Paper done, CLI pending", Go: func(app *App) { app.goTo(scrPaperPending) }, Perm: "lego.view"},
+				{Key: "F", Label: "Find a lost bag (scan or type its code)", Go: func(app *App) { app.goTo(scrBagFindAsk) }, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -147,6 +159,83 @@ func checkAskScreen() screenModel {
 	}
 }
 
+// bagFindAskScreen is the lost-bag lookup's entry point: type or scan a code,
+// see what it belongs to -- independent of any active checking session
+// (see DB.FindBag). Read-only; it never scans anything in the way the live
+// B-key bag scanner inside a check does.
+func bagFindAskScreen() screenModel {
+	return &formScreen{
+		panelID: "BAGASK",
+		title:   "Find a Bag",
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Bag code"}}
+		},
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("Scan or type any bag's code -- its own, or a reusable pool bag's -- to see what it belongs to.")
+		},
+		submit: func(app *App, v []string) {
+			code := strings.TrimSpace(v[0])
+			if code == "" {
+				app.setMsg("Enter a bag code.", true)
+				return
+			}
+			r, err := app.legoDB.FindBag(code)
+			if err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			if !r.Found {
+				app.setMsg(fmt.Sprintf("Nothing known about bag code %q.", code), true)
+				return
+			}
+			rows := [][]string{{"Code", r.Code}}
+			if r.Pool {
+				rows = append(rows, []string{"Pool bag", fmt.Sprintf("%s (%s)", r.BagKindName, r.PoolStatus)})
+			} else {
+				rows = append(rows, []string{"Bag kind", r.BagKindName})
+			}
+			if r.SetNum != "" {
+				status := "in progress"
+				if r.CheckDone {
+					status = "finished"
+				}
+				rows = append(rows, []string{"Belongs to", fmt.Sprintf("set %s (check %s)", r.SetNum, status)})
+			}
+			if !r.ScannedAt.IsZero() {
+				rows = append(rows, []string{"Last scanned", r.ScannedAt.Format("2 Jan 2006 15:04")})
+			}
+			// Who printed it and what its check turned up -- admin-only
+			// (everyone else just needs "what is this bag"), same as every
+			// other admin-gated extra in this app (checkAdmin/requireAdmin,
+			// not a fresh login).
+			if app.isAdmin() {
+				if r.CreatedBy != "" {
+					by := r.CreatedBy
+					if !r.CreatedAt.IsZero() {
+						by += " (" + r.CreatedAt.Format("2 Jan 2006 15:04") + ")"
+					}
+					rows = append(rows, []string{"Printed by", by})
+				}
+				if r.CheckDone {
+					result := fmt.Sprintf("%d missing", r.Missing)
+					if r.Missing == 0 {
+						result = "COMPLETE"
+					}
+					if r.Extra > 0 {
+						result += fmt.Sprintf(", %d extra", r.Extra)
+					}
+					rows = append(rows, []string{"Result", result})
+				}
+				if r.Disputed {
+					rows = append(rows, []string{"Disputed", orDash(r.DisputeNote)})
+				}
+			}
+			app.bagFindRows = rows
+			app.goTo(scrBagFind)
+		},
+	}
+}
+
 // ---- completion dashboard ----
 
 func progressBar(t ui.Theme, have, total, width int) string {
@@ -174,11 +263,13 @@ func completionRows(app *App) ([]string, [][]string, []string) {
 			pieces, have, _, _, _ = c.Totals()
 		}
 		status := "COMPLETE"
+		byBag := ""
 		if s.Incomplete() {
 			status = fmt.Sprintf("%d missing", s.MissingQty)
 			if s.OnOrderQty > 0 {
 				status += fmt.Sprintf(", %d ordered", s.OnOrderQty)
 			}
+			byBag = bagBreakdownText(app.legoDB, c)
 		}
 		spent := ""
 		if v := spend[s.SetNum]; v > 0 {
@@ -192,10 +283,29 @@ func completionRows(app *App) ([]string, [][]string, []string) {
 		if pieces > 0 {
 			pct = have * 100 / pieces
 		}
-		rows = append(rows, []string{s.SetNum, name, progressBar(app.theme, have, pieces, 10) + fmt.Sprintf(" %3d%%", pct), status, spent, s.LastCheck.CheckedBy})
+		rows = append(rows, []string{s.SetNum, name, progressBar(app.theme, have, pieces, 10) + fmt.Sprintf(" %3d%%", pct), status, byBag, spent, s.LastCheck.CheckedBy})
 		keys = append(keys, s.SetNum)
 	}
-	return []string{"Set", "Name", "Progress", "Status", "Spent", "Checked by"}, rows, keys
+	return []string{"Set", "Name", "Progress", "Status", "By bag", "Spent", "Checked by"}, rows, keys
+}
+
+// bagBreakdownText is an incomplete check's missing count split by which bag
+// kind each short part belongs in (see DB.MissingByBag) -- "" when nothing
+// is missing or the breakdown can't be computed, same as the status column
+// already does for a complete set.
+func bagBreakdownText(d *lego.DB, c *lego.SetCheck) string {
+	if c == nil {
+		return ""
+	}
+	bm, err := d.MissingByBag(c)
+	if err != nil || len(bm) == 0 {
+		return ""
+	}
+	parts := make([]string, len(bm))
+	for i, b := range bm {
+		parts[i] = fmt.Sprintf("%s %d", b.Name, b.Missing)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func completionKeys(app *App, set string, msg tea.KeyMsg) {
@@ -362,17 +472,23 @@ type shopLinksScreen struct {
 	sel int
 }
 
-func (s *shopLinksScreen) PanelID() string    { return "SHOPLK" }
-func (s *shopLinksScreen) Title() string      { return "Where to Buy" }
-func (s *shopLinksScreen) OnEnter(app *App)   { s.sel = 0 }
-func (s *shopLinksScreen) FKeys() [][2]string { return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}} }
+func (s *shopLinksScreen) PanelID() string  { return "SHOPLK" }
+func (s *shopLinksScreen) Title() string    { return "Where to Buy" }
+func (s *shopLinksScreen) OnEnter(app *App) { s.sel = 0 }
+func (s *shopLinksScreen) FKeys() [][2]string {
+	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}, {"E", "Element ID"}}
+}
 
 func (s *shopLinksScreen) HandleKey(app *App, msg tea.KeyMsg) {
-	switch msg.Type {
-	case tea.KeyUp:
+	switch {
+	case msg.Type == tea.KeyUp:
 		s.sel = max(0, s.sel-1)
-	case tea.KeyDown:
+	case msg.Type == tea.KeyDown:
 		s.sel = min(3, s.sel+1)
+	case isKey(msg, 'e'):
+		if app.require("sets.check", "SET_ELEMENT_ID") {
+			app.goTo(scrSetElementID)
+		}
 	}
 }
 
@@ -387,7 +503,9 @@ func (s *shopLinksScreen) Body(app *App) string {
 	var b strings.Builder
 	b.WriteString(t.Strong.Render(fmt.Sprintf("%s %s — %s, need %d", l.PartNum, l.ColorName, l.PartName, l.ToBuy())) + "\n")
 	if l.ElementID != "" {
-		b.WriteString(t.Muted.Render("LEGO element id "+l.ElementID+" (use it at Pick a Brick)") + "\n")
+		b.WriteString(t.Muted.Render("LEGO element id "+l.ElementID+" (use it at Pick a Brick) · E to correct it") + "\n")
+	} else {
+		b.WriteString(t.Warning.Render("No LEGO element id on file — E to add one") + "\n")
 	}
 	b.WriteString("\n")
 	for i, lk := range links {
@@ -810,9 +928,17 @@ func setInfoScreen() screenModel {
 		title:   "Where the Set Is Kept",
 		build: func(app *App) []ui.Field {
 			st := app.legoDB.GetSetState(app.ws().set)
+			bookNum, bookCount := "", "0"
+			if owned, err := app.legoDB.GetSetByNum(app.ws().set); err == nil {
+				bookNum = owned.InstructionBookNumber
+				bookCount = strconv.Itoa(owned.InstructionBookCount)
+			}
 			return []ui.Field{{Label: "Set", Value: app.ws().set, Protected: true}, {Label: "Location (shelf, box, bin)", Value: st.Location},
 				{Label: "Condition: sealed, built, in pieces, displayed", Value: st.Condition}, {Label: "Condition note", Value: st.ConditionNote},
-				{Label: "Image URL override (blank = use the catalog picture)", Value: st.ImageURL}}
+				{Label: "Image URL override (blank = use the catalog picture)", Value: st.ImageURL},
+				{Label: "Box barcode (the retail box's own UPC/EAN, optional)", Value: st.BoxBarcode},
+				{Label: "Instruction book #(s) (slash-separated if more than one)", Value: bookNum},
+				{Label: "Instruction book count", Value: bookCount}}
 		},
 		submit: func(app *App, v []string) {
 			if !app.require("lego.edit", "SET_INFO") {
@@ -826,6 +952,62 @@ func setInfoScreen() screenModel {
 				app.setMsg(err.Error(), true)
 				return
 			}
+			if err := app.legoDB.SetBoxBarcode(app.ws().set, v[5]); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			bookCount, err := strconv.Atoi(strings.TrimSpace(v[7]))
+			if err != nil {
+				app.setMsg("Instruction book count must be a whole number.", true)
+				return
+			}
+			if err := app.legoDB.SetInstructionBook(app.ws().set, v[6], bookCount); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			app.onBack()
+			app.setMsg("Saved.", false)
+		},
+	}
+}
+
+// setElementIDScreen lets a checker or admin record (or correct) the
+// current shopping line's LEGO element id directly -- for a part the
+// catalog doesn't have one for yet (common right after a set's release,
+// before the next Rebrickable sync), or one that's just wrong. Reached from
+// shopLinksScreen's E key, acting on whichever line is currently selected
+// there (app.ws().line) -- no separate state of its own to carry.
+func setElementIDScreen() screenModel {
+	return &formScreen{
+		panelID: "ELEMID",
+		title:   "Set Element ID",
+		build: func(app *App) []ui.Field {
+			w := app.ws()
+			if w.line >= len(w.lines) {
+				return []ui.Field{{Label: "Nothing selected — go back", Protected: true}}
+			}
+			l := w.lines[w.line]
+			return []ui.Field{
+				{Label: "Part", Value: l.PartNum, Protected: true},
+				{Label: "Colour", Value: l.ColorName, Protected: true},
+				{Label: "Element ID (digits only, blank clears it)", Value: l.ElementID},
+			}
+		},
+		submit: func(app *App, v []string) {
+			if !app.require("sets.check", "SET_ELEMENT_ID") {
+				return
+			}
+			w := app.ws()
+			if w.line >= len(w.lines) {
+				app.onBack()
+				return
+			}
+			l := &w.lines[w.line]
+			if err := app.legoDB.SetElementID(l.PartNum, l.ColorID, v[2], app.userName()); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			l.ElementID = strings.TrimSpace(v[2])
 			app.onBack()
 			app.setMsg("Saved.", false)
 		},

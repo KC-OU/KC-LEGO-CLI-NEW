@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -147,8 +146,12 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 	if err != nil {
 		return err
 	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	soloProxy := httputil.NewSingleHostReverseProxy(soloTarget)
+	// "Add to Home Screen" needs the page itself to link the PWA assets
+	// servePWAAssets already serves below -- see newInjectedProxy's own doc
+	// comment for why this rewrites ttyd's live response instead of a
+	// frozen copy of it.
+	proxy := newInjectedProxy(target)
+	soloProxy := newInjectedProxy(soloTarget)
 
 	mux := http.NewServeMux()
 	servePWAAssets(mux)
@@ -186,7 +189,8 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 		if err != nil {
 			return err
 		}
-		mux.Handle(testBasePath+"/", httputil.NewSingleHostReverseProxy(testTarget))
+		testProxy := newInjectedProxy(testTarget)
+		mux.Handle(testBasePath+"/", testProxy)
 	}
 
 	mux.Handle("/", proxy)

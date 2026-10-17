@@ -1,11 +1,11 @@
 # Assigned work: pickers, checkers, accuracy and messages
 
-A picker or checker signs on to a dedicated, tight hub — Overview, a Request screen, My Current
-Jobs, a Query submenu (a set/part search folded into one line, Owned Parts, Owned Sets), My
-accuracy, My Exports, LEGO Collection, Part-DB Hub, Log out, Exit — instead of the general
-ModernWMS/Part-DB hub, since their day genuinely doesn't touch most of it. Anyone whose
-permissions go beyond that (an operator, an admin) keeps the general hub even if they also hold
-`sets.check`/`orders.manage`.
+A picker or checker signs on to a dedicated, tight hub — Overview, a Request screen, Kanban
+(their own current job, backlog and notes — see [the kanban board guide](kanban.md)), a Query
+submenu (a set/part search folded into one line, Owned Parts, Owned Sets), My accuracy, My
+Exports, LEGO Collection, Part-DB Hub, Log out, Exit — instead of the general ModernWMS/Part-DB
+hub, since their day genuinely doesn't touch most of it. Anyone whose permissions go beyond that
+(an operator, an admin) keeps the general hub even if they also hold `sets.check`/`orders.manage`.
 
 LEGO Collection and Part-DB Hub are there for **browsing** — searching, checking what's missing,
 looking something up — not editing; both `checker` and `picker` already carry the read
@@ -163,6 +163,13 @@ has the same clock-in/out, break and status actions at `/mobile/attendance` (and
 `/mobile/attendance/clock-in`, `/clock-out`, `/break-start`, `/break-end`) for its own clock-in
 screen.
 
+**The rota itself** doesn't need a terminal command either — *Admin → Weekly Rota* (the same 7-day
+view above) now edits as well as shows: **N** schedules a shift (picks who, then date/start/end/note,
+each one optional with a sensible default), **O** is the one-key version of `rota override` for
+emergency cover today, and **C** clears a day. All three write through the exact same `SetRota`/
+`QuickNSOverride`/`ClearRota` calls the CLI commands above do — a schedule set from the TUI and one
+set from a script are indistinguishable afterwards.
+
 **Off by default** (`WMS_REQUIRE_CLOCK_IN=0`). With it off, clock-in/rota data can be recorded and
 viewed, but nothing is actually gated — matches today's behaviour exactly, so there's nothing to
 break by adopting this gradually. Set `WMS_REQUIRE_CLOCK_IN=1` once your rota is actually populated
@@ -193,6 +200,43 @@ actually claiming or advancing a pick/check is.
   one message a day listing everyone with clock activity that day — hours worked, plus picker/
   checker accuracy for whoever actually did scored work (nobody gets a made-up 100% for a role
   they didn't touch). Off (`""`, the default) until set.
+- **Idle ticket**: every 5 minutes, a claimed ticket nobody's touched in 60 minutes gets one nudge
+  to a supervisor — "so-and-so's ticket has been claimed a while with no sign of progress." Always
+  on, independent of `WMS_REQUIRE_CLOCK_IN` (claiming and working a ticket happens whether or not
+  attendance tracking is on at all). Skipped entirely for anyone currently on a break or with a
+  status card on — see below.
+
+## Status cards: why someone looks idle right now
+
+Sometimes a claimed ticket sitting quiet, or someone who's clocked in but not actually working,
+has a perfectly good reason — a delay outside their control, or simply nothing queued for them
+yet. A **status card** says so, visibly, instead of a supervisor having to guess or get nagged by
+the idle-ticket alert above about something already explained:
+
+```bash
+wms attendance card set dave delay --note "waiting on a parts delivery"
+wms attendance card set dave no_work
+wms attendance card list      # everyone with a card on right now
+wms attendance card clear dave
+```
+
+**Delay** and **No work available** are admin-applied only — set from the shell (above), or
+*Admin → Open Assignments*, press **V** for the status-cards list, **N** to put one on someone, **C**
+to clear it. Mobile: `GET /mobile/admin/status-cards`, `POST /mobile/admin/status-card` (`username`,
+`reason`, `note`), `POST /mobile/admin/status-card/clear`. A card clears itself automatically the
+moment there's evidence it no longer applies — claiming a ticket, or clocking out — so nobody has to
+remember to turn it off.
+
+**Break** is the one self-serve card — it's not a new concept at all, just the existing paid break
+(above) reached by scanning a printed code instead of running a command: scan (or type) `CARD-BREAK`
+and it toggles on/off, same `StartBreak`/`EndBreak` the break-start/break-end actions already call.
+From the shell: `wms attendance card-scan dave CARD-BREAK`; mobile: `POST
+/mobile/attendance/card-scan {"code": "CARD-BREAK"}`. Delay/No Work have no scan code — they're
+never something a worker puts on themself.
+
+While a card (or a break) is active, it shows next to that person's name in *Admin → Open
+Assignments*, and the idle-ticket alert above skips them entirely rather than nagging about
+something already explained.
 
 ## Accuracy
 
@@ -246,3 +290,7 @@ too.
 - **Show/hide pictures while checking or picking** (My Settings): off by default; turns on a
   colour swatch and the part's (or set's) picture in the [guided check/pick walk](set-checks.md#guided-walk-and-pictures),
   for anyone who finds a picture faster to confirm against than reading a colour name off the screen.
+- **Request a Set** (My Settings, and the mobile app's own `/mobile/request-set`): spotted a set
+  worth adding to the collection? Same shape as *Request a Feature* and *Message an Admin* — it
+  lands in Recent Activity (and any configured notification channel) rather than being silently
+  lost, with no need for admin access to flag it.

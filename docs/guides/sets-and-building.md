@@ -5,6 +5,24 @@
 **LEGO → Add / Update a Set**: type the set number; name, year, piece count and theme are filled in (offline catalog first). You give the
 number of copies. `wms-go lego stats` (or *LEGO → Collection Stats*) summarises everything.
 
+A set can also be registered with a second way in: its retail box's own barcode (UPC/EAN) — useful when the set number
+printed on the box is small or awkward to scan, but the barcode is right there. Set it with
+`wms-go lego set-info <set> --box-barcode <code>`, or the "Box barcode" field on **Set Workshop → Where the Set Is
+Kept**. Once registered, scanning or typing that barcode anywhere a set number works — the CLI, the TUI, the mobile
+app — opens the same set, exactly as if you'd typed its set number.
+
+A set's instruction book number(s) are normally filled in from catalog import, but you can set or correct them
+yourself too: `wms-go lego set-info <set> --instruction-book <number> --instruction-book-count <n>`, or the matching
+fields on **Set Workshop → Where the Set Is Kept**. A multi-book set uses the same slash-separated convention the
+catalog data already does — `6644777/6644778` for two booklets.
+
+A set can also carry its own photos — the box, the built model, anything worth keeping a picture of — any number of
+them, not just one override image. `wms-go lego set-photo <set> <file.jpg>` attaches one (verified by its actual
+bytes, same as a check's proof photo), `wms-go lego set-photos <set>` lists what's attached, and
+`wms-go lego set-photo-remove <id>` removes one. The set detail screen shows how many are attached. This is CLI-only
+— the same reasoning as attaching a check's proof photo (`wms-go lego attach`): it needs a real file on disk, which a
+remote telnet/web session has no access to.
+
 --8<-- "docs/assets/screens/stats.html"
 
 ## Missing parts for a set

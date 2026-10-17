@@ -32,6 +32,7 @@ func newAttendanceTestServer(s *Server) *httptest.Server {
 	mux.HandleFunc("POST /mobile/attendance/clock-out", s.withSession(s.handleClockOut))
 	mux.HandleFunc("POST /mobile/attendance/break-start", s.withSession(s.handleBreakStart))
 	mux.HandleFunc("POST /mobile/attendance/break-end", s.withSession(s.handleBreakEnd))
+	mux.HandleFunc("POST /mobile/attendance/card-scan", s.withSession(s.handleCardScan))
 	return httptest.NewServer(mux)
 }
 
@@ -87,6 +88,83 @@ func TestMobileAttendanceClockInOutAndBreak(t *testing.T) {
 	}
 	if resp := authed(t, http.MethodPost, srv.URL+"/mobile/attendance/clock-out", token, nil); resp.StatusCode != http.StatusConflict {
 		t.Errorf("clocking out twice = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
+// TestMobileCardScanTogglesTheScanningUsersOwnBreak is the self-serve half
+// of status cards: the one printed break card toggles the scanning user's
+// own break, same StartBreak/EndBreak the break-start/break-end buttons
+// already call.
+func TestMobileCardScanTogglesTheScanningUsersOwnBreak(t *testing.T) {
+	s, db := attendanceEnv(t)
+	srv := newAttendanceTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	resp := authed(t, http.MethodPost, srv.URL+"/mobile/attendance/card-scan", token, cardScanRequest{Code: "CARD-BREAK"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("card-scan (start): status=%d", resp.StatusCode)
+	}
+	status := decodeMap(t, authed(t, http.MethodGet, srv.URL+"/mobile/attendance", token, nil))
+	if status["on_break"] != true {
+		t.Fatalf("expected on_break=true after scanning, got %+v", status)
+	}
+
+	resp = authed(t, http.MethodPost, srv.URL+"/mobile/attendance/card-scan", token, cardScanRequest{Code: "CARD-BREAK"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("card-scan (end): status=%d", resp.StatusCode)
+	}
+	status = decodeMap(t, authed(t, http.MethodGet, srv.URL+"/mobile/attendance", token, nil))
+	if status["on_break"] != false {
+		t.Fatalf("expected on_break=false after scanning again, got %+v", status)
+	}
+
+	resp = authed(t, http.MethodPost, srv.URL+"/mobile/attendance/card-scan", token, cardScanRequest{Code: "CARD-DELAY"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("scanning a non-break code = %d, want 400 -- Delay/No Work are admin-applied only", resp.StatusCode)
+	}
+}
+
+// TestMobileAdminStatusCardSetListClearRequiresAdmin covers the
+// admin-applied half: a non-admin is refused, an admin can put a card on
+// someone, see it in the active list, and clear it.
+func TestMobileAdminStatusCardSetListClearRequiresAdmin(t *testing.T) {
+	s, db := attendanceEnv(t)
+	srv := newAdminTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	if resp := authed(t, http.MethodPost, srv.URL+"/mobile/admin/status-card", token, setStatusCardRequest{Username: "dave", Reason: lego.CardDelay}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin set: status=%d, want 403", resp.StatusCode)
+	}
+
+	asAdmin(t, "dave")
+	resp := authed(t, http.MethodPost, srv.URL+"/mobile/admin/status-card", token, setStatusCardRequest{Username: "alex", Reason: lego.CardNoWork, Note: "nothing queued"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set status card: status=%d", resp.StatusCode)
+	}
+
+	resp = authed(t, http.MethodGet, srv.URL+"/mobile/admin/status-cards", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status cards: status=%d", resp.StatusCode)
+	}
+	var rows []statusCardRow
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Username != "alex" || rows[0].Reason != lego.CardNoWork {
+		t.Fatalf("status cards list = %+v, want alex's no_work card", rows)
+	}
+
+	resp = authed(t, http.MethodPost, srv.URL+"/mobile/admin/status-card/clear", token, clearStatusCardRequest{Username: "alex"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear status card: status=%d", resp.StatusCode)
+	}
+	if c, err := db.ActiveStatusCard("alex"); err != nil || c != nil {
+		t.Fatalf("ActiveStatusCard after clearing = %+v, %v, want nil", c, err)
 	}
 }
 

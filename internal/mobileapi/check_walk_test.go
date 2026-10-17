@@ -74,10 +74,13 @@ func checkWalkEnv(t *testing.T) (*Server, *lego.DB) {
 func newCheckWalkTestServer(s *Server) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /mobile/next", s.withSession(s.handleNext))
+	mux.HandleFunc("GET /mobile/next/all", s.withSession(s.handleFull))
 	mux.HandleFunc("POST /mobile/confirm", s.withSession(s.handleConfirm))
 	mux.HandleFunc("POST /mobile/finish", s.withSession(s.handleFinish))
+	mux.HandleFunc("GET /mobile/bag-find", s.withSession(s.handleBagFind))
 	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
 	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
+	mux.HandleFunc("POST /mobile/request-set", s.withSession(s.handleRequestSet))
 	return httptest.NewServer(mux)
 }
 
@@ -203,6 +206,41 @@ func TestNextClampsAnOutOfRangePosition(t *testing.T) {
 	}
 }
 
+// TestFullReturnsEveryLineMatchingNextPositionByPosition is the regression
+// test for full offline mode's prefetch (GET /mobile/next/all): it must
+// return the exact same lines handleNext would give one at a time, in the
+// same order, so a client that caches this response and later falls back to
+// it while offline sees identical data to what the network call would have.
+func TestFullReturnsEveryLineMatchingNextPositionByPosition(t *testing.T) {
+	s, _ := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, s.legoDB)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mobile/next/all", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Lines []lineView `json:"lines"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || len(body.Lines) != 2 {
+		t.Fatalf("status=%d lines=%+v, want 2 lines", resp.StatusCode, body.Lines)
+	}
+	for i, want := range body.Lines {
+		_, got := getLine(t, srv, token, i)
+		if got.PartNum != want.PartNum || got.ColorName != want.ColorName || got.Position != want.Position {
+			t.Errorf("line %d: /next/all gave %+v, /next gave %+v, want matching", i, want, got)
+		}
+	}
+}
+
 func TestNextWithNoAssignedTicketSaysDone(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.AuditLogFile, filepath.Join(dir, "audit.log"))
@@ -265,6 +303,68 @@ func TestConfirmMissingSetsHaveBelowNeed(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&v)
 	if resp.StatusCode != http.StatusOK || v.Missing != 3 {
 		t.Fatalf("status = %d, v = %+v, want missing=3", resp.StatusCode, v)
+	}
+}
+
+// TestConfirmReportsTheWholeChecksRunningMissingAndExtraTotals is the mobile
+// half of the TUI's always-visible "MISSING N / EXTRA N" badge: lineView
+// carries the whole check's running totals, not just the current line's own,
+// so the app can show the same at-a-glance summary without adding it up
+// itself across every line.
+func TestConfirmReportsTheWholeChecksRunningMissingAndExtraTotals(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	_, v := postConfirm(t, srv, token, confirmRequest{Position: 0, Action: "missing", Count: 3})
+	if v.Missing != 3 || v.TotalMissing != 3 || v.TotalExtra != 0 {
+		t.Fatalf("after marking line 0 missing: %+v", v)
+	}
+
+	_, v = postConfirm(t, srv, token, confirmRequest{Position: 1, Action: "extra", Count: 2})
+	if v.Extra != 2 || v.TotalMissing != 3 || v.TotalExtra != 2 {
+		t.Fatalf("after also marking line 1 extra, totals should cover the whole check, not just this line: %+v", v)
+	}
+}
+
+// TestConfirmDamagedFlagsConditionWithoutChangingHaveOrMissing is roadmap
+// item 6: a condition flag, not a quantity -- have_all already marked this
+// line fully present, and marking 2 of them damaged must leave that alone.
+func TestConfirmDamagedFlagsConditionWithoutChangingHaveOrMissing(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mobile/confirm", jsonBody(t, confirmRequest{Position: 0, Action: "have_all"}))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("have_all: status = %d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/mobile/confirm", jsonBody(t, confirmRequest{Position: 0, Action: "damaged", Count: 2}))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var v lineView
+	_ = json.NewDecoder(resp.Body).Decode(&v)
+	if resp.StatusCode != http.StatusOK || v.Damaged != 2 || v.Have != v.Need || v.Missing != 0 {
+		t.Fatalf("status = %d, v = %+v, want damaged=2, have unchanged at need, missing=0", resp.StatusCode, v)
+	}
+
+	// Persisted — a fresh /next call sees the same state, not just the response.
+	_, again := getLine(t, srv, token, 0)
+	if again.Damaged != 2 {
+		t.Errorf("after confirming, a fresh /next shows damaged=%d — not persisted", again.Damaged)
 	}
 }
 

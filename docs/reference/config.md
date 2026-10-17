@@ -8,11 +8,13 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `LEGO_DB_PATH` | `/root/docker-server/wms/lego.db` | your LEGO collection and the offline catalog |
+| `LEGO_ATTACHMENTS_DIR` | next to `LEGO_DB_PATH` | proof scans/photos from `wms lego attach` (see [Reports](../guides/reports.md#paper-first-check-on-paper-enter-it-in-the-cli-later)) |
 | `PARTDB_DB_PATH` | `/root/docker-server/partdb/db/app.db` | Part-DB's SQLite file (read directly; writes go through its API) |
 | `PARTDB_API_URL` | `http://127.0.0.1:8081` | Part-DB's address for the REST API |
 | `MODERNWMS_CONTAINER` / `MODERNWMS_DB_PATH` | `modernwms` / `/app/wms.db` | how ModernWMS is reached (`docker exec`) |
 | `WMS_SETTINGS_FILE` | `/root/docker-server/wms/settings.json` | saved settings and API keys |
 | `TWOFA_FILE` | `/root/docker-server/wms/2fa.json` | 2FA secrets |
+| `LOGIN_LOCK_FILE` | `/root/docker-server/wms/login_lock.json` | persisted failed-login lockout (see [Access control](../guides/access-control.md#a-real-persisted-login-lockout)) |
 | `AUDIT_LOG_FILE` | `/root/tui_audit.log` | the hash-chained audit log |
 | `MODERNWMS_BACKUP_DIR` | `/root/backups/modernwms` | where backups go |
 | `WMS_IMAGE_DIR` | `/root/docker-server/wms/imgcache` | cached pictures |

@@ -272,13 +272,13 @@ func newLegoReportSetPartsCmd() *cobra.Command {
 }
 
 func newLegoReportHistoryCmd() *cobra.Command {
-	var outPath string
+	var outPath, checker string
 	var force bool
 	var limit int
 	cmd := &cobra.Command{
 		Use:     "history [set]",
 		Short:   "Past stock checks, newest first — for one set, or across the collection",
-		Example: "  wms lego report history\n  wms lego report history 75192 -o falcon-history.html",
+		Example: "  wms lego report history\n  wms lego report history 75192 -o falcon-history.html\n  wms lego report history --by dave",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -292,7 +292,7 @@ func newLegoReportHistoryCmd() *cobra.Command {
 			if len(args) == 1 {
 				set = args[0]
 			}
-			hist, err := db.CheckHistory(set, limit)
+			hist, err := db.CheckHistory(set, checker, limit)
 			if err != nil {
 				return err
 			}
@@ -330,6 +330,7 @@ func newLegoReportHistoryCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&outPath, "out", "o", "", "write a printable page instead of a terminal table")
 	cmd.Flags().BoolVar(&force, "force", false, "replace the output file if it exists")
 	cmd.Flags().IntVar(&limit, "limit", 50, "how many checks to include")
+	cmd.Flags().StringVar(&checker, "by", "", "only checks done by this checker (part of a username is enough)")
 	return cmd
 }
 
@@ -468,11 +469,11 @@ func newLegoReportStocktakeCmd() *cobra.Command {
 			}
 			defer db.Close()
 			for _, set := range args {
-				title, lines, err := db.StockSheet(cmd.Context(), rb, set)
+				title, lines, meta, err := db.StockSheet(cmd.Context(), rb, set)
 				if err != nil {
 					return err
 				}
-				body, err := lego.StockSheetHTML(title, lines)
+				body, err := lego.StockSheetHTML(title, lines, meta)
 				if err != nil {
 					return err
 				}

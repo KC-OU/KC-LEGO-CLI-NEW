@@ -1,6 +1,7 @@
 package uiapp
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -43,6 +44,44 @@ func retiringRows(app *App) ([]string, [][]string, []string) {
 	return []string{"Set", "Name", "Theme", "Retires", "Tracked"}, rows, keys
 }
 
+// checkHistoryRows is the TUI's "track down a check" screen: every finished
+// check across the whole collection, newest first, with the universal "/"
+// filter (see filter.go) doing the search -- type part of a set number, a
+// checker's username, a date, or a result ("complete"), and it narrows
+// instantly. No separate user picker needed: the filter already matches any
+// word against every column, "by" included, so finding one checker's checks
+// is just typing their name, not hunting for which row number they landed on.
+func checkHistoryRows(app *App) ([][]string, string, error) {
+	hist, err := app.legoDB.CheckHistory("", "", 200)
+	if err != nil {
+		return nil, "", err
+	}
+	rows := make([][]string, len(hist))
+	for i, c := range hist {
+		result := fmt.Sprintf("%d missing", c.Missing)
+		if c.Missing == 0 {
+			result = "COMPLETE"
+		}
+		rows[i] = []string{c.FinishedAt.Local().Format("2 Jan 2006 15:04"), c.SetNum, c.Kind, c.CheckedBy, strconv.Itoa(c.Pieces), strconv.Itoa(c.Have), result}
+	}
+	return rows, fmt.Sprintf("%d check(s) — / to search by set, checker, date or result", len(hist)), nil
+}
+
+func paperPendingRows(app *App) ([]string, [][]string, []string) {
+	list, err := app.legoDB.PendingPaperChecks()
+	if err != nil {
+		app.setMsg(err.Error(), true)
+		return nil, nil, nil
+	}
+	var rows [][]string
+	var keys []string
+	for _, c := range list {
+		rows = append(rows, []string{c.SetNum, c.Kind, c.CheckedBy, c.PaperCheckedAt.Local().Format("2 Jan 15:04")})
+		keys = append(keys, c.SetNum)
+	}
+	return []string{"Set", "Kind", "Checked by", "Paper done"}, rows, keys
+}
+
 func reportsHubScreen() screenModel {
 	return &menuScreen{
 		panelID: "REPORT",
@@ -57,6 +96,7 @@ func reportsHubScreen() screenModel {
 				{Key: "6", Label: "Order List", Go: func(app *App) { startExport(app, orderListReportJob()) }, Perm: "orders.view"},
 				{Key: "7", Label: "Archive: previously generated reports", Go: func(app *App) { app.goTo(scrReportsArchive) }, Perm: "lego.view"},
 				{Key: "8", Label: "Key cheat sheet: a printable page of every shortcut", Go: func(app *App) { startExport(app, cheatSheetJob()) }},
+				{Key: "9", Label: "Check History: track down a past check by set, checker or date", Go: func(app *App) { app.goTo(scrCheckHistory) }, Perm: "lego.view"},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -230,11 +270,11 @@ func stocktakeReportJob(set string) *exportJob {
 		Formats: []string{"checklist"},
 		Archive: true,
 		RawBuild: func(app *App) ([]byte, string, error) {
-			title, lines, err := app.legoDB.StockSheet(app.ctx(), app.rebrick, set)
+			title, lines, meta, err := app.legoDB.StockSheet(app.ctx(), app.rebrick, set)
 			if err != nil {
 				return nil, "", err
 			}
-			body, err := lego.StockSheetHTML(title, lines)
+			body, err := lego.StockSheetHTML(title, lines, meta)
 			return body, "html", err
 		}}
 }

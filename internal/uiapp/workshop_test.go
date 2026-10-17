@@ -29,6 +29,9 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := app.legoDB.SetBagPolicy("75192-1", 2, "off"); err != nil { // not what this test is about — see bag_code_screen_test.go for the bag gate itself
+		t.Fatal(err)
+	}
 	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	app.cur, app.stack = scrLegoHub, nil
 	startCheck(app, "75192-1", lego.CheckIntake)
@@ -47,7 +50,7 @@ func TestSetCheckMissingOrderReceiveAndLabel(t *testing.T) {
 	typeKeys(app, "e")
 	typeKeys(app, "3")
 	key(app, tea.KeyEnter) // 3 blue extra
-	if v = plain(app.View()); !strings.Contains(v, "INCOMPLETE — 2 missing") || !strings.Contains(v, "3 extra") {
+	if v = plain(app.View()); !strings.Contains(v, "INCOMPLETE — 2 missing") || !strings.Contains(v, "MISSING 2") || !strings.Contains(v, "EXTRA 3") {
 		t.Fatalf("after marking:\n%s", v)
 	}
 	// Scanner mode: a scan of a line that is already complete is refused.

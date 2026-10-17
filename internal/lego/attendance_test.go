@@ -3,6 +3,7 @@ package lego
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -446,6 +447,66 @@ func TestNoShowCandidatesIsOffUntilTheGateIsOn(t *testing.T) {
 	}
 }
 
+func TestOverlongBreakCandidatesFlagsOnlyBreaksPastTheLimit(t *testing.T) {
+	enableClockInGate(t)
+	db := attDB(t)
+
+	if err := db.SetRota("dave", today(), "", "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRota("sam", today(), "", "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClockIn("sam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.StartBreak("dave"); err != nil { // just started: under the limit
+		t.Fatal(err)
+	}
+	if err := db.StartBreak("sam"); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate sam's break start so it reads as 50 minutes old.
+	old := time.Now().Add(-50 * time.Minute).Format(time.RFC3339)
+	if _, err := db.Exec(`UPDATE clock_breaks SET start_at = ? WHERE clock_event_id =
+		(SELECT id FROM clock_events WHERE username = 'sam' AND clock_out_at = '')`, old); err != nil {
+		t.Fatal(err)
+	}
+
+	cands, err := db.OverlongBreakCandidates(45)
+	if err != nil || len(cands) != 1 || cands[0].Username != "sam" || cands[0].Minutes < 45 {
+		t.Fatalf("OverlongBreakCandidates(45) = %+v, %v, want just sam (~50 min)", cands, err)
+	}
+
+	// Once sam's break ends, it drops off the list.
+	if err := db.EndBreak("sam"); err != nil {
+		t.Fatal(err)
+	}
+	if cands, err := db.OverlongBreakCandidates(45); err != nil || len(cands) != 0 {
+		t.Fatalf("after ending the break: %+v, %v, want none", cands, err)
+	}
+}
+
+func TestOverlongBreakCandidatesIsOffUntilTheGateIsOn(t *testing.T) {
+	db := attDB(t) // gate NOT enabled
+	if _, err := db.ClockIn("dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.StartBreak("dave"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-90 * time.Minute).Format(time.RFC3339)
+	if _, err := db.Exec(`UPDATE clock_breaks SET start_at = ?`, old); err != nil {
+		t.Fatal(err)
+	}
+	if cands, err := db.OverlongBreakCandidates(45); err != nil || len(cands) != 0 {
+		t.Fatalf("gate off: %+v, %v, want none regardless of break length", cands, err)
+	}
+}
+
 func TestTeamSummaryHoursAndAccuracy(t *testing.T) {
 	db := attDB(t)
 	date := "2026-10-10"
@@ -479,6 +540,59 @@ func TestTeamSummaryHoursAndAccuracy(t *testing.T) {
 
 	if lines, err := db.TeamSummary("2026-10-11"); err != nil || len(lines) != 0 {
 		t.Fatalf("a day with no activity: %+v, %v, want none", lines, err)
+	}
+}
+
+func TestWeeklyTeamSummarySumsHoursAndAveragesAccuracyAcrossTheWeek(t *testing.T) {
+	db := attDB(t)
+	start := "2026-10-05" // a Monday
+
+	shift := func(username, date string, startHour, endHour int) {
+		t.Helper()
+		in, _ := time.Parse(time.RFC3339, fmt.Sprintf("%sT%02d:00:00Z", date, startHour))
+		out, _ := time.Parse(time.RFC3339, fmt.Sprintf("%sT%02d:00:00Z", date, endHour))
+		if _, err := db.Exec(`INSERT INTO clock_events (username, clock_in_at, clock_out_at) VALUES (?, ?, ?)`,
+			username, in.Format(time.RFC3339), out.Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// accuracyForDayIfAny's percentage is purely clamp(100+sum(delta), 0, 100)
+	// (internal/lego/attendance.go) -- pieces/missing are just records, not
+	// part of that calculation, so delta is the only column that matters here.
+	accuracy := func(username, role, date string, pct int) {
+		t.Helper()
+		at, _ := time.Parse(time.RFC3339, date+"T12:00:00Z")
+		if _, err := db.Exec(`INSERT INTO accuracy_log (username, role, day, kind, target, pieces, missing, delta, created_at)
+			VALUES (?, ?, ?, 'set_check', '1-1', 10, 0, ?, ?)`, username, role, date, pct-100, at.Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// dave: 4h Monday + 2h Wednesday = 6h total; checker accuracy only Monday (100%, no misses).
+	shift("dave", "2026-10-05", 9, 13)
+	shift("dave", "2026-10-07", 9, 11)
+	accuracy("dave", AccuracyChecker, "2026-10-05", 100)
+
+	// sam: 3h on the Sunday just before the week starts -- must NOT count.
+	shift("sam", "2026-10-04", 9, 12)
+
+	lines, err := db.WeeklyTeamSummary(start)
+	if err != nil || len(lines) != 1 {
+		t.Fatalf("WeeklyTeamSummary = %+v, %v, want just dave (sam's shift is outside the week)", lines, err)
+	}
+	l := lines[0]
+	if l.Username != "dave" || l.HoursWorked != 6 {
+		t.Errorf("expected dave, 6 hours (4+2) summed across the week, got %+v", l)
+	}
+	if l.CheckerAccuracy == nil || *l.CheckerAccuracy != 100 {
+		t.Errorf("expected checker accuracy 100%% (only day with activity), got %v", l.CheckerAccuracy)
+	}
+	if l.PickerAccuracy != nil {
+		t.Errorf("no picker activity all week: expected nil, got %v", *l.PickerAccuracy)
+	}
+
+	if lines, err := db.WeeklyTeamSummary("2026-11-02"); err != nil || len(lines) != 0 {
+		t.Fatalf("a week with no activity: %+v, %v, want none", lines, err)
 	}
 }
 

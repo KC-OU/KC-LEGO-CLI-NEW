@@ -95,10 +95,14 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /mobile/logout", s.withSession(s.handleLogout))
 	mux.HandleFunc("GET /mobile/me", s.withSession(s.handleMe))
 	mux.HandleFunc("GET /mobile/next", s.withSession(s.handleNext))
+	mux.HandleFunc("GET /mobile/next/all", s.withSession(s.handleFull))
 	mux.HandleFunc("POST /mobile/confirm", s.withSession(s.handleConfirm))
+	mux.HandleFunc("POST /mobile/scan-bag", s.withSession(s.handleScanBag))
+	mux.HandleFunc("GET /mobile/bag-find", s.withSession(s.handleBagFind))
 	mux.HandleFunc("POST /mobile/finish", s.withSession(s.handleFinish))
 	mux.HandleFunc("GET /mobile/messages", s.withSession(s.handleMessages))
 	mux.HandleFunc("POST /mobile/message-admin", s.withSession(s.handleMessageAdmin))
+	mux.HandleFunc("POST /mobile/request-set", s.withSession(s.handleRequestSet))
 	mux.HandleFunc("POST /mobile/flag-location", s.withSession(s.handleFlagLocation))
 	mux.HandleFunc("GET /mobile/history", s.withSession(s.handleHistory))
 	mux.HandleFunc("GET /mobile/attendance", s.withSession(s.handleAttendanceStatus))
@@ -106,9 +110,18 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /mobile/attendance/clock-out", s.withSession(s.handleClockOut))
 	mux.HandleFunc("POST /mobile/attendance/break-start", s.withSession(s.handleBreakStart))
 	mux.HandleFunc("POST /mobile/attendance/break-end", s.withSession(s.handleBreakEnd))
+	mux.HandleFunc("POST /mobile/attendance/card-scan", s.withSession(s.handleCardScan))
+	mux.HandleFunc("GET /mobile/admin/status-cards", s.withSession(s.handleAdminStatusCards))
+	mux.HandleFunc("POST /mobile/admin/status-card", s.withSession(s.handleAdminSetStatusCard))
+	mux.HandleFunc("POST /mobile/admin/status-card/clear", s.withSession(s.handleAdminClearStatusCard))
+	mux.HandleFunc("GET /mobile/labels/{set}", s.withSession(s.handleLabelPDF))
+	mux.HandleFunc("GET /mobile/print", s.handlePrintPage)
+	mux.HandleFunc("GET /mobile/print/raster", s.withSession(s.handlePrintRaster))
+	mux.HandleFunc("GET /mobile/print/bags", s.withSession(s.handlePrintBags))
 	mux.HandleFunc("GET /mobile/admin/rota", s.withSession(s.handleAdminRota))
 	mux.HandleFunc("GET /mobile/admin/users", s.withSession(s.handleAdminUsers))
 	mux.HandleFunc("GET /mobile/admin/tickets", s.withSession(s.handleAdminTickets))
+	mux.HandleFunc("GET /mobile/admin/check-history", s.withSession(s.handleAdminCheckHistory))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
 	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -235,9 +248,17 @@ func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
 // withSession resolves the Authorization: Bearer <token> header into a
 // lego.MobileSession and hands it to next — every route past login goes
 // through this, the same "one gate" shape botapi's permission check is.
+// Falls back to a ?token= query parameter when there's no header, for the
+// handful of routes meant to be opened directly rather than fetched (e.g.
+// Linking.openURL for a label PDF, which doesn't go through client.js's
+// Authorization header) — every other route still only ever sees the
+// header, since the client it talks to always sets one.
 func (s *Server) withSession(next func(w http.ResponseWriter, r *http.Request, sess lego.MobileSession)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return

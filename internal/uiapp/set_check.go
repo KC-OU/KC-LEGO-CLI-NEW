@@ -16,7 +16,6 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/labels"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 )
 
 // The parts check: a set's whole parts list, every line starting as "have all".
@@ -44,11 +43,16 @@ type checkState struct {
 	// through the job queue) just means that part of the line is omitted.
 	claimedAt       time.Time
 	estimateSeconds int64
-	// pendingBagCode is set by bagCodePromptScreen once the small bag's
-	// barcode has actually been scanned/typed, then consumed by finishCheck
-	// right after FinishCheck succeeds (c.ID isn't final before that for a
-	// check that's never been saved — see RecordCheckBag's call site below).
-	pendingBagCode string
+	// activeBagID/activeBagKind/activeBagCode is the bag instance last scanned
+	// in this session (see ScanBag, B key) — compared against each line's
+	// RequiredBagKind before a mark is applied. Empty means nothing scanned
+	// yet; marking still proceeds either way (a warning, never a hard block —
+	// see docs/guides/set-checks.md).
+	activeBagID                  int64
+	activeBagKind, activeBagCode string
+	// bagGatingOn is this set's BagGatingOn() at the moment the check was
+	// opened — read once here rather than on every keystroke's redraw.
+	bagGatingOn bool
 }
 
 type setCheckScreen struct {
@@ -59,6 +63,8 @@ type setCheckScreen struct {
 	prompt, input string // an open number prompt: "missing", "extra", "have"
 	scanner       bool
 	scanBuf       string
+	bagScanner    bool // B: scanning/typing a bag code, instead of a part (see bagScanKey)
+	bagScanBuf    string
 	flash         string
 	guided        bool // W: one line at a time with a "GO TO: <location>" banner, instead of the full table — see guidedBody
 }
@@ -89,7 +95,15 @@ func startCheck(app *App, setNum, kind string) {
 		name = s.Name
 	}
 	app.sortCheckLinesByLocation(c.Lines)
-	app.checking = &checkState{check: c, setName: name}
+	bagGatingOn := app.legoDB.GetSetState(setNum).BagGatingOn()
+	if bagGatingOn && c.ID == 0 {
+		// A bag instance needs a real check_id to attach to — save the draft
+		// now rather than waiting for the first explicit S, so scanning a bag
+		// works from the very first keystroke of a session, not just after
+		// the checker happens to save once.
+		_ = app.legoDB.SaveCheck(c)
+	}
+	app.checking = &checkState{check: c, setName: name, bagGatingOn: bagGatingOn}
 	if t, _ := app.legoDB.CurrentTicket(by); t != nil && t.Kind == lego.TicketCheck {
 		app.checking.claimedAt = t.ClaimedAt
 	}
@@ -144,6 +158,7 @@ func (s *setCheckScreen) Title() string   { return "Parts Check" }
 func (s *setCheckScreen) capturing() bool { return true } // every letter is a command here
 func (s *setCheckScreen) OnEnter(app *App) {
 	s.sel, s.top, s.filter, s.filtering, s.prompt, s.input, s.scanner, s.scanBuf, s.flash, s.guided = 0, 0, "", false, "", "", false, "", "", false
+	s.bagScanner, s.bagScanBuf = false, ""
 }
 func (s *setCheckScreen) FKeys() [][2]string {
 	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
@@ -162,20 +177,53 @@ func (s *setCheckScreen) visible(app *App) []int {
 	return out
 }
 
+// totalDamaged sums CheckLine.Damaged across a check -- kept separate from
+// lego.SetCheck.Totals() rather than widening that return signature for a
+// purely informational count every other caller of Totals() doesn't need.
+func totalDamaged(c *lego.SetCheck) int {
+	n := 0
+	for _, l := range c.Lines {
+		n += l.Damaged
+	}
+	return n
+}
+
+// prependNote adds a tag before whatever's already in a row's note column
+// (spare info, another tag), the same "optional · spare: ..." ordering the
+// note column has always built left to right.
+func prependNote(existing, addition string) string {
+	if existing == "" {
+		return addition
+	}
+	return addition + " · " + existing
+}
+
 func (s *setCheckScreen) rows(app *App) int {
 	h := app.height
 	if h <= 0 {
 		h = 25
 	}
-	return max(3, h-15)
+	return max(3, h-16) // -16, not -15: the missing/extra badge line added one more fixed row of chrome
 }
 
 // promptFoot is the "How many are missing: 3_" line shown while a number
 // prompt is open — shared by the table and guided bodies so the question
 // looks identical in either view.
 func (s *setCheckScreen) promptFoot(t ui.Theme) string {
-	return t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares"}[s.prompt], s.input)) +
+	return t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares", "damaged": "How many are damaged"}[s.prompt], s.input)) +
 		t.Muted.Render("   Enter ok · Esc cancel")
+}
+
+// missingExtraBadge is the prominent "how much is missing / extra right now"
+// summary shown at the top of both the table and guided-walk views -- always
+// visible, even at zero, so a checker never has to scan the whole list (or
+// guess, or chase someone else down to ask) to know where a check currently
+// stands. Missing is always t.Danger (red in most themes, matching every
+// other "incomplete" indicator in this app); extra is always t.Info (blue) --
+// the one new colour this adds, used nowhere else, so "blue = extra" reads
+// the same wherever a check's progress is shown.
+func missingExtraBadge(t ui.Theme, missing, extra int) string {
+	return t.Danger.Render(fmt.Sprintf(" MISSING %d ", missing)) + "  " + t.Info.Render(fmt.Sprintf(" EXTRA %d ", extra))
 }
 
 func (s *setCheckScreen) Body(app *App) string {
@@ -193,14 +241,14 @@ func (s *setCheckScreen) Body(app *App) string {
 	if c.Kind == lego.CheckRecount {
 		kind = "Stock check"
 	}
-	head := t.Strong.Render(fmt.Sprintf("%s: %s %s", kind, c.SetNum, st.setName))
+	head := t.Strong.Render(fmt.Sprintf("%s: %s %s", kind, c.SetNum, st.setName)) + "\n" + missingExtraBadge(t, missing, extra)
 	status := t.Success.Render("COMPLETE")
 	if missing > 0 {
 		status = t.Danger.Render(fmt.Sprintf("INCOMPLETE — %d missing (%d lines)", missing, missLines))
 	}
 	sum := fmt.Sprintf("%d lines · %d pieces · have %d · ", len(c.Lines), pieces, have) + status
-	if extra > 0 {
-		sum += t.Accent.Render(fmt.Sprintf(" · %d extra", extra))
+	if damaged := totalDamaged(c); damaged > 0 {
+		sum += t.Warning.Render(fmt.Sprintf(" · %d damaged", damaged))
 	}
 	if n := len(st.spares); n > 0 {
 		sum += t.Warning.Render(fmt.Sprintf(" · %d line(s) have spares elsewhere", n))
@@ -211,6 +259,13 @@ func (s *setCheckScreen) Body(app *App) string {
 			elapsed += " (usually ~" + roughDuration(time.Duration(st.estimateSeconds)*time.Second) + ")"
 		}
 		sum += t.Muted.Render(elapsed)
+	}
+	if st.bagGatingOn {
+		if st.activeBagKind == "" {
+			sum += "\n" + t.Warning.Render("No bag scanned — B to scan one")
+		} else {
+			sum += "\n" + t.Success.Render(fmt.Sprintf("Bag: %s (%s)", st.activeBagCode, st.activeBagKind))
+		}
 	}
 	vis := s.visible(app)
 	s.sel = min(s.sel, max(0, len(vis)-1))
@@ -232,18 +287,17 @@ func (s *setCheckScreen) Body(app *App) string {
 		}
 		miss, ex := "", ""
 		if m := l.Missing(); m > 0 {
-			miss = "M" + strconv.Itoa(m)
+			miss = t.Danger.Render("M" + strconv.Itoa(m))
 		}
 		if l.Extra > 0 {
-			ex = "E" + strconv.Itoa(l.Extra)
+			ex = t.Info.Render("E" + strconv.Itoa(l.Extra))
 		}
 		note := st.spares[i]
+		if l.Damaged > 0 {
+			note = prependNote(note, fmt.Sprintf("D%d damaged", l.Damaged))
+		}
 		if l.Optional {
-			if note != "" {
-				note = "optional · " + note
-			} else {
-				note = "optional"
-			}
+			note = prependNote(note, "optional")
 		}
 		rows = append(rows, []string{mark, l.PartNum, orDash(l.ColorName), l.PartName, strconv.Itoa(l.Need), strconv.Itoa(l.Have), miss, ex, note})
 	}
@@ -260,9 +314,12 @@ func (s *setCheckScreen) Body(app *App) string {
 		foot = t.Accent.Render("Filter: "+s.filter+"_") + t.Muted.Render("   part, colour, name, category, 'missing' or 'extra' · Enter done")
 	case s.scanner:
 		foot = t.Accent.Render("SCANNER MODE — scan or type a part number + Enter adds one: "+s.scanBuf+"_") + t.Muted.Render("   Z/Esc leaves")
+	case s.bagScanner:
+		foot = t.Accent.Render("SCAN BAG — scan or type the bag's own code + Enter: "+s.bagScanBuf+"_") + t.Muted.Render("   B/Esc leaves")
 	default:
-		foot = t.Muted.Render("H have all · M missing · E extra · 0-9 count · A all have · T take spare") + "\n" +
-			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional · W guided walk · P print barcode sheet")
+		foot = t.Muted.Render("H have all · M missing · E extra · D damaged · 0-9 count · A all have · T take spare") + "\n" +
+			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional · W guided walk · P barcode sheet"+
+				map[bool]string{true: " · B scan bag", false: ""}[st.bagGatingOn])
 	}
 	if s.flash != "" {
 		foot = s.flash + "\n" + foot
@@ -297,13 +354,20 @@ func (s *setCheckScreen) guidedBody(app *App) string {
 		goTo = "unknown — check manually"
 	}
 
-	head := t.Strong.Render(fmt.Sprintf("Guided walk: %s %s", c.SetNum, st.setName))
+	_, _, totMissing, totExtra, _ := c.Totals()
+	head := t.Strong.Render(fmt.Sprintf("Guided walk: %s %s", c.SetNum, st.setName)) + "\n" + missingExtraBadge(t, totMissing, totExtra)
 	progress := t.Muted.Render(fmt.Sprintf("Item %d of %d", s.sel+1, len(vis)))
 	banner := t.Accent.Render("GO TO: " + goTo)
 
 	miss := ""
 	if m := l.Missing(); m > 0 {
 		miss = t.Danger.Render(fmt.Sprintf("  MISSING %d", m))
+	}
+	if l.Extra > 0 {
+		miss += t.Info.Render(fmt.Sprintf("  EXTRA %d", l.Extra))
+	}
+	if l.Damaged > 0 {
+		miss += t.Warning.Render(fmt.Sprintf("  DAMAGED %d", l.Damaged))
 	}
 	colorLabel := orDash(l.ColorName)
 	if sw := colorSwatch(app, l.ColorID); sw != "" {
@@ -314,7 +378,7 @@ func (s *setCheckScreen) guidedBody(app *App) string {
 		item += "\n" + t.Warning.Render(note)
 	}
 	if app.session != nil && picturesEnabled(app.session.Username) {
-		if art, caption := picture(app, img.PartURLs(l.PartNum, l.ColorID, nil)); art != "" {
+		if art, caption := picture(app, app.legoDB.PartImageURLs(l.PartNum, l.ColorID)); art != "" {
 			item += "\n\n" + art
 		} else if caption != "" {
 			item += "\n\n" + t.Muted.Render(caption)
@@ -336,7 +400,7 @@ func (s *setCheckScreen) guidedBody(app *App) string {
 	case s.prompt != "":
 		foot = s.promptFoot(t)
 	default:
-		foot = t.Muted.Render("H have all · M missing · E extra · 0-9 count · ↑/↓ step") + "\n" +
+		foot = t.Muted.Render("H have all · M missing · E extra · D damaged · 0-9 count · ↑/↓ step") + "\n" +
 			t.Muted.Render("T take spare · U undo · F finish · W table view · P barcode sheet · Esc leave")
 	}
 	if s.flash != "" {
@@ -399,6 +463,9 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	case s.scanner:
 		s.scanKey(app, msg)
 		return
+	case s.bagScanner:
+		s.bagScanKey(app, msg)
+		return
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -430,12 +497,15 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 	case r >= '0' && r <= '9' && cur >= 0:
 		s.prompt, s.input = "have", string(r)
 	case (r == 'h' || r == 'H') && cur >= 0:
+		s.flash = app.bagWarningFor(st, cur, "have")
 		st.set(cur, func(l *lego.CheckLine) { l.Have = l.Need })
 		s.sel = min(len(vis)-1, s.sel+1)
 	case (r == 'm' || r == 'M') && cur >= 0:
 		s.prompt, s.input = "missing", ""
 	case (r == 'e' || r == 'E') && cur >= 0:
 		s.prompt, s.input = "extra", ""
+	case (r == 'd' || r == 'D') && cur >= 0:
+		s.prompt, s.input = "damaged", ""
 	case (r == 't' || r == 'T') && cur >= 0:
 		if st.spares[cur] == "" {
 			app.setMsg("No spares of this part anywhere.", true)
@@ -466,6 +536,8 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		s.filtering = true
 	case r == 'z' || r == 'Z':
 		s.scanner, s.scanBuf = true, ""
+	case (r == 'b' || r == 'B') && st.bagGatingOn:
+		s.bagScanner, s.bagScanBuf = true, ""
 	case r == 'w' || r == 'W':
 		s.guided = !s.guided
 	case r == 'p' || r == 'P':
@@ -562,10 +634,23 @@ func (s *setCheckScreen) promptKey(app *App, msg tea.KeyMsg, cur int) {
 	}
 	switch p {
 	case "missing":
+		s.flash = app.bagWarningFor(st, cur, "have")
 		st.set(cur, func(l *lego.CheckLine) { l.Have = max(0, l.Need-n) })
 	case "extra":
+		s.flash = app.bagWarningFor(st, cur, "extra")
 		st.set(cur, func(l *lego.CheckLine) { l.Extra = n })
+		if n > 0 {
+			// The first extra this session: the extra bag isn't printed up
+			// front (a checker doesn't know ahead of time if they'll find
+			// one) — create its instance now, so it exists to scan/print.
+			if err := ensureCheckSaved(app, st); err == nil {
+				_, _ = app.legoDB.EnsureCheckBag(st.check.ID, st.check.SetNum, lego.BagExtra, app.userName())
+			}
+		}
+	case "damaged":
+		st.set(cur, func(l *lego.CheckLine) { l.Damaged = n })
 	case "have":
+		s.flash = app.bagWarningFor(st, cur, "have")
 		st.set(cur, func(l *lego.CheckLine) {
 			if n > l.Need { // counted more than the set needs: the rest are extras
 				l.Have, l.Extra = l.Need, n-l.Need
@@ -636,6 +721,91 @@ func (s *setCheckScreen) scanKey(app *App, msg tea.KeyMsg) {
 	s.flash = "\a" + app.theme.Danger.Render("✗ "+code+" is not in this set (or that line is already complete)")
 }
 
+// bagScanKey handles bag-scan mode (B): characters build a code, Enter resolves
+// it against this check (finding or registering the matching bag instance) and
+// makes it the active bag for every mark that follows, until a different one is
+// scanned. Never blocks checking — if gating is off, or nothing's scanned, marks
+// just carry a warning (see bagWarningFor) instead of refusing outright.
+func (s *setCheckScreen) bagScanKey(app *App, msg tea.KeyMsg) {
+	st := app.checking
+	switch msg.Type {
+	case tea.KeyEsc:
+		s.bagScanner = false
+		return
+	case tea.KeyBackspace:
+		if s.bagScanBuf != "" {
+			s.bagScanBuf = s.bagScanBuf[:len(s.bagScanBuf)-1]
+		}
+		return
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 && (msg.Runes[0] == 'b' || msg.Runes[0] == 'B') && s.bagScanBuf == "" {
+			s.bagScanner = false
+			return
+		}
+		s.bagScanBuf += string(msg.Runes)
+		return
+	case tea.KeyEnter:
+	default:
+		return
+	}
+	code := strings.TrimSpace(s.bagScanBuf)
+	s.bagScanBuf = ""
+	if code == "" {
+		return
+	}
+	if err := ensureCheckSaved(app, st); err != nil {
+		s.flash = "\a" + app.theme.Danger.Render("✗ "+err.Error())
+		return
+	}
+	res, err := app.legoDB.ScanBag(st.check.ID, st.check.SetNum, code)
+	if err != nil {
+		s.flash = "\a" + app.theme.Danger.Render("✗ "+err.Error())
+		return
+	}
+	switch {
+	case res.Bag != nil:
+		st.activeBagID, st.activeBagKind, st.activeBagCode = res.Bag.ID, res.Bag.BagKindKey, res.Bag.Code
+		s.flash = app.theme.Success.Render(fmt.Sprintf("✓ %s bag scanned (%s)", res.Bag.BagKindKey, res.Bag.Code))
+		s.bagScanner = false
+	case res.OtherSet != "":
+		s.flash = "\a" + app.theme.Danger.Render(fmt.Sprintf("✗ %s is a bag for set %s, not this one — scan a different bag ID label", code, res.OtherSet))
+	default:
+		s.flash = "\a" + app.theme.Danger.Render("✗ unknown bag code: "+code)
+	}
+}
+
+// ensureCheckSaved gives a never-saved draft a real ID — bag instances need
+// one to attach to (see EnsureCheckBag/ScanBag), and a check opened before
+// the eager save in startCheck (or resumed oddly) might not have one yet.
+func ensureCheckSaved(app *App, st *checkState) error {
+	if st.check.ID != 0 {
+		return nil
+	}
+	return app.legoDB.SaveCheck(st.check)
+}
+
+// bagWarningFor is a flash warning (never a block) when the actively scanned
+// bag doesn't match what line i needs for action — "" when it matches, gating
+// is off for this set, or nothing's scanned yet and the part needs no bag at
+// all (a kind-less line, which shouldn't happen but fails open rather than
+// nagging incorrectly).
+func (app *App) bagWarningFor(st *checkState, i int, action string) string {
+	if !st.bagGatingOn {
+		return ""
+	}
+	k, err := app.legoDB.RequiredBagKind(st.check.Lines[i], action)
+	if err != nil || k == nil {
+		return ""
+	}
+	if st.activeBagKind == "" {
+		return app.theme.Warning.Render(fmt.Sprintf("⚠ no bag scanned — this part needs the %s bag (B to scan)", k.Name))
+	}
+	if st.activeBagKind != k.Key {
+		return app.theme.Warning.Render(fmt.Sprintf("⚠ wrong bag — this part needs the %s bag, not %s. Scan a different bag ID label.", k.Name, st.activeBagCode))
+	}
+	return ""
+}
+
 func (st *checkState) set(i int, f func(l *lego.CheckLine)) {
 	st.undo = append(st.undo, st.check.Lines[i])
 	st.undoIdx = append(st.undoIdx, i)
@@ -652,31 +822,34 @@ func (st *checkState) undoLast() {
 	}
 }
 
-// scrBagCodePrompt interrupts F (finish) once, the first time a check with
-// any small-bag line reaches it with no bag code confirmed yet — "the worker
-// types or scans the small bag's own barcode/bag number to confirm... which
-// physical bag goes with which set", not just a printed label. Stores the
-// code on checkState rather than writing it immediately: the check may not
-// have a real ID yet (never saved before), which FinishCheck's own save
-// resolves — see finishCheck's RecordCheckBag call, after that succeeds.
-const scrBagCodePrompt = "bag_code_prompt"
+// scrBagsNeeded interrupts F (finish) while any bag this check actually needs
+// (see DB.RequiredBagKinds/UnscannedRequiredBags) hasn't been scanned in yet —
+// "a worker types or scans a bag's own barcode/number to confirm... which
+// physical bag goes with which set", not just a printed label. Loops: scanning
+// one bag per submit, until finishCheck finds nothing left unscanned.
+const scrBagsNeeded = "bags_needed"
 
-func bagCodePromptScreen() screenModel {
+func bagsNeededScreen() screenModel {
 	return &formScreen{
-		panelID: "BAGCODE",
-		title:   "Small Bag Barcode",
+		panelID: "BAGNEED",
+		title:   "Bag Not Yet Scanned",
 		preamble: func(app *App) string {
 			if app.checking == nil {
 				return ""
 			}
-			n := len(lego.SmallBagLines(app.checking.check))
-			return app.theme.Muted.Render(fmt.Sprintf("%d small-bag part(s) in this set. Scan or type the small bag's own barcode/number before finishing.", n))
+			missing, _ := app.legoDB.UnscannedRequiredBags(app.checking.check)
+			names := make([]string, len(missing))
+			for i, k := range missing {
+				names[i] = k.Name
+			}
+			return app.theme.Muted.Render("Still need: " + strings.Join(names, ", ") + ". Scan or type a bag's code to confirm it before finishing.")
 		},
 		build: func(app *App) []ui.Field {
-			return []ui.Field{{Label: "Bag barcode/number"}}
+			return []ui.Field{{Label: "Bag code"}}
 		},
 		submit: func(app *App, values []string) {
-			if app.checking == nil {
+			st := app.checking
+			if st == nil {
 				app.onBack()
 				return
 			}
@@ -685,9 +858,25 @@ func bagCodePromptScreen() screenModel {
 				app.setMsg("A bag code is required.", true)
 				return
 			}
-			app.checking.pendingBagCode = code
-			app.onBack()
-			finishCheck(app)
+			if err := ensureCheckSaved(app, st); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			res, err := app.legoDB.ScanBag(st.check.ID, st.check.SetNum, code)
+			if err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			switch {
+			case res.Bag != nil:
+				st.activeBagID, st.activeBagKind, st.activeBagCode = res.Bag.ID, res.Bag.BagKindKey, res.Bag.Code
+				app.onBack()
+				finishCheck(app)
+			case res.OtherSet != "":
+				app.setMsg(fmt.Sprintf("%s is a bag for set %s, not this one.", code, res.OtherSet), true)
+			default:
+				app.setMsg("Unknown bag code: "+code, true)
+			}
 		},
 	}
 }
@@ -704,9 +893,9 @@ func finishCheck(app *App) {
 		return
 	}
 	c := st.check
-	if small := lego.SmallBagLines(c); len(small) > 0 && st.pendingBagCode == "" {
-		if existing, _ := app.legoDB.CheckBagCode(c.ID); existing == "" {
-			app.goTo(scrBagCodePrompt)
+	if st.bagGatingOn {
+		if missing, err := app.legoDB.UnscannedRequiredBags(c); err == nil && len(missing) > 0 {
+			app.goTo(scrBagsNeeded)
 			return
 		}
 	}
@@ -714,10 +903,6 @@ func finishCheck(app *App) {
 	if err != nil {
 		app.setMsg("Could not finish: "+err.Error(), true)
 		return
-	}
-	if st.pendingBagCode != "" {
-		_ = app.legoDB.RecordCheckBag(c.ID, st.pendingBagCode, app.userName())
-		st.pendingBagCode = ""
 	}
 	pieces, _, missing, extra, _ := c.Totals()
 	user, role := c.CheckedBy, ""

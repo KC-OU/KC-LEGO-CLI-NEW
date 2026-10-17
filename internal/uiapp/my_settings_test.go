@@ -78,3 +78,34 @@ func TestMessageAdminRequiresABody(t *testing.T) {
 		t.Errorf("nothing should be logged on refusal, got %+v", evs)
 	}
 }
+
+// TestRequestSetLogsAnAdminEvent covers "Request a Set": a picker/checker
+// spotting a set worth owning, with nowhere to add it themselves.
+func TestRequestSetLogsAnAdminEvent(t *testing.T) {
+	app := newTestApp(t)
+	app.goTo(scrRequestSet)
+	app.screens[scrRequestSet].(*formScreen).submit(app, []string{"75192 Millennium Falcon", "UCS, been wanting this one for ages"})
+
+	evs, err := app.legoDB.AdminEvents(10)
+	if err != nil || len(evs) != 1 || evs[0].Kind != lego.EventSetRequest {
+		t.Fatalf("AdminEvents = %+v, %v, want one set_request event", evs, err)
+	}
+	if !strings.Contains(evs[0].Detail, "75192 Millennium Falcon") || !strings.Contains(evs[0].Detail, "UCS") {
+		t.Errorf("detail = %q, want the set and the note", evs[0].Detail)
+	}
+	if !auditHas(t, "SET_REQUESTED") {
+		t.Error("expected an audit log entry")
+	}
+}
+
+func TestRequestSetRequiresASet(t *testing.T) {
+	app := newTestApp(t)
+	app.goTo(scrRequestSet)
+	app.screens[scrRequestSet].(*formScreen).submit(app, []string{"", "no set number given"})
+	if !app.messageErr {
+		t.Error("a blank set should be refused")
+	}
+	if evs, _ := app.legoDB.AdminEvents(10); len(evs) != 0 {
+		t.Errorf("nothing should be logged on refusal, got %+v", evs)
+	}
+}

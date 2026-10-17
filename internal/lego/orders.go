@@ -26,7 +26,11 @@ type Order struct {
 	Status                                      string
 	CreatedAt, OrderedAt, ShippedAt, ReceivedAt string
 	Note, CreatedBy                             string
-	Lines                                       []OrderLine
+	// LastPosition is the furthest line a mobile client's confirm flow has
+	// reached (see AdvanceOrderPosition) -- the Order counterpart of
+	// SetCheck.LastPosition.
+	LastPosition int
+	Lines        []OrderLine
 }
 
 type OrderLine struct {
@@ -102,9 +106,9 @@ func (d *DB) SetLinePrice(lineID int64, price float64) error {
 // GetOrder loads an order with its lines.
 func (d *DB) GetOrder(id int64) (*Order, error) {
 	o := &Order{ID: id}
-	if err := d.QueryRow(`SELECT supplier_kind, supplier, order_no, invoice_no, tracking_no, carrier, currency, shipping, status, created_at, ordered_at, shipped_at, received_at, note, created_by
+	if err := d.QueryRow(`SELECT supplier_kind, supplier, order_no, invoice_no, tracking_no, carrier, currency, shipping, status, created_at, ordered_at, shipped_at, received_at, note, created_by, last_position
 		FROM orders WHERE id = ?`, id).Scan(&o.SupplierKind, &o.Supplier, &o.OrderNo, &o.InvoiceNo, &o.TrackingNo, &o.Carrier, &o.Currency, &o.Shipping, &o.Status,
-		&o.CreatedAt, &o.OrderedAt, &o.ShippedAt, &o.ReceivedAt, &o.Note, &o.CreatedBy); err != nil {
+		&o.CreatedAt, &o.OrderedAt, &o.ShippedAt, &o.ReceivedAt, &o.Note, &o.CreatedBy, &o.LastPosition); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no order #%d", id)
 		}
@@ -193,6 +197,14 @@ func (d *DB) SetOrderStatus(id int64, status string) (completed []string, err er
 	}
 	_, err = d.Exec(q, status, id)
 	return completed, err
+}
+
+// AdvanceOrderPosition is ReceiveLine/UnreceiveLine's counterpart to
+// AdvanceCheckPosition — see its doc comment; same forward-only MAX, same
+// "a different device resumes here" purpose.
+func (d *DB) AdvanceOrderPosition(orderID int64, pos int) error {
+	_, err := d.Exec(`UPDATE orders SET last_position = MAX(last_position, ?) WHERE id = ?`, pos, orderID)
+	return err
 }
 
 // ReceiveLine books qty of an order line as arrived: into its set (the set's last

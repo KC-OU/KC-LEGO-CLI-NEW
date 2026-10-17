@@ -118,6 +118,43 @@ func (d *DB) AllOpenTickets() ([]Ticket, error) {
 	return scanTickets(rows)
 }
 
+// IdleTicketCandidate is one claimed ticket with no sign of life for a
+// while — still claimed, not done, and claimed_at is more than idleMinutes
+// in the past.
+type IdleTicketCandidate struct {
+	Ticket
+	IdleMinutes int
+}
+
+// IdleTicketCandidates is the supervisor idle-nudge: "someone's been
+// sitting on this a while" — a heads-up, not an automatic Force Off (that's
+// still a deliberate admin action, see ForceOffTicket). Unlike NoShow/
+// OverlongBreakCandidates, this is never gated behind config.RequireClockIn
+// — claiming and working a ticket happens whether or not attendance
+// tracking is turned on, so idling is a ticket-queue concern, not an
+// attendance one.
+func (d *DB) IdleTicketCandidates(idleMinutes int) ([]IdleTicketCandidate, error) {
+	rows, err := d.Query(`SELECT id, kind, target, label, assigned_to, status, priority, note, token, created_by, created_at, claimed_at, done_at
+		FROM job_tickets WHERE status = ? AND claimed_at != ''`, TicketClaimed)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := scanTickets(rows)
+	if err != nil {
+		return nil, err
+	}
+	var out []IdleTicketCandidate
+	now := time.Now()
+	for _, t := range ts {
+		mins := int(now.Sub(t.ClaimedAt).Minutes())
+		if mins < idleMinutes {
+			continue
+		}
+		out = append(out, IdleTicketCandidate{Ticket: t, IdleMinutes: mins})
+	}
+	return out, nil
+}
+
 // TicketHistory is forUser's own past finished tickets, most recent first —
 // the check/pick history screen's data. Deliberately just the ticket
 // itself (what, when, how long): like EstimatePace, there's no reliable
@@ -171,7 +208,10 @@ func (d *DB) ClaimTicket(id int64, by string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New("that ticket isn't open to claim anymore")
 	}
-	return nil
+	// Claiming work is itself evidence that neither "no work available" nor
+	// a delay is still true (see status_cards.go) -- auto-clear rather than
+	// leave a stale card suppressing an alert that should fire again later.
+	return d.ClearStatusCard(by, by)
 }
 
 // TicketPace is how long tickets of a kind have recently taken, claim to

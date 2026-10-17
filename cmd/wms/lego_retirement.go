@@ -31,7 +31,8 @@ func newLegoRetirementRefreshCmd() *cobra.Command {
 		Long: "This is someone's personal public spreadsheet, not an official API: a failed fetch changes nothing " +
 			"(whatever was imported last stays in place) — see LEGO_RETIREMENT_SHEET_URL, or `wms lego retirement import` " +
 			"if the live sheet is ever down, moved or restructured.",
-		Args: cobra.NoArgs,
+		Example: "  wms lego retirement refresh\n  wms lego retirement refresh --url https://example.com/retirements.csv",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()

@@ -252,6 +252,34 @@ func TestDetailPagesFitAnEightyByTwentyFiveTelnetWindow(t *testing.T) {
 	}
 }
 
+// TestPictureBoxScalesSmoothlyNotInFixedTiers is the direct test for the
+// granularity fix: a window just short of an old hard threshold (85x28, say
+// -- plausibly a tablet's browser terminal) used to snap all the way down
+// to the smallest box even though it has real room to spare. The known
+// anchor points (the 80x24 floor every client gets, including one that
+// never reports a size at all, and the old top tier at 100x40) must still
+// land exactly where they always did.
+func TestPictureBoxScalesSmoothlyNotInFixedTiers(t *testing.T) {
+	app := detailApp(t)
+	cases := []struct {
+		w, h               int
+		wantCols, wantRows int
+	}{
+		{80, 24, 24, 10},  // the floor -- unchanged
+		{85, 28, 29, 12},  // in-between: used to incorrectly snap to the floor
+		{90, 30, 34, 13},  // the old middle tier's own point
+		{100, 40, 44, 18}, // the old top tier -- unchanged
+		{200, 60, 70, 28}, // a huge window: capped, not unbounded
+	}
+	for _, c := range cases {
+		app.Update(tea.WindowSizeMsg{Width: c.w, Height: c.h})
+		cols, rows := pictureBox(app)
+		if cols != c.wantCols || rows != c.wantRows {
+			t.Errorf("pictureBox at %dx%d = (%d,%d), want (%d,%d)", c.w, c.h, cols, rows, c.wantCols, c.wantRows)
+		}
+	}
+}
+
 func TestAPartNumberWithADashIsStillFoundAsAPart(t *testing.T) {
 	app := detailApp(t)
 	if _, err := app.legoDB.Exec(`INSERT INTO cat_parts (part_num, name, part_cat_id) VALUES ('x-01', 'Dashed part', 11)`); err != nil {

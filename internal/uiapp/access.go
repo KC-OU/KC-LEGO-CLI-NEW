@@ -224,8 +224,12 @@ var screenPerm = map[string]string{
 	scrWorkshop:    "lego.view", scrCompletion: "lego.view", scrSetMissing: "lego.view", scrShopLinks: "lego.view",
 	scrOrders: "orders.view", scrOrderLines: "orders.view", scrOrderEdit: "orders.manage", scrLinePrice: "orders.manage",
 	scrLineReceive: "orders.manage", scrSpend: "orders.view", scrLabels: "labels.print", scrLabelsAsk: "labels.print",
-	scrSetInfo: "lego.edit", scrCheckAsk: "sets.check", scrNotify: "access.manage", scrNotifyRoute: "access.manage",
-	scrReports: "lego.view", scrReportsSet: "lego.view", scrRetiring: "lego.view", scrReportsStocktake: "lego.view", scrReportsArchive: "lego.view",
+	scrSetInfo: "lego.edit", scrSetElementID: "sets.check", scrCheckAsk: "sets.check", scrNotify: "access.manage", scrNotifyRoute: "access.manage",
+	scrReports: "lego.view", scrReportsSet: "lego.view", scrRetiring: "lego.view", scrReportsStocktake: "lego.view", scrReportsArchive: "lego.view", scrPaperPending: "lego.view",
+	scrCheckHistory: "lego.view",
+	scrKanbanBoard:  "", scrKanbanNoteAdd: "", // reached only via the picker/checker hub, same as scrCurrentJob
+	scrKanbanAdmin: "", scrKanbanBoardAll: "", // adminGated handles the real enforcement, same as scrAccuracyWho
+	scrKanbanBacklog: "lego.view",
 }
 
 // mayOpen reports whether the user may open screen id (unlisted screens are

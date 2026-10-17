@@ -22,6 +22,7 @@ const (
 	scrMyRebrickEdit  = "my_rebrickable_key_edit"
 	scrFeatureRequest = "feature_request"
 	scrMessageAdmin   = "message_admin"
+	scrRequestSet     = "request_set"
 )
 
 func mySettingsScreen() screenModel {
@@ -36,6 +37,7 @@ func mySettingsScreen() screenModel {
 				{Key: "4", Label: "My Exports", Go: func(app *App) { app.goTo(scrMyExports) }, Perm: "exports.download"},
 				{Key: "5", Label: "Request a feature or improvement", Go: func(app *App) { app.goTo(scrFeatureRequest) }},
 				{Key: "6", Label: "Message an admin", Go: func(app *App) { app.goTo(scrMessageAdmin) }},
+				{Key: "9", Label: "Request a set for the collection", Go: func(app *App) { app.goTo(scrRequestSet) }},
 				{Key: "7", Label: "Show/hide My Accuracy on my hub menu", Go: func(app *App) { app.goTo(scrMyAccuracyVis) }},
 				{Key: "8", Label: "Show/hide pictures while checking or picking", Go: func(app *App) { app.goTo(scrMyPictures) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
@@ -122,6 +124,40 @@ func messageAdminScreen() screenModel {
 			detail := "to admins: " + body
 			logAdminNote(app, lego.EventMessage, "MESSAGE_TO_ADMIN", detail, fmt.Sprintf("%s: %s", app.userName(), body))
 			app.setMsg("Sent to admins.", false)
+			app.onBack()
+		},
+	}
+}
+
+// ---- Request a set for the collection ----
+//
+// A picker or checker spotting a set worth owning, with nowhere to act on it
+// themselves (adding a set is lego.edit, admin territory) -- same shape as
+// Request a Feature: tell an admin, it lands in Recent Activity, nothing
+// silently lost.
+
+func requestSetScreen() screenModel {
+	return &formScreen{
+		panelID: "SETREQ",
+		title:   "Request a Set",
+		preamble: func(app *App) string {
+			return app.theme.Muted.Render("Spotted a set worth adding to the collection? Tell an admin.")
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Set number and/or name"}, {Label: "Why, or a link (optional)"}}
+		},
+		submit: func(app *App, v []string) {
+			set, why := strings.TrimSpace(v[0]), strings.TrimSpace(v[1])
+			if set == "" {
+				app.setMsg("Enter a set number and/or name.", true)
+				return
+			}
+			full := set
+			if why != "" {
+				full += ": " + why
+			}
+			logAdminNote(app, lego.EventSetRequest, "SET_REQUESTED", full, fmt.Sprintf("%s requested a set: %s", app.userName(), full))
+			app.setMsg("Sent — an admin will see it in Recent Activity.", false)
 			app.onBack()
 		},
 	}

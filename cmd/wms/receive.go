@@ -15,9 +15,10 @@ import (
 func newReceiveCmd() *cobra.Command {
 	var as string
 	cmd := &cobra.Command{
-		Use:   "receive <part-name-or-code-or-id> <quantity>",
-		Short: "Receive stock instantly via an ASN ticket, no login/menu needed",
-		Args:  cobra.ExactArgs(2),
+		Use:     "receive <part-name-or-code-or-id> <quantity>",
+		Short:   "Receive stock instantly via an ASN ticket, no login/menu needed",
+		Example: "  wms receive 3001-red 50\n  wms receive 3001-red 50 --as dave",
+		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t := ui.New()
 			qty, err := strconv.Atoi(args[1])

@@ -71,6 +71,9 @@ func TestFinishCheckWarnsWhenMissingWithoutForce(t *testing.T) {
 
 func TestFinishCheckForcedCompletesAndDocksAccuracy(t *testing.T) {
 	s, _ := checkWalkEnv(t)
+	if err := s.legoDB.SetBagPolicy("75192-1", 2, "off"); err != nil { // not what this test is about — see bagging_test.go for the bag gate itself
+		t.Fatal(err)
+	}
 	srv := newCheckWalkTestServer(s)
 	defer srv.Close()
 	token := issueToken(t, s.legoDB)
@@ -98,6 +101,9 @@ func TestFinishCheckForcedCompletesAndDocksAccuracy(t *testing.T) {
 
 func TestFinishCheckCleanKeepsFullAccuracy(t *testing.T) {
 	s, _ := checkWalkEnv(t)
+	if err := s.legoDB.SetBagPolicy("75192-1", 2, "off"); err != nil { // not what this test is about — see bagging_test.go for the bag gate itself
+		t.Fatal(err)
+	}
 	srv := newCheckWalkTestServer(s)
 	defer srv.Close()
 	token := issueToken(t, s.legoDB)

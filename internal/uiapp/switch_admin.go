@@ -42,12 +42,20 @@ func (a *App) toggleAdminView() {
 		// This account already has admin-level access itself: no identity
 		// switch needed, just show the Admin screens and back — same round
 		// trip as toggleLego's G key, direction picked by where V was pressed.
-		a.stack = nil
 		if a.cur == scrPickerHub {
+			// Pushing scrPickerHub (rather than clearing the stack) means
+			// every ordinary admin-screen "0. Return"/onBack() -- which pops
+			// the stack, not aware V was ever pressed -- correctly lands back
+			// on the Picker/Checker hub instead of back()'s empty-stack
+			// default of scrHub (the Main hub, a screen this account may
+			// never otherwise see). Pressing V again to swap back still
+			// bypasses the stack entirely via the branch below, unaffected.
+			a.stack = []string{scrPickerHub}
 			a.activeTab = "9"
 			a.cur = scrAdminHub
 			a.setMsg("Switching to Admin...", false)
 		} else {
+			a.stack = nil
 			a.activeTab = "1"
 			a.cur = scrPickerHub
 			a.setMsg("Back to your Picker/Checker screen...", false)

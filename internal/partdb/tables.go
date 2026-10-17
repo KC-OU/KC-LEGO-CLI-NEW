@@ -9,6 +9,9 @@ type Category struct {
 }
 
 func (d *DB) AllCategories() ([]Category, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	rows, err := d.Query("SELECT id, parent_id, name FROM categories")
 	if err != nil {
 		return nil, err
@@ -34,6 +37,9 @@ type PartLot struct {
 }
 
 func (d *DB) AllPartLots() ([]PartLot, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	rows, err := d.Query("SELECT id, id_part, id_store_location, amount FROM part_lots")
 	if err != nil {
 		return nil, err
@@ -57,6 +63,9 @@ type StoreLocation struct {
 }
 
 func (d *DB) AllStoreLocations() ([]StoreLocation, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	rows, err := d.Query("SELECT id, name FROM storelocations")
 	if err != nil {
 		return nil, err
@@ -92,6 +101,9 @@ type FullPart struct {
 }
 
 func (d *DB) AllParts() ([]FullPart, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	rows, err := d.Query(`SELECT id, name, COALESCE(description,''), COALESCE(comment,''), COALESCE(ipn,''), COALESCE(gtin,''),
 		manufacturer_product_number, id_category, mass, COALESCE(datetime_added,''), COALESCE(last_modified,'') FROM parts`)
 	if err != nil {

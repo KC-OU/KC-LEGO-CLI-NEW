@@ -132,18 +132,21 @@ func (s *detailScreen) OnEnter(app *App) {
 
 // pictureBox is how big the picture may be: sized so the page fits the client's
 // window (a plain telnet window is 80x25) with the facts beside the picture.
+// Scales continuously with the client's actual reported size rather than
+// jumping between a few fixed tiers -- a window just under an old threshold
+// (a tablet's browser terminal at, say, 85x28) used to snap all the way down
+// to the smallest box even with real room to spare. 24x10 at 80x24 (the
+// floor every device gets, including one that never reports a size at all)
+// and 44x18 at 100x40 are unchanged -- this just fills in everything between
+// and beyond them smoothly instead of only hitting those two exact points.
 func pictureBox(app *App) (cols, rows int) {
 	h := app.height
 	if h <= 0 {
 		h = 25
 	}
-	switch {
-	case h >= 40 && app.theme.W() >= 100:
-		return 44, 18
-	case h >= 30 && app.theme.W() >= 90:
-		return 34, 14
-	}
-	return 24, 10
+	cols = max(24, min(app.theme.W()-56, 70))
+	rows = max(10, min(10+(h-24)/2, 28))
+	return cols, rows
 }
 
 func (s *detailScreen) Body(app *App) string {

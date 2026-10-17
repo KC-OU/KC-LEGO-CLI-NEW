@@ -80,6 +80,29 @@ Global values (*Admin → Access Control → Security settings*, or `wms access 
 
 Every sign-in decision is audited: `LOGIN_2FA_EXEMPT`, `LOGIN_DENIED_EXPIRED`, `LOGIN_DENIED_CHANNEL`, `SESSION_MAX_AGE`.
 
+## A real, persisted login lockout
+
+5 wrong passwords in a row locks that username out for 15 minutes — and unlike a plain in-memory
+counter, it survives a reconnect: every telnet (or web terminal) sign-in is its own process, so a
+counter kept only on that session resets to zero the moment someone just reconnects. The lockout
+itself lives in its own small file (`LOGIN_LOCK_FILE`, alongside `2fa.json`), keyed by username alone
+— at the point a password fails, which backend (ModernWMS or Part-DB) it would have belonged to isn't
+known yet, so this isn't tied to either one. A correct sign-in, or an admin resetting that user's
+password (*Users → Reset Password*, or `wms users reset`), clears it immediately — no separate
+"unlock" step.
+
+## Numeric login for handheld scanners
+
+A Picker or Checker account created or reset from now on gets a short, **numeric-only** user ID
+(4-5 digits) and PIN (5-6 digits) instead of a free-form username and a mixed-character temp
+password — created via *Users → Create New User* / `wms users create` (reject a non-numeric ID for
+these roles with a clear message), reset via *Users → Reset Password* / `wms users reset` (a numeric
+username is itself the signal to issue a numeric PIN again). Admin accounts are untouched — they
+still sign in from a full keyboard. This is purely about the *credential format*, not new keyboard
+restrictions in the sign-on screen itself: a numeric ID/PIN is already everything a handheld barcode
+scanner's number keys need, with no awkward alpha-shift layer to hunt through. Existing Picker/Checker
+accounts keep working exactly as they are — this only applies the next time one is created or reset.
+
 ## Barcode badge sign-in
 
 A username can be swapped for a scanned barcode at the sign-on screen: scan (or type) the badge into the

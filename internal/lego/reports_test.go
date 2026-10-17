@@ -48,6 +48,57 @@ func TestMissingPartsReportCoversIncompleteSetsWithTotals(t *testing.T) {
 	}
 }
 
+// TestMissingPartsReportTagsEachRowWithItsBagKind confirms the per-bag
+// breakdown: a missing row is tagged with the bag its part would go in once
+// restocked (its ordinary small/main placement), shown as its own column in
+// the HTML report only when at least one row actually carries one.
+func TestMissingPartsReportTagsEachRowWithItsBagKind(t *testing.T) {
+	d := buildDB(t)
+	if err := d.SetBagSize("3023", BagSmall); err != nil {
+		t.Fatal(err)
+	}
+	checkedFireStationWithExtra(t, d, 0) // missing nothing here; just need the small-bag part present
+	c, err := d.NewCheck(context.Background(), nil, "1-1", CheckRecount, "kc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.Lines {
+		if c.Lines[i].PartNum == "3023" {
+			c.Lines[i].Have -= 3
+		}
+	}
+	if _, err := d.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+	data, err := d.MissingPartsReport([]string{"1-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 1 || data.Rows[0].Bag != "Small Parts" {
+		t.Fatalf("rows = %+v, want one row tagged Small Parts", data.Rows)
+	}
+	html, err := ReportHTML(data)
+	if err != nil || !strings.Contains(string(html), "<th>Bag</th>") || !strings.Contains(string(html), "Small Parts") {
+		t.Fatalf("report html should show a Bag column: %v\n%s", err, html)
+	}
+}
+
+// TestReportHTMLOmitsTheBagColumnWhenNoRowHasOne keeps every other report
+// (CollectionReport, SetPartsReport, ...) unchanged — the shared template
+// only grows a Bag column when a report actually populates one.
+func TestReportHTMLOmitsTheBagColumnWhenNoRowHasOne(t *testing.T) {
+	d := buildDB(t)
+	own(t, d, "3001", 4, "Red", 12)
+	data, err := d.CollectionReport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := ReportHTML(data)
+	if err != nil || strings.Contains(string(html), "<th>Bag</th>") {
+		t.Fatalf("report html should have no Bag column here: %v\n%s", err, html)
+	}
+}
+
 func TestMissingPartsReportExplicitSetsIgnoresComplete(t *testing.T) {
 	d := buildDB(t)
 	checkedFireStation(t, d, 0) // complete: nothing missing
@@ -208,6 +259,21 @@ func TestExtraPartsReportGroupsByOriginSet(t *testing.T) {
 	}
 }
 
+// TestExtraPartsReportTagsRowsWithTheExtraBagKind: every row here came from
+// a check's Extra lines, which always land in the dedicated extra bag (see
+// RequiredBagKind) -- so every row carries that kind's name, uniformly.
+func TestExtraPartsReportTagsRowsWithTheExtraBagKind(t *testing.T) {
+	d := buildDB(t)
+	checkedFireStationWithExtra(t, d, 4)
+	data, err := d.ExtraPartsReport(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 1 || data.Rows[0].Bag != "Extra" {
+		t.Fatalf("rows = %+v, want one row tagged Extra", data.Rows)
+	}
+}
+
 func TestOrderListReportGroupsByOrderWithTotals(t *testing.T) {
 	d := buildDB(t)
 	o := &Order{Supplier: "BrickOwl", Status: "ordered", Currency: "GBP", Shipping: 2.5}
@@ -250,7 +316,7 @@ func TestCheckHistoryNewestFirstAndFiltersByStatus(t *testing.T) {
 	if _, err := d.FinishCheck(c); err != nil {
 		t.Fatal(err)
 	}
-	hist, err := d.CheckHistory("1-1", 10)
+	hist, err := d.CheckHistory("1-1", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,12 +329,43 @@ func TestCheckHistoryNewestFirstAndFiltersByStatus(t *testing.T) {
 	if hist[1].CheckedBy != "alex" || hist[1].Missing != 3 {
 		t.Errorf("oldest last: %+v", hist[1])
 	}
-	all, err := d.CheckHistory("", 10)
+	all, err := d.CheckHistory("", "", 10)
 	if err != nil || len(all) != 2 {
 		t.Fatalf("history across all sets: %v %d", err, len(all))
 	}
 	html, err := CheckHistoryHTML("All checks", hist)
 	if err != nil || !strings.Contains(string(html), "sam") || !strings.Contains(string(html), "COMPLETE") {
 		t.Fatalf("history html: %v", err)
+	}
+}
+
+// TestCheckHistoryFiltersByChecker is the "track down a check" search: a
+// partial, case-insensitive match on who did it, same LIKE convention as
+// SearchSets, so tracking someone down doesn't need their exact username.
+func TestCheckHistoryFiltersByChecker(t *testing.T) {
+	d := buildDB(t)
+	checkedFireStation(t, d, 3) // checked_by "alex"
+	c, err := d.NewCheck(context.Background(), nil, "1-1", CheckRecount, "sam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.Lines {
+		c.Lines[i].Have = c.Lines[i].Need
+	}
+	if _, err := d.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+
+	byAlex, err := d.CheckHistory("", "alex", 10)
+	if err != nil || len(byAlex) != 1 || byAlex[0].CheckedBy != "alex" {
+		t.Fatalf("filtering by checker 'alex': %v %+v", err, byAlex)
+	}
+	byPartial, err := d.CheckHistory("", "AL", 10) // case-insensitive, partial
+	if err != nil || len(byPartial) != 1 || byPartial[0].CheckedBy != "alex" {
+		t.Fatalf("filtering by partial checker 'AL': %v %+v", err, byPartial)
+	}
+	byNobody, err := d.CheckHistory("", "nobody", 10)
+	if err != nil || len(byNobody) != 0 {
+		t.Fatalf("filtering by a checker with no checks: %v %+v", err, byNobody)
 	}
 }

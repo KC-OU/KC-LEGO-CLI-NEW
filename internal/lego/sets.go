@@ -3,6 +3,7 @@ package lego
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -104,16 +105,50 @@ func (d *DB) SearchSets(term string) ([]Set, error) {
 	return out, rows.Err()
 }
 
+// GetSetByNum resolves setNum to an owned set. Besides the set number itself,
+// it also accepts a retail box's own barcode (UPC/EAN) registered against a
+// set via SetBoxBarcode -- a second way in for a set number that's awkward to
+// scan or type, resolved here once so every caller that already takes a
+// scanned/typed set number (there's no single "open a set" entry point to
+// patch instead) gets it for free.
 func (d *DB) GetSetByNum(setNum string) (*Set, error) {
 	row := d.QueryRow(`SELECT `+setColumns+` FROM sets WHERE set_num = ?`, setNum)
 	s, err := scanSet(row)
 	if err == sql.ErrNoRows {
+		var real string
+		if d.QueryRow(`SELECT set_num FROM set_state WHERE box_barcode = ? AND box_barcode != ''`, setNum).Scan(&real) == nil && real != "" && real != setNum {
+			return d.GetSetByNum(real)
+		}
 		return nil, fmt.Errorf("set %s not found in collection", setNum)
 	}
 	if err != nil {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// SetInstructionBook lets you record a set's own instruction-book number(s)
+// directly, rather than only through catalog import -- a set the catalog
+// never had it for, a correction, or a multi-book set's booklets, which
+// already have a convention for more than one: slash-separated in the one
+// text field ("6417983/6417984"), matching the legacy import data this
+// column already carries (see Set.InstructionBookNumber's own comment).
+func (d *DB) SetInstructionBook(setNum, number string, count int) error {
+	number = strings.TrimSpace(number)
+	now := time.Now().UTC().Format(timeLayout)
+	res, err := d.Exec(`UPDATE sets SET instruction_book_number = ?, instruction_book_count = ?, updated_at = ? WHERE set_num = ?`,
+		number, count, now, setNum)
+	if err != nil {
+		return fmt.Errorf("updating instruction book info for %s: %w", setNum, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("set %s not found in collection", setNum)
+	}
+	return nil
 }
 
 // MarkPartedOut flips the parted-out flag on an owned set.

@@ -20,7 +20,10 @@ func newLegoCmd() *cobra.Command {
 		newLegoLowCmd(), newLegoSetMinCmd(), newLegoOptionalCmd(), newLegoStatsCmd(), newLegoMissingCmd(), newLegoWantedCmd(), newLegoDetailCmd(), newLegoAchievementsCmd(), newLegoTodayCmd(), newLegoCheckCmd(), newLegoShoppingCmd(), newLegoOrdersCmd(), newLegoSpendCmd(), newLegoLabelsCmd(), newLegoPartsSheetCmd(), newLegoMissingSheetCmd(), newLegoSetInfoCmd(), newLegoImportPartsCmd(),
 		newLegoSearchCmd(), newLegoBackupCmd(), newLegoWatchCmd(), newLegoValueCmd(), newLegoBuildCmd(),
 		newLegoHistoryCmd(), newLegoSnapshotsCmd(), newLegoRestoreCmd(), newLegoResetCmd(), newLegoExportCmd(),
-		newLegoReportCmd(), newLegoRetirementCmd(), newLegoShareCmd(), newLegoHelpSheetCmd(), newLegoBagSizeCmd(), newLegoSmallBagLabelCmd())
+		newLegoReportCmd(), newLegoRetirementCmd(), newLegoShareCmd(), newLegoHelpSheetCmd(), newLegoBagSizeCmd(), newLegoSmallBagLabelCmd(),
+		newLegoPaperDoneCmd(), newLegoAttachCmd(), newLegoChecksCmd(),
+		newLegoBagLabelsCmd(), newLegoBagKindCmd(), newLegoBagAddCmd(), newLegoBagPoolCmd(), newLegoBagFindCmd(),
+		newLegoSetPhotoCmd(), newLegoSetPhotosCmd(), newLegoSetPhotoRemoveCmd(), newLegoElementIDCmd())
 	return cmd
 }
 
@@ -238,8 +241,9 @@ func newLegoImportCmd() *cobra.Command {
 	var collections []string
 	var refSets, refParts string
 	cmd := &cobra.Command{
-		Use:   "import",
-		Short: "One-time import of legacy KC-LEGO-CLI JSON data into the local LEGO store",
+		Use:     "import",
+		Short:   "One-time import of legacy KC-LEGO-CLI JSON data into the local LEGO store",
+		Example: "  wms lego import --collection ./0.json --ref-sets ./legolookup.json --ref-parts ./legolookup-part.json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t := ui.New()
 			db, err := openLego()

@@ -11,6 +11,7 @@
 | **F9** or **U** | Undo the last change made in this session |
 | **F10** or **L** | Lock the session (it also locks itself after 15 idle minutes) |
 | **G** | Jump between the main menu and LEGO Collection |
+| **Shift+F1** (F13 on a keyboard that has one) | From the main hub or the picker/checker hub only: open the [kanban board](kanban.md). Not advertised in the footer legend (most terminals/telnet clients don't send Shift-modified function keys reliably — same reasoning as F10's unlisted F19 fallback), so this is worth knowing about rather than discovering on screen |
 | **V** | Switch to Admin and back. If your own account already has admin-level access, this is a straight jump, same as **G**. Otherwise it asks for a *separate* admin account's username and password (no 2FA — this session is already signed in) and switches to it; pressing **V** again returns to exactly where you were, no credentials needed |
 | **/** | Filter a list |
 

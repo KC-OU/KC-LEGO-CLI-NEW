@@ -8,6 +8,7 @@ package users
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,25 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
+
+// NumericLoginUsernameRE is a Picker/Checker account's required user-ID
+// shape: 4-5 digits, easy to type on a handheld barcode scanner's number
+// keys alone (an MC9100 over telnet's awkward alpha-shift layer is what
+// prompted this) — shared by both the CLI (`wms users create/reset`) and
+// the TUI's Users screen, so the rule can't drift between the two.
+var NumericLoginUsernameRE = regexp.MustCompile(`^\d{4,5}$`)
+
+// WantsNumericLogin is which roles get the numeric user-ID/PIN format — the
+// handheld's keypad is what pickers/checkers actually carry; admins still
+// sign in from a full keyboard (desktop/web), so theirs are untouched.
+func WantsNumericLogin(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "picker", "checker":
+		return true
+	default:
+		return false
+	}
+}
 
 type Service struct {
 	WMS *wmsdb.Client

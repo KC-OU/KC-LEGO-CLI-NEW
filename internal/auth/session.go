@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
@@ -90,6 +91,35 @@ func AuthenticateUser(ctx context.Context, wms WMSAuthenticator, pdb PartDBAuthe
 		Email:       user.Email,
 		IsValid:     !user.Disabled,
 		Permissions: perms,
+	}, nil
+}
+
+// AuthenticateLocal is the "solo mode" login path (see internal/config.SoloMode):
+// a personal copy with no access to the ModernWMS/Part-DB containers still needs
+// somewhere to check a password, so it checks access.Policy's own PasswordHash
+// field instead — set via `wms access user set-password --source local`. Never
+// called unless solo mode is on; AuthenticateUser (ModernWMS/Part-DB) is the
+// normal path otherwise.
+func AuthenticateLocal(username, password string) (*Session, error) {
+	p, err := access.Load()
+	if err != nil {
+		return nil, err
+	}
+	key, ok := p.FindKey(username)
+	if !ok {
+		return nil, ErrInvalidCredentials
+	}
+	u := p.Users[key]
+	if u == nil || u.PasswordHash == "" || !VerifyPartDB(password, u.PasswordHash) {
+		return nil, ErrInvalidCredentials
+	}
+	_, name, _ := strings.Cut(key, ":")
+	return &Session{
+		Source:      "local",
+		Username:    name,
+		Role:        "Local Admin",
+		IsValid:     true,
+		Permissions: &wmsdb.Permissions{IsAdmin: true, CanWrite: true, RoleName: "Local Admin"},
 	}, nil
 }
 

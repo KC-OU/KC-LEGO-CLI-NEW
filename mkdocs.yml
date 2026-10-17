@@ -68,6 +68,7 @@ nav:
       - Sets, missing parts and what to build: guides/sets-and-building.md
       - Set checks and stock checks: guides/set-checks.md
       - Assigned work, accuracy and messages: guides/assigned-work.md
+      - Kanban board: guides/kanban.md
       - Missing parts, prices and orders: guides/missing-parts-and-orders.md
       - Reports: guides/reports.md
       - Report archive: guides/report-archive.md
@@ -91,6 +92,7 @@ nav:
       - Access control: guides/access-control.md
       - "Shipping: preflight, deploy, publish": guides/shipping.md
       - Test instance: guides/test-instance.md
+      - Solo mode: guides/solo-mode.md
   - Reference:
       - Settings: reference/config.md
       - Command reference: reference/cli/index.md

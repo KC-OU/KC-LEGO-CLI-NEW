@@ -10,7 +10,8 @@ import (
 )
 
 func newAuditCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "audit", Short: "Check the tamper-evident audit log"}
+	cmd := &cobra.Command{Use: "audit", Short: "Check the tamper-evident audit log",
+		Example: "  wms audit verify\n  wms audit head"}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "verify",

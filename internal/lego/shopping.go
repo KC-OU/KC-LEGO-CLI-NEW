@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -153,13 +154,45 @@ func (d *DB) storeBO(no string, col int, boid string, p *brickowl.Price) {
 		no, col, p.BOID, p.Avg, p.Low, p.Currency, now)
 }
 
-// ElementFor is a LEGO element id for part+colour ("" when the catalog has none).
+// ElementFor is a LEGO element id for part+colour ("" when neither a
+// checker/admin's own override nor the catalog has one). A deliberate
+// override (see SetElementID) wins over the catalog's own value -- it was
+// typed in specifically because the catalog's was missing or wrong.
 func (d *DB) ElementFor(partNum string, colorID int) string {
 	var id string
+	if d.QueryRow(`SELECT element_id FROM part_element_overrides WHERE part_num = ? AND color_id = ?`, partNum, colorID).Scan(&id) == nil && id != "" {
+		return id
+	}
 	if err := d.QueryRow(`SELECT element_id FROM cat_element_ids WHERE part_num = ? AND color_id = ? ORDER BY length(element_id), element_id LIMIT 1`, partNum, colorID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 		return ""
 	}
 	return id
+}
+
+// elementIDRE is a LEGO element id's own shape: digits only, matching every
+// real one (e.g. "6644777") -- catches a fat-fingered entry before it's
+// saved as "fact", not just accepted verbatim.
+var elementIDRE = regexp.MustCompile(`^\d+$`)
+
+// SetElementID records a checker or admin's own element id for partNum in
+// colorID -- for a part the catalog is missing one for (common on a
+// recently-released set, before the next Rebrickable sync picks it up), or
+// to correct one that's wrong. Survives a catalog refresh: unlike
+// cat_element_ids itself, this table is never touched by one. Blank clears
+// the override, falling back to whatever the catalog has (if anything).
+func (d *DB) SetElementID(partNum string, colorID int, elementID, by string) error {
+	elementID = strings.TrimSpace(elementID)
+	if elementID != "" && !elementIDRE.MatchString(elementID) {
+		return fmt.Errorf("%q doesn't look like a LEGO element id (digits only)", elementID)
+	}
+	if elementID == "" {
+		_, err := d.Exec(`DELETE FROM part_element_overrides WHERE part_num = ? AND color_id = ?`, partNum, colorID)
+		return err
+	}
+	_, err := d.Exec(`INSERT INTO part_element_overrides (part_num, color_id, element_id, created_by, created_at) VALUES (?,?,?,?,?)
+		ON CONFLICT(part_num, color_id) DO UPDATE SET element_id = excluded.element_id, created_by = excluded.created_by, created_at = excluded.created_at`,
+		partNum, colorID, elementID, by, time.Now().UTC().Format(timeLayout))
+	return err
 }
 
 // ShopLinks are where to buy a line.

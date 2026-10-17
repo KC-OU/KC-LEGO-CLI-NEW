@@ -123,6 +123,10 @@ func legoSetLookupScreen() screenModel {
 				app.setMsg(err.Error(), true)
 				return
 			}
+			photoCount := 0
+			if photos, err := app.legoDB.SetPhotos(s.SetNum); err == nil {
+				photoCount = len(photos)
+			}
 			app.legoSetDetailRows = [][]string{
 				{"Set Number", s.SetNum},
 				{"Name", s.Name},
@@ -130,6 +134,7 @@ func legoSetLookupScreen() screenModel {
 				{"Year", strconv.Itoa(s.Year)},
 				{"Instruction Book #", s.InstructionBookNumber},
 				{"Instruction Book Count", strconv.Itoa(s.InstructionBookCount)},
+				{"Photos Attached", strconv.Itoa(photoCount)},
 				{"Qty Owned", strconv.Itoa(s.Qty)},
 				{"Parts Qty", strconv.Itoa(s.PartsQty)},
 				{"Parted Out", yesNo(s.PartedOut)},

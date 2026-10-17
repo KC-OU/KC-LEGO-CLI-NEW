@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -156,17 +157,43 @@ func ensureSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS set_state (
 			set_num TEXT PRIMARY KEY, location TEXT NOT NULL DEFAULT '', condition TEXT NOT NULL DEFAULT '', condition_note TEXT NOT NULL DEFAULT '',
 			missing_qty INTEGER NOT NULL DEFAULT 0, last_check_id INTEGER NOT NULL DEFAULT 0, pdb_location_id INTEGER NOT NULL DEFAULT 0,
-			image_url TEXT NOT NULL DEFAULT '')`,
+			image_url TEXT NOT NULL DEFAULT '', max_bags INTEGER NOT NULL DEFAULT 2, bag_gating TEXT NOT NULL DEFAULT '',
+			box_barcode TEXT NOT NULL DEFAULT '',
+			backlog_status TEXT NOT NULL DEFAULT 'released', backlog_released_by TEXT NOT NULL DEFAULT '', backlog_released_at TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS set_checks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
 			checked_by TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT '',
 			lines INTEGER NOT NULL DEFAULT 0, pieces INTEGER NOT NULL DEFAULT 0, have INTEGER NOT NULL DEFAULT 0,
-			missing INTEGER NOT NULL DEFAULT 0, extra INTEGER NOT NULL DEFAULT 0)`,
+			missing INTEGER NOT NULL DEFAULT 0, extra INTEGER NOT NULL DEFAULT 0, last_position INTEGER NOT NULL DEFAULT 0,
+			paper_checked_at TEXT NOT NULL DEFAULT '', disputed INTEGER NOT NULL DEFAULT 0, dispute_note TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_set_checks_set ON set_checks(set_num, id)`,
+		// A scanned/photographed copy of a finished paper checklist, attached as evidence
+		// against a check (see DB.AttachProof) -- so a CLI count questioned later can be
+		// checked against what the paper copy actually said.
+		`CREATE TABLE IF NOT EXISTS set_check_proofs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, check_id INTEGER NOT NULL, set_num TEXT NOT NULL,
+			kind TEXT NOT NULL, file_path TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', uploaded_by TEXT NOT NULL DEFAULT '',
+			uploaded_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_set_check_proofs_check ON set_check_proofs(check_id)`,
+		// A set's own attached photos (box, built model, ...), independent of any
+		// particular check -- see DB.AttachSetPhoto/SetPhotos.
+		`CREATE TABLE IF NOT EXISTS set_photos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, kind TEXT NOT NULL,
+			file_path TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', uploaded_by TEXT NOT NULL DEFAULT '',
+			uploaded_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_set_photos_set ON set_photos(set_num)`,
+		// A checker/admin's own correction or addition for a part+colour's LEGO
+		// element id, checked ahead of the catalog-sourced cat_element_ids (see
+		// DB.ElementFor) -- its own table, never wiped by a catalog sync.
+		`CREATE TABLE IF NOT EXISTS part_element_overrides (
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, element_id TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			PRIMARY KEY (part_num, color_id))`,
 		`CREATE TABLE IF NOT EXISTS set_check_lines (
 			check_id INTEGER NOT NULL, part_num TEXT NOT NULL, part_name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
 			color_id INTEGER NOT NULL, color_name TEXT NOT NULL DEFAULT '', bl_id TEXT NOT NULL DEFAULT '', bl_color INTEGER NOT NULL DEFAULT 0,
-			need INTEGER NOT NULL, have INTEGER NOT NULL, extra INTEGER NOT NULL DEFAULT 0,
+			need INTEGER NOT NULL, have INTEGER NOT NULL, extra INTEGER NOT NULL DEFAULT 0, damaged INTEGER NOT NULL DEFAULT 0,
+			deprioritized INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (check_id, part_num, color_id))`,
 		// How many of a loose part came from a set's extras (for "2 spare in 10696").
 		`CREATE TABLE IF NOT EXISTS part_origins (
@@ -177,7 +204,7 @@ func ensureSchema(db *sql.DB) error {
 			order_no TEXT NOT NULL DEFAULT '', invoice_no TEXT NOT NULL DEFAULT '', tracking_no TEXT NOT NULL DEFAULT '', carrier TEXT NOT NULL DEFAULT '',
 			currency TEXT NOT NULL DEFAULT '', shipping REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'wanted',
 			created_at TEXT NOT NULL, ordered_at TEXT NOT NULL DEFAULT '', shipped_at TEXT NOT NULL DEFAULT '', received_at TEXT NOT NULL DEFAULT '',
-			note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '')`,
+			note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', last_position INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE IF NOT EXISTS order_lines (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, set_num TEXT NOT NULL DEFAULT '',
 			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, color_name TEXT NOT NULL DEFAULT '', part_name TEXT NOT NULL DEFAULT '',
@@ -208,13 +235,42 @@ func ensureSchema(db *sql.DB) error {
 		// one" override (see bagging.go's PartBagSize) — easy-to-lose parts
 		// like loose 1x1s or minifig accessories. Absent here defaults to the
 		// main bag, same no-row-means-default convention as part_optional.
+		// size's value is a bag_kinds.key, not a hardcoded 2-value enum --
+		// validated against that table, not against this table's definition.
 		`CREATE TABLE IF NOT EXISTS part_bag_size (part_num TEXT PRIMARY KEY, size TEXT NOT NULL)`,
-		// The small bag's own barcode/number, confirmed against a specific
-		// check — the "verified link" (not just a printed label) between a
-		// physical bag and the set it belongs to. One per check: a recount
-		// gets its own new set_checks row, so its own bag confirmation too.
+		// The global list of bag kinds a part (or a found extra) can belong to --
+		// seeded with small/main/extra (see bagging.go's BagSmall/BagMain/BagExtra);
+		// an admin can add more (e.g. "wheels"). Global, not per-set: the same
+		// three-ish kinds apply everywhere, same as today's small/main split did.
+		`CREATE TABLE IF NOT EXISTS bag_kinds (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		// One row per physical bag instance on a check (see bags.go) -- a set
+		// normally gets one small + one main instance, auto-coded "<set>-A"/
+		// "<set>-B", plus an "<set>-E" extra-bag instance created the first time
+		// a line is marked Extra. scanned_at ''  means printed/registered but not
+		// yet confirmed in the checker's hand this session -- the "verified
+		// link" (not just a printed label) between a physical bag and the set it
+		// belongs to. A recount gets its own new set_checks row, so its own bag
+		// instances too.
 		`CREATE TABLE IF NOT EXISTS check_bags (
-			check_id INTEGER PRIMARY KEY, bag_code TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+			id INTEGER PRIMARY KEY AUTOINCREMENT, check_id INTEGER NOT NULL, bag_kind_id INTEGER NOT NULL,
+			instance_label TEXT NOT NULL, code TEXT NOT NULL, scanned_at TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			UNIQUE (check_id, bag_kind_id, instance_label))`,
+		// Indexes for check_bags are created after migrate() runs, not here — a pre-v9
+		// file's check_bags has no "code" column until the migration rebuilds it, so an
+		// unconditional CREATE INDEX on it here would fail against that older shape.
+		// A reusable physical bag: an admin labels a real container once (its own
+		// stable code, not an auto-generated "<set>-A") and assigns it to whichever
+		// check currently needs it (see bags.go's AssignPoolBag); freed back to
+		// 'available' when that check finishes. Separate from check_bags, which is
+		// always fresh-per-check -- a pool bag's own row never changes, only which
+		// check (if any) currently has it.
+		`CREATE TABLE IF NOT EXISTS bag_pool (
+			code TEXT PRIMARY KEY, bag_kind_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'available',
+			current_check_id INTEGER NOT NULL DEFAULT 0, created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_bag_pool_status ON bag_pool(status)`,
 		// A unit of assigned work: an admin points a picker/checker at a set to check or
 		// an order to pick, either by name (assigned_to set) or left for the open queue
 		// (assigned_to ""). Claiming it just means starting the underlying check/order
@@ -227,6 +283,21 @@ func ensureSchema(db *sql.DB) error {
 			created_at TEXT NOT NULL, claimed_at TEXT NOT NULL DEFAULT '', done_at TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_job_tickets_status ON job_tickets(kind, status, assigned_to)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_job_tickets_token ON job_tickets(token) WHERE token != ''`,
+		// A checker/picker's own free-text note on a job ticket (and optionally a specific
+		// part+colour line or a specific bag within it) -- see DB.AddKanbanNote. Append-only,
+		// like this project's other work-record data: no UPDATE/DELETE path, a correction is
+		// a follow-up note, not an edit.
+		`CREATE TABLE IF NOT EXISTS kanban_notes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL,
+			part_num TEXT NOT NULL DEFAULT '', color_id INTEGER NOT NULL DEFAULT -1, bag_id INTEGER NOT NULL DEFAULT 0,
+			body TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'private',
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_kanban_notes_ticket ON kanban_notes(ticket_id)`,
+		// When a job ticket's kanban column (Backlog/Active/Done) was last entered -- backs
+		// the board's card-aging indicator. Upserted by DB.TouchKanbanColumn whenever a
+		// ticket's derived column changes; never written anywhere else.
+		`CREATE TABLE IF NOT EXISTS kanban_card_moves (
+			ticket_id INTEGER PRIMARY KEY, column_name TEXT NOT NULL, entered_at TEXT NOT NULL)`,
 		// One row per accuracy-affecting event, scored per role (a picker and checker
 		// percentage are separate for someone holding both) and grouped by day (see
 		// accuracy.go) — "today" is just "day = today's date", so nothing has to reset at
@@ -318,6 +389,15 @@ func ensureSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, clock_event_id INTEGER NOT NULL,
 			start_at TEXT NOT NULL, end_at TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_clock_breaks_event ON clock_breaks(clock_event_id)`,
+		// An admin-applied "why this person looks idle right now" card (see
+		// status_cards.go) -- delay or no-work-available, the two reasons that
+		// aren't already the existing break feature. ended_at "" means still
+		// active, same convention as clock_events.clock_out_at/clock_breaks.end_at.
+		`CREATE TABLE IF NOT EXISTS status_cards (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, reason TEXT NOT NULL,
+			note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '',
+			started_at TEXT NOT NULL, ended_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_status_cards_username ON status_cards(username, ended_at)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -330,8 +410,47 @@ func ensureSchema(db *sql.DB) error {
 	// A known colour is identified by its id alone (its display name may
 	// vary); only free-text colours (id -1) are told apart by name. Created
 	// after the migration because a legacy table has no color_id yet.
-	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_owned_parts_key ON owned_parts(part_num, color_id, (CASE WHEN color_id >= 0 THEN '' ELSE color_name END))`)
-	return err
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_owned_parts_key ON owned_parts(part_num, color_id, (CASE WHEN color_id >= 0 THEN '' ELSE color_name END))`); err != nil {
+		return err
+	}
+	// Created here, after migrate() has rebuilt check_bags into its current shape (see
+	// above) -- same reasoning as idx_owned_parts_key just above.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_check_bags_check ON check_bags(check_id)`); err != nil {
+		return err
+	}
+	// Not UNIQUE: a fresh auto-generated code ("<set>-A") is unique by construction, but a
+	// migrated pre-registry row (free text, never validated) could collide with another --
+	// ResolveBagCode picks the newest match rather than the schema refusing to hold both.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_check_bags_code ON check_bags(code)`); err != nil {
+		return err
+	}
+	return seedBagKinds(db)
+}
+
+// seedBagKinds makes sure the three built-in bag kinds exist -- small/main
+// (today's split, now rows instead of hardcoded constants) and extra (a
+// found spare's own bag, never part-assigned). Runs on every Open(), so it
+// checks first and writes nothing on the overwhelmingly common case (already
+// seeded) -- a WAL reader never blocks on a writer, but a write statement
+// still takes its turn, and every process opens this file at least once.
+func seedBagKinds(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bag_kinds WHERE key IN (?,?,?)`, BagSmall, BagMain, BagExtra).Scan(&n); err != nil {
+		return fmt.Errorf("checking bag kinds: %w", err)
+	}
+	if n == 3 {
+		return nil
+	}
+	now := time.Now().UTC().Format(timeLayout)
+	for _, k := range []struct{ key, name string }{
+		{BagSmall, "Small Parts"}, {BagMain, "Main"}, {BagExtra, "Extra"},
+	} {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO bag_kinds (key, name, created_by, created_at) VALUES (?,?,?,?)`,
+			k.key, k.name, "", now); err != nil {
+			return fmt.Errorf("seeding bag kind %q: %w", k.key, err)
+		}
+	}
+	return nil
 }
 
 // schemaVersion is the PRAGMA user_version this code expects. Version 1 added
@@ -339,8 +458,20 @@ func ensureSchema(db *sql.DB) error {
 // override of a set's catalog picture, read ahead of cat_sets.img_url so it
 // survives the next Rebrickable catalog sync — see DB.CatalogSet). Version 3
 // added rota_entries/clock_events, version 4 clock_breaks (see attendance.go).
-// Version 5 added part_bag_size/check_bags (see bagging.go).
-const schemaVersion = 5
+// Version 5 added part_bag_size/check_bags (see bagging.go). Version 6 added
+// last_position to set_checks/orders (see confirmCheckLine/confirmOrderLine).
+// Version 7 added damaged to set_check_lines (see CheckLine.Damaged). Version 8 added
+// paper_checked_at/disputed/dispute_note to set_checks and the set_check_proofs table
+// (see DB.MarkPaperDone/AttachProof/FlagDispute). Version 9 added the bag_kinds table,
+// rebuilt check_bags from one row per check into one row per bag instance, and added
+// set_state.max_bags/bag_gating (see bags.go). Version 10 added
+// set_state.box_barcode (see DB.SetBoxBarcode/GetSetByNum). Version 11 added
+// the set_photos table (see DB.AttachSetPhoto/SetPhotos). Version 12 added
+// part_element_overrides (see DB.SetElementID/ElementFor). Version 13 added the
+// kanban board: set_state.backlog_status/backlog_released_by/backlog_released_at,
+// set_check_lines.deprioritized, and the kanban_notes/kanban_card_moves tables
+// (see kanban.go).
+const schemaVersion = 13
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -461,6 +592,209 @@ func migrate(db *sql.DB) error {
 			if _, err := conn.ExecContext(ctx, s); err != nil {
 				return fmt.Errorf("migrating in part_bag_size/check_bags: %w (%s)", err, s)
 			}
+		}
+	}
+	if version < 6 {
+		// last_position: the furthest line either ticket type's own confirm
+		// flow has reached, so a mobile client opening the same ticket on a
+		// different device (or just reopening the app) can resume where it
+		// left off instead of always restarting at line 0 -- see
+		// AdvanceCheckPosition/AdvanceOrderPosition.
+		add := func(table, column, ddl string) error {
+			var has int
+			if err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?", table), column).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := conn.ExecContext(ctx, ddl); err != nil {
+					return fmt.Errorf("migrating %s: %w", table, err)
+				}
+			}
+			return nil
+		}
+		if err := add("set_checks", "last_position", `ALTER TABLE set_checks ADD COLUMN last_position INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if err := add("orders", "last_position", `ALTER TABLE orders ADD COLUMN last_position INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if version < 7 {
+		// damaged: a check line's condition flag -- present but not perfect,
+		// distinct from missing (not present at all) or extra (more than
+		// needed). Purely informational: doesn't affect Missing()/completion,
+		// LowStock's auto-tracking, or ordering -- see CheckLine.Damaged.
+		var has int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('set_check_lines') WHERE name = 'damaged'").Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := conn.ExecContext(ctx, `ALTER TABLE set_check_lines ADD COLUMN damaged INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return fmt.Errorf("migrating set_check_lines: %w", err)
+			}
+		}
+	}
+	if version < 8 {
+		for _, c := range []struct{ col, ddl string }{
+			{"paper_checked_at", `ALTER TABLE set_checks ADD COLUMN paper_checked_at TEXT NOT NULL DEFAULT ''`},
+			{"disputed", `ALTER TABLE set_checks ADD COLUMN disputed INTEGER NOT NULL DEFAULT 0`},
+			{"dispute_note", `ALTER TABLE set_checks ADD COLUMN dispute_note TEXT NOT NULL DEFAULT ''`},
+		} {
+			var has int
+			if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('set_checks') WHERE name = ?", c.col).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := conn.ExecContext(ctx, c.ddl); err != nil {
+					return fmt.Errorf("migrating set_checks: %w", err)
+				}
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS set_check_proofs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, check_id INTEGER NOT NULL, set_num TEXT NOT NULL,
+			kind TEXT NOT NULL, file_path TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', uploaded_by TEXT NOT NULL DEFAULT '',
+			uploaded_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migrating set_check_proofs: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_set_check_proofs_check ON set_check_proofs(check_id)`); err != nil {
+			return err
+		}
+	}
+	if version < 9 {
+		for _, c := range []struct{ col, ddl string }{
+			{"max_bags", `ALTER TABLE set_state ADD COLUMN max_bags INTEGER NOT NULL DEFAULT 2`},
+			{"bag_gating", `ALTER TABLE set_state ADD COLUMN bag_gating TEXT NOT NULL DEFAULT ''`},
+		} {
+			var has int
+			if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('set_state') WHERE name = ?", c.col).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := conn.ExecContext(ctx, c.ddl); err != nil {
+					return fmt.Errorf("migrating set_state: %w", err)
+				}
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS bag_kinds (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migrating bag_kinds: %w", err)
+		}
+		now := time.Now().UTC().Format(timeLayout)
+		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO bag_kinds (key, name, created_by, created_at) VALUES
+			(?,?,?,?), (?,?,?,?), (?,?,?,?)`,
+			BagSmall, "Small Parts", "", now, BagMain, "Main", "", now, BagExtra, "Extra", "", now); err != nil {
+			return fmt.Errorf("seeding bag kinds during migration: %w", err)
+		}
+		var hasID int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('check_bags') WHERE name = 'id'").Scan(&hasID); err != nil {
+			return err
+		}
+		if hasID == 0 {
+			// The old schema (check_id PRIMARY KEY, bag_code, created_by, created_at) held one
+			// row per check -- rebuild into one row per bag instance, carrying the old single
+			// code forward as that check's small-bag instance (A). It was already confirmed,
+			// so scanned_at = its own created_at, matching what it actually meant at the time.
+			var smallID int64
+			if err := conn.QueryRowContext(ctx, `SELECT id FROM bag_kinds WHERE key = ?`, BagSmall).Scan(&smallID); err != nil {
+				return fmt.Errorf("resolving the small bag kind during migration: %w", err)
+			}
+			rebuild := []string{
+				`ALTER TABLE check_bags RENAME TO check_bags_old`,
+				`CREATE TABLE check_bags (
+					id INTEGER PRIMARY KEY AUTOINCREMENT, check_id INTEGER NOT NULL, bag_kind_id INTEGER NOT NULL,
+					instance_label TEXT NOT NULL, code TEXT NOT NULL, scanned_at TEXT NOT NULL DEFAULT '',
+					created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+					UNIQUE (check_id, bag_kind_id, instance_label))`,
+				fmt.Sprintf(`INSERT INTO check_bags (check_id, bag_kind_id, instance_label, code, scanned_at, created_by, created_at)
+					SELECT check_id, %d, 'A', bag_code, created_at, created_by, created_at FROM check_bags_old`, smallID),
+				`DROP TABLE check_bags_old`,
+				`CREATE INDEX IF NOT EXISTS idx_check_bags_check ON check_bags(check_id)`,
+				`CREATE INDEX IF NOT EXISTS idx_check_bags_code ON check_bags(code)`,
+			}
+			for _, ddl := range rebuild {
+				if _, err := conn.ExecContext(ctx, ddl); err != nil {
+					return fmt.Errorf("migrating check_bags: %w (%s)", err, ddl)
+				}
+			}
+		}
+	}
+	if version < 10 {
+		// box_barcode: the set's retail box's own UPC/EAN, a second way to
+		// resolve a set besides its set_num -- see DB.SetBoxBarcode/GetSetByNum.
+		var has int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('set_state') WHERE name = 'box_barcode'").Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := conn.ExecContext(ctx, `ALTER TABLE set_state ADD COLUMN box_barcode TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("migrating set_state: %w", err)
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_set_state_box_barcode ON set_state(box_barcode) WHERE box_barcode != ''`); err != nil {
+			return fmt.Errorf("indexing set_state.box_barcode: %w", err)
+		}
+	}
+	if version < 11 {
+		// set_photos: a set's own attached photos (box, built model, ...),
+		// independent of any particular check -- see DB.AttachSetPhoto/SetPhotos.
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS set_photos (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, kind TEXT NOT NULL,
+			file_path TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', uploaded_by TEXT NOT NULL DEFAULT '',
+			uploaded_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migrating set_photos: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_set_photos_set ON set_photos(set_num)`); err != nil {
+			return err
+		}
+	}
+	if version < 12 {
+		// part_element_overrides: a checker/admin's own correction or
+		// addition for a part+colour's LEGO element id, checked ahead of the
+		// catalog-sourced cat_element_ids (see DB.ElementFor) -- deliberately
+		// its own table, never touched by a catalog sync, since
+		// cat_element_ids itself is fully deleted and reloaded on every one
+		// (see catalogload.go's "elements" spec).
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS part_element_overrides (
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, element_id TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			PRIMARY KEY (part_num, color_id))`); err != nil {
+			return fmt.Errorf("migrating part_element_overrides: %w", err)
+		}
+	}
+	if version < 13 {
+		// Kanban board: backlog gating on set_state, a deprioritized flag on
+		// set_check_lines (the "moved to the back" 50+-qty marker), and two new
+		// tables for notes and card-aging (see kanban.go).
+		for _, c := range []struct{ table, col, ddl string }{
+			{"set_state", "backlog_status", `ALTER TABLE set_state ADD COLUMN backlog_status TEXT NOT NULL DEFAULT 'released'`},
+			{"set_state", "backlog_released_by", `ALTER TABLE set_state ADD COLUMN backlog_released_by TEXT NOT NULL DEFAULT ''`},
+			{"set_state", "backlog_released_at", `ALTER TABLE set_state ADD COLUMN backlog_released_at TEXT NOT NULL DEFAULT ''`},
+			{"set_check_lines", "deprioritized", `ALTER TABLE set_check_lines ADD COLUMN deprioritized INTEGER NOT NULL DEFAULT 0`},
+		} {
+			var has int
+			if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", c.table, c.col).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := conn.ExecContext(ctx, c.ddl); err != nil {
+					return fmt.Errorf("migrating %s: %w", c.table, err)
+				}
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS kanban_notes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL,
+			part_num TEXT NOT NULL DEFAULT '', color_id INTEGER NOT NULL DEFAULT -1, bag_id INTEGER NOT NULL DEFAULT 0,
+			body TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'private',
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migrating kanban_notes: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_kanban_notes_ticket ON kanban_notes(ticket_id)`); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS kanban_card_moves (
+			ticket_id INTEGER PRIMARY KEY, column_name TEXT NOT NULL, entered_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migrating kanban_card_moves: %w", err)
 		}
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

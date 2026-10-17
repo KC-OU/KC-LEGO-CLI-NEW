@@ -91,6 +91,43 @@ func TestAddSetFillsEverythingFromRebrickable(t *testing.T) {
 	}
 }
 
+// TestSubmitSetConfirmPutsNewSetInBacklogAndSkipsAutoCheck is the kanban
+// backlog gate: a genuinely new set queues instead of becoming checkable
+// (and startable) immediately, since someone may already be mid-check
+// elsewhere -- see internal/lego.DB.SetBacklogStatus.
+func TestSubmitSetConfirmPutsNewSetInBacklogAndSkipsAutoCheck(t *testing.T) {
+	app := newTestApp(t)
+	app.rebrick = fakeRB(t, falconRoutes, nil)
+	startSet(t, app, "75192")
+
+	confirm(app, scrLegoSetConfirm, map[int]string{sfQty: "1", sfConfirm: "yes"})
+
+	if !strings.Contains(app.message, "backlog") {
+		t.Errorf("expected a backlog message, got %q", app.message)
+	}
+	if app.cur == scrSetCheck {
+		t.Error("a new set should never jump straight into a check")
+	}
+	st := app.legoDB.GetSetState("75192-1")
+	if st.BacklogStatus != lego.BacklogQueued {
+		t.Errorf("BacklogStatus = %q, want %q", st.BacklogStatus, lego.BacklogQueued)
+	}
+
+	backlog, err := app.legoDB.BacklogSets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range backlog {
+		if s.SetNum == "75192-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the new set should be listed in BacklogSets")
+	}
+}
+
 func TestUpdatingAnExistingSetOnlyChangesTheQuantity(t *testing.T) {
 	app := newTestApp(t)
 	app.rebrick = fakeRB(t, falconRoutes, nil)

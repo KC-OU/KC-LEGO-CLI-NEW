@@ -223,9 +223,14 @@ func (d *DB) SearchCatalogMinifigs(term string, limit int) ([]MinifigHit, error)
 }
 
 // ElementPart resolves a LEGO element ID (the 6-8 digit number on a bag or
-// brick) to its part number and Rebrickable colour id.
+// brick) to its part number and Rebrickable colour id -- checking a
+// checker/admin's own override (see DB.SetElementID) first, so one added
+// for a part the catalog doesn't have yet is just as scannable/searchable.
 func (d *DB) ElementPart(elementID string) (part string, colorID int, ok bool) {
 	elementID = strings.TrimSpace(elementID)
+	if d.QueryRow(`SELECT part_num, color_id FROM part_element_overrides WHERE element_id = ?`, elementID).Scan(&part, &colorID) == nil {
+		return part, colorID, true
+	}
 	if err := d.QueryRow(`SELECT part_num, color_id FROM cat_element_ids WHERE element_id = ?`, elementID).Scan(&part, &colorID); err != nil {
 		return "", 0, false
 	}

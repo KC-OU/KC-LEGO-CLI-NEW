@@ -2,6 +2,20 @@
 version: 2
 project_name: wms-go
 
+# Real troff man pages (`man wms`, `man wms-lego-check`, ...) generated from
+# the live command tree via cobra/doc.GenManTree (cmd/wms/mangen.go) -- same
+# idea as docs-gen's Markdown reference, just a different renderer, so they
+# can never drift from --help. Picked up below by both archives.files (so a
+# manual tar.gz install can `man` them locally) and nfpms.contents (so a
+# .deb/.rpm/.apk install puts them straight into /usr/share/man/man1 --
+# nothing further for a package-manager install to do). Not exercised by an
+# actual `goreleaser release` run in this environment (no man/mandb
+# installed here to verify against); `go run ./cmd/wms man-gen <dir>` itself
+# is verified -- it wrote all 177 pages correctly.
+before:
+  hooks:
+    - sh -c 'go run ./cmd/wms man-gen dist/man'
+
 builds:
   - id: wms
     main: ./cmd/wms
@@ -26,6 +40,9 @@ archives:
       - src: deploy/systemd/*.service
         dst: systemd
         strip_parent: true
+      - src: dist/man/*.1
+        dst: man
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt
@@ -49,6 +66,8 @@ nfpms:
       - src: config.example.env
         dst: /etc/wms-go/wms-go.env.example
         type: config|noreplace
+      - src: dist/man/*.1
+        dst: /usr/share/man/man1/
 
 changelog:
   use: github

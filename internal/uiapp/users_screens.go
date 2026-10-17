@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
 func usersHubScreen() screenModel {
@@ -63,6 +65,13 @@ func usersCreateScreen() screenModel {
 				role = "Picker"
 			}
 			password := auth.GenerateTempPassword(10)
+			if users.WantsNumericLogin(role) {
+				if !users.NumericLoginUsernameRE.MatchString(username) {
+					app.setMsg(fmt.Sprintf("%s accounts need a 4-5 digit numeric user ID (for a handheld scanner's keypad) — got %q.", role, username), true)
+					return
+				}
+				password = auth.GenerateNumericPIN(6)
+			}
 			if err := app.users.CreateUnified(app.ctx(), username, role, email, password); err != nil {
 				app.setMsg(err.Error(), true)
 				return
@@ -84,10 +93,20 @@ func usersResetScreen() screenModel {
 		submit: func(app *App, values []string) {
 			username := values[0]
 			password := auth.GenerateTempPassword(10)
+			// No per-user role lookup here (ListAll's Part-DB rows only carry
+			// admin/non-admin, not "Picker" vs "Checker" vs anything else) --
+			// a numeric username is itself the signal that this account was
+			// provisioned as a numeric-login one, so a reset keeps it that way.
+			if users.NumericLoginUsernameRE.MatchString(username) {
+				password = auth.GenerateNumericPIN(6)
+			}
 			if err := app.users.ResetUnified(app.ctx(), username, password, true); err != nil {
 				app.setMsg(err.Error(), true)
 				return
 			}
+			// A reset is also how a locked-out account gets another chance --
+			// no separate "clear lockout" screen needed.
+			_ = loginlock.ClearFailures(username)
 			app.audit.Log(app.session.Username, app.session.Role, "RESET_PASSWORD", "SUCCESS", username)
 			app.setMsg(fmt.Sprintf("Password reset for %q. Temp password: %s", username, password), false)
 			app.onBack()

@@ -102,6 +102,51 @@ func TestCatalogSetAndElementLookup(t *testing.T) {
 	}
 }
 
+// TestElementIDOverrideWinsOverCatalogAndSurvivesABlankClear is the direct
+// test for a checker/admin's own element id (see DB.SetElementID): it fills
+// a gap the catalog has (a part the sync hasn't caught up on yet), wins over
+// a wrong catalog value as a correction, is itself reverse-lookupable via
+// ElementPart (so a manually-added id is just as scannable), and clearing it
+// (blank) falls back to whatever the catalog has.
+func TestElementIDOverrideWinsOverCatalogAndSurvivesABlankClear(t *testing.T) {
+	db := loadedCatalog(t)
+
+	if got := db.ElementFor("3001", 4); got != "300121" {
+		t.Fatalf("catalog element id = %q, want 300121", got)
+	}
+	if got := db.ElementFor("9999", 0); got != "" {
+		t.Fatalf("expected no element id for an unknown part, got %q", got)
+	}
+
+	if err := db.SetElementID("9999", 0, "6644777", "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.ElementFor("9999", 0); got != "6644777" {
+		t.Errorf("after SetElementID = %q, want 6644777", got)
+	}
+	if part, color, ok := db.ElementPart("6644777"); !ok || part != "9999" || color != 0 {
+		t.Errorf("ElementPart(6644777) = %s %d %v, want 9999 0 true", part, color, ok)
+	}
+
+	if err := db.SetElementID("3001", 4, "1234567", "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.ElementFor("3001", 4); got != "1234567" {
+		t.Errorf("an override should win over the catalog's own value, got %q", got)
+	}
+
+	if err := db.SetElementID("3001", 4, "", "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.ElementFor("3001", 4); got != "300121" {
+		t.Errorf("clearing the override should fall back to the catalog value, got %q", got)
+	}
+
+	if err := db.SetElementID("9999", 0, "not-digits", "dave"); err == nil {
+		t.Error("expected an error for a non-numeric element id")
+	}
+}
+
 // TestCatalogSetAppliesAnImageOverride is the direct test for the
 // admin-editable set image feature: SetImageOverride must win over the
 // catalog's own picture, and clearing it (blank) must fall back to the
@@ -267,5 +312,35 @@ func TestColoursComeFromSetContentsWhenTheElementListLacksThePart(t *testing.T) 
 	}
 	if cols, _ := db.CatalogColorsFor("9999"); len(cols) != 1 || cols[0].Name != "Black" {
 		t.Errorf("a part known only from set contents: %+v", cols)
+	}
+}
+
+// Regression test: img.PartURLs' LDraw renders don't exist for every part
+// (3023, "Plate 1 x 2", 404s in every colour despite being extremely common)
+// -- PartImageURLs must prefer the element-photo catalog and still offer a
+// requested-colour-first, multi-URL fallback list rather than a single URL
+// that might 404 with nothing else to try.
+func TestPartImageURLsPrefersElementPhotosAndOrdersRequestedColourFirst(t *testing.T) {
+	db := openScratchDB(t)
+	db.Exec(`INSERT INTO cat_colors (id, name, rgb, is_trans) VALUES (4,'Red','C91A09',0),(1,'Blue','0055BF',0)`)
+	db.Exec(`INSERT INTO cat_elements (part_num, color_id) VALUES ('3023', 4), ('3023', 1)`)
+	db.Exec(`INSERT INTO cat_element_ids (element_id, part_num, color_id) VALUES ('302326','3023',4),('302323','3023',1)`)
+
+	urls := db.PartImageURLs("3023", 1)
+	if len(urls) < 2 {
+		t.Fatalf("expected at least the two element photo URLs: %+v", urls)
+	}
+	if urls[0] != "https://cdn.rebrickable.com/media/parts/elements/302323.jpg" {
+		t.Errorf("requested colour (1, Blue) should come first: %+v", urls)
+	}
+	if urls[1] != "https://cdn.rebrickable.com/media/parts/elements/302326.jpg" {
+		t.Errorf("the part's other known colour should follow as a fallback: %+v", urls)
+	}
+
+	// img.PartURLs still contributes one blind guess at the requested
+	// colour's LDraw render even with no element-catalog data to go on --
+	// unverified (it may well 404), but better than offering nothing.
+	if urls := db.PartImageURLs("9999-no-element-rows", 1); len(urls) != 1 {
+		t.Errorf("expected exactly the one unverified LDraw guess, got: %+v", urls)
 	}
 }

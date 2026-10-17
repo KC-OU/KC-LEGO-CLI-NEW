@@ -335,9 +335,10 @@ func newBLWhereUsedCmd() *cobra.Command {
 	var color string
 	var blColor int
 	cmd := &cobra.Command{
-		Use:   "where-used <part>",
-		Short: "Which sets contain a part (BrickLink 'supersets')",
-		Args:  cobra.ExactArgs(1),
+		Use:     "where-used <part>",
+		Short:   "Which sets contain a part (BrickLink 'supersets')",
+		Example: "  wms bricklink where-used 3001\n  wms bricklink where-used 3001 --color red",
+		Args:    cobra.ExactArgs(1),
 		RunE: withBL(func(ctx context.Context, db *lego.DB, c *bricklink.Client, args []string) error {
 			t := ui.New()
 			bl, err := blColorFlag(db, color, blColor)

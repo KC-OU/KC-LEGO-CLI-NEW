@@ -66,3 +66,73 @@ func TestAccessUserBadgeIssueShowRegenerateAndClear(t *testing.T) {
 		t.Error("a cleared token must stop resolving")
 	}
 }
+
+// TestAccessUserSetPasswordCreatesALocalEntry covers the solo-mode CLI path
+// (see docs/guides/solo-mode.md): `wms access user set-password --source
+// local` must create (or update) a "local:<name>" policy entry with a
+// bcrypt password hash, printed once, usable by auth.AuthenticateLocal.
+func TestAccessUserSetPasswordCreatesALocalEntry(t *testing.T) {
+	accessEnv(t)
+	var doc struct {
+		User        string `json:"user"`
+		PasswordSet bool   `json:"password_set"`
+	}
+
+	stdout, code := run(t, "access", "user", "set-password", "kc", "--source", "local", "--password", "a-chosen-phrase", "--json")
+	if code != 0 {
+		t.Fatalf("set-password: code=%d out=%q", code, stdout)
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decoding %q: %v", stdout, err)
+	}
+	if doc.User != "local:kc" || !doc.PasswordSet {
+		t.Fatalf("doc = %+v, want user=local:kc password_set=true", doc)
+	}
+
+	p, err := access.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := p.Users["local:kc"]
+	if u == nil || u.PasswordHash == "" {
+		t.Fatalf("expected a local:kc entry with a password hash, got %+v", u)
+	}
+}
+
+// TestAccessUserSetNameSetsFullName covers the kanban header's
+// "7354 - Kieran Collins (100%)" display name, and confirms a blank name
+// clears it back to showing just the ID.
+func TestAccessUserSetNameSetsFullName(t *testing.T) {
+	accessEnv(t)
+	var doc struct {
+		User     string `json:"user"`
+		FullName string `json:"full_name"`
+	}
+
+	stdout, code := run(t, "access", "user", "set-name", "7354", "Kieran Collins", "--source", "local", "--json")
+	if code != 0 {
+		t.Fatalf("set-name: code=%d out=%q", code, stdout)
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decoding %q: %v", stdout, err)
+	}
+	if doc.User != "local:7354" || doc.FullName != "Kieran Collins" {
+		t.Fatalf("doc = %+v, want user=local:7354 full_name=\"Kieran Collins\"", doc)
+	}
+
+	p, err := access.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Users["local:7354"].FullName; got != "Kieran Collins" {
+		t.Fatalf("FullName = %q, want \"Kieran Collins\"", got)
+	}
+
+	if _, code = run(t, "access", "user", "set-name", "7354", "", "--source", "local"); code != 0 {
+		t.Fatalf("clearing the name: code=%d", code)
+	}
+	p, _ = access.Load()
+	if got := p.Users["local:7354"].FullName; got != "" {
+		t.Errorf("FullName after clearing = %q, want empty", got)
+	}
+}

@@ -9,7 +9,7 @@ import (
 func TestStockSheetUsesLastCheckWhenOneExists(t *testing.T) {
 	d := buildDB(t)
 	checkedFireStation(t, d, 5)
-	title, lines, err := d.StockSheet(context.Background(), nil, "1-1")
+	title, lines, meta, err := d.StockSheet(context.Background(), nil, "1-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestStockSheetUsesLastCheckWhenOneExists(t *testing.T) {
 	if total != 100 { // the set's full piece count — the sheet lists what's expected, not what's missing
 		t.Errorf("expected total pieces = %d, want 100", total)
 	}
-	html, err := StockSheetHTML(title, lines)
+	html, err := StockSheetHTML(title, lines, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestStockSheetUsesLastCheckWhenOneExists(t *testing.T) {
 func TestStockSheetFallsBackToCatalogWhenNeverChecked(t *testing.T) {
 	d := buildDB(t)
 	rb := &Client{}
-	title, lines, err := d.StockSheet(context.Background(), rb, "1-1")
+	title, lines, _, err := d.StockSheet(context.Background(), rb, "1-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestStockSheetExcludesOptionalLinesFromTheTotalButStillListsThem(t *testing
 		}
 	}
 	rb := &Client{}
-	title, lines, err := d.StockSheet(context.Background(), rb, "1-1")
+	title, lines, meta, err := d.StockSheet(context.Background(), rb, "1-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestStockSheetExcludesOptionalLinesFromTheTotalButStillListsThem(t *testing
 	if !found {
 		t.Fatal("the sticker line should still be listed to count against by hand")
 	}
-	html, err := StockSheetHTML(title, lines)
+	html, err := StockSheetHTML(title, lines, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestStockSheetExcludesOptionalLinesFromTheTotalButStillListsThem(t *testing
 
 func TestStockSheetUnknownSetErrors(t *testing.T) {
 	d := buildDB(t)
-	if _, _, err := d.StockSheet(context.Background(), &Client{}, "99999-1"); err == nil {
+	if _, _, _, err := d.StockSheet(context.Background(), &Client{}, "99999-1"); err == nil {
 		t.Error("an unknown set should error, not return an empty sheet")
 	}
 }

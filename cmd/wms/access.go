@@ -14,6 +14,7 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
@@ -101,6 +102,7 @@ func newAccessGroupsCmd() *cobra.Command {
 	}
 	show := &cobra.Command{
 		Use: "show <group>", Short: "A group's permission grid", Args: cobra.ExactArgs(1),
+		Example: "  wms access groups show checker",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := access.Load()
 			if err != nil {
@@ -117,6 +119,7 @@ func newAccessGroupsCmd() *cobra.Command {
 	var from, desc string
 	create := &cobra.Command{
 		Use: "create <group>", Short: "A new, empty group (or a copy with --from)", Args: cobra.ExactArgs(1),
+		Example: "  wms access groups create stock-checker --description \"stock checks, no admin access\"\n  wms access groups create stock-checker --from checker",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.ToLower(args[0])
 			_, err := changePolicy("group create "+name, func(p *access.Policy) error {
@@ -150,6 +153,7 @@ func newAccessGroupsCmd() *cobra.Command {
 	create.Flags().StringVar(&desc, "description", "", "what the group is for")
 	del := &cobra.Command{
 		Use: "delete <group>", Short: "Delete a group (refused while users are in it)", Args: cobra.ExactArgs(1),
+		Example: "  wms access groups delete old-role",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := changePolicy("group delete "+args[0], func(p *access.Policy) error {
 				if p.Groups[args[0]] == nil {
@@ -198,6 +202,7 @@ func newAccessGroupsCmd() *cobra.Command {
 	}
 	restricted := &cobra.Command{
 		Use: "restricted <group> <on|off>", Short: "Whether 2FA-exempt accounts may be in the group (it then may not hold admin-level permissions)", Args: cobra.ExactArgs(2),
+		Example: "  wms access groups restricted checker on",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			on, err := onOff(args[1])
 			if err != nil {
@@ -279,6 +284,7 @@ func newAccessUserCmd() *cobra.Command {
 	}
 	show := &cobra.Command{
 		Use: "show <user>", Short: "A user's entry and effective permissions (with the reason for each)", Args: cobra.ExactArgs(1),
+		Example: "  wms access user show alex\n  wms access user show partdb:bob",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, err := access.Load()
 			if err != nil {
@@ -326,6 +332,7 @@ func newAccessUserCmd() *cobra.Command {
 	}
 	setGroups := &cobra.Command{
 		Use: "set-groups <user> <group,...|none>", Short: "Put a user in these groups (this also brings them under the policy)", Args: cobra.ExactArgs(2),
+		Example: "  wms access user set-groups alex checker,picker\n  wms access user set-groups alex none",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			groups := splitList(args[1])
 			return edit(args[0], "groups="+strings.Join(groups, ","), func(u *access.User) error { u.Groups = groups; return nil })
@@ -334,7 +341,8 @@ func newAccessUserCmd() *cobra.Command {
 	permCmd := func(verb string) *cobra.Command {
 		return &cobra.Command{
 			Use: verb + " <user> <area.action|area.*>", Short: map[string]string{"allow": "Allow a permission for this user alone", "deny": "Deny a permission for this user alone (beats every group)", "inherit": "Clear a user override (the groups decide)"}[verb],
-			Args: cobra.ExactArgs(2),
+			Example: "  wms access user " + verb + " alex settings.view",
+			Args:    cobra.ExactArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				perms, err := expandPerm(args[1])
 				if err != nil {
@@ -379,6 +387,7 @@ func newAccessUserCmd() *cobra.Command {
 	twofaCmd.Flags().StringSliceVar(&cidrs, "cidr", nil, "exempt only from these networks (repeat or comma-separate); none = from anywhere")
 	channels := &cobra.Command{
 		Use: "channels <user> <telnet,web,local|all>", Short: "Which ways in the user may use", Args: cobra.ExactArgs(2),
+		Example: "  wms access user channels alex web,local\n  wms access user channels alex all",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			list := splitList(args[1])
 			if slices.Contains(list, "all") {
@@ -389,6 +398,7 @@ func newAccessUserCmd() *cobra.Command {
 	}
 	expires := &cobra.Command{
 		Use: "expires <user> <YYYY-MM-DD|none>", Short: "The day the user's access ends", Args: cobra.ExactArgs(2),
+		Example: "  wms access user expires temp-contractor 2026-12-01\n  wms access user expires alex none",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d := args[1]
 			if d == "none" {
@@ -431,6 +441,7 @@ func newAccessUserCmd() *cobra.Command {
 	var note string
 	noteCmd := &cobra.Command{
 		Use: "note <user> <text>", Short: "A note on the entry (what the account is for)", Args: cobra.ExactArgs(2),
+		Example: "  wms access user note alex \"floor supervisor, weekday shifts\"",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			note = args[1]
 			return edit(args[0], "note", func(u *access.User) error { u.Note = note; return nil })
@@ -489,8 +500,66 @@ func newAccessUserCmd() *cobra.Command {
 	badgeCmd.Flags().BoolVar(&clearBadge, "clear", false, "remove the badge token (badge sign-in stops working for this user)")
 	badgeCmd.Flags().BoolVar(&showBadgeQR, "qr", false, "also show the token as a scannable QR code (many barcode scanners read QR too)")
 
+	var literalPassword string
+	setPasswordCmd := &cobra.Command{
+		Use:     "set-password <user>",
+		Short:   "Set a local sign-in password for solo mode (see docs/guides/solo-mode.md) — ignored by ModernWMS/Part-DB logins",
+		Example: "  wms access user set-password kc --source local\n  wms access user set-password kc --source local --password 'a chosen phrase'",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			pw := literalPassword
+			if pw == "" {
+				pw = auth.GenerateTempPassword(12)
+			}
+			hash, err := auth.HashPartDB(pw)
+			if err != nil {
+				return err
+			}
+			if err := edit(args[0], "password set", func(u *access.User) error {
+				u.PasswordHash = hash
+				return nil
+			}); err != nil {
+				return err
+			}
+			p, err := access.Load()
+			if err != nil {
+				return err
+			}
+			key := userKey(p, args[0])
+			t := ui.New()
+			say(ui.Fact(t, "User", key))
+			say(t.Accent.Render("Password: " + pw))
+			say(t.Muted.Render("This is the only time it's shown — store it now. It only signs in when WMS_SOLO_MODE=1."))
+			return emit(map[string]any{"user": key, "password_set": true})
+		},
+	}
+	setPasswordCmd.Flags().StringVar(&literalPassword, "password", "", "a chosen password instead of a generated one")
+
+	setNameCmd := &cobra.Command{
+		Use:     "set-name <user> <full name>",
+		Short:   "Set a display name shown alongside a numeric-login account's user ID (e.g. \"7354 - Kieran Collins\")",
+		Example: "  wms access user set-name 7354 \"Kieran Collins\"\n  wms access user set-name 7354 \"\"   # clears it, back to showing just the ID",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[1])
+			if err := edit(args[0], "name set", func(u *access.User) error {
+				u.FullName = name
+				return nil
+			}); err != nil {
+				return err
+			}
+			p, err := access.Load()
+			if err != nil {
+				return err
+			}
+			key := userKey(p, args[0])
+			return emit(map[string]any{"user": key, "full_name": name})
+		},
+	}
+
 	remove := &cobra.Command{
 		Use: "remove <user>", Short: "Delete the user's entry (they go back to their ModernWMS role's access)", Args: cobra.ExactArgs(1),
+		Example: "  wms access user remove alex",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var key string
 			_, err := changePolicy("user remove "+args[0], func(p *access.Policy) error {
@@ -507,13 +576,14 @@ func newAccessUserCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, badgeCmd, remove)
+	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, expires, timeouts, noteCmd, badgeCmd, setPasswordCmd, setNameCmd, remove)
 	return cmd
 }
 
 func newAccessCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "check <user> <area.action>", Short: "Would this user be allowed? And why", Args: cobra.ExactArgs(2),
+		Example: "  wms access check alex settings.view",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !access.Valid(args[1]) {
 				return usageError("%q is not a permission (see `wms access perms`)", args[1])
@@ -616,6 +686,7 @@ func newAccessImportCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use: "import <file>", Short: "Replace the policy with a JSON file (checked before anything is written)", Args: cobra.ExactArgs(1),
+		Example: "  wms access import ./access-backup.json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b, err := os.ReadFile(args[0])
 			if err != nil {

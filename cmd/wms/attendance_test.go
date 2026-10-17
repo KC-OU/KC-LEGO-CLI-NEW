@@ -182,3 +182,107 @@ func TestAttendanceClockInRefusesWithoutBeingOnTheRotaOnceTheGateIsOn(t *testing
 		t.Fatalf("clock-in after the override: code=%d out=%q", code, stdout)
 	}
 }
+
+// TestAttendanceGateTogglesRequireClockIn is the on/off switch for the whole
+// feature, reversible without a redeploy: `wms attendance gate on|off`
+// persists through config.SetOverride (settings.json), so it's still set
+// after this process exits, unlike an env var.
+func TestAttendanceGateTogglesRequireClockIn(t *testing.T) {
+	legoEnv(t)
+
+	stdout, code := run(t, "attendance", "gate")
+	if code != 0 || !strings.Contains(stdout, "OFF") {
+		t.Fatalf("default state: code=%d out=%q", code, stdout)
+	}
+
+	stdout, code = run(t, "attendance", "gate", "on")
+	if code != 0 || !strings.Contains(stdout, "ON") {
+		t.Fatalf("gate on: code=%d out=%q", code, stdout)
+	}
+	if config.Get(config.RequireClockIn) != "1" {
+		t.Errorf("RequireClockIn not persisted: %q", config.Get(config.RequireClockIn))
+	}
+	// Claiming work is now actually gated -- not just a string flipped.
+	if _, code := run(t, "attendance", "clock-in", "dave"); code != exitUsage {
+		t.Errorf("clock-in with no rota entry after gate on = %d, want %d (ErrNotScheduled)", code, exitUsage)
+	}
+
+	stdout, code = run(t, "attendance", "gate", "off")
+	if code != 0 || !strings.Contains(stdout, "OFF") {
+		t.Fatalf("gate off: code=%d out=%q", code, stdout)
+	}
+	if config.Get(config.RequireClockIn) != "0" {
+		t.Errorf("RequireClockIn not cleared: %q", config.Get(config.RequireClockIn))
+	}
+
+	if _, code := run(t, "attendance", "gate", "sideways"); code != exitUsage {
+		t.Errorf("garbage argument = %d, want %d", code, exitUsage)
+	}
+}
+
+// TestAttendanceCardSetClearAndList covers the admin-applied half of status
+// cards (Delay/No Work): setting a second card replaces the first, clearing
+// removes it, and list shows only who currently has one on.
+func TestAttendanceCardSetClearAndList(t *testing.T) {
+	legoEnv(t)
+
+	if _, code := run(t, "attendance", "card", "set", "dave", "lunch"); code != exitUsage {
+		t.Errorf("an invalid reason = %d, want %d", code, exitUsage)
+	}
+
+	stdout, code := run(t, "attendance", "card", "set", "dave", "delay", "--note", "waiting on parts")
+	if code != 0 || !strings.Contains(stdout, "Delay") {
+		t.Fatalf("card set delay: code=%d out=%q", code, stdout)
+	}
+
+	stdout, code = run(t, "attendance", "card", "list")
+	if code != 0 || !strings.Contains(stdout, "dave") || !strings.Contains(stdout, "Delay") {
+		t.Fatalf("card list: code=%d out=%q", code, stdout)
+	}
+
+	// Setting a second card on dave replaces the first -- still just one.
+	if _, code := run(t, "attendance", "card", "set", "dave", "no_work"); code != 0 {
+		t.Fatal("card set no_work failed")
+	}
+	stdout, _ = run(t, "attendance", "card", "list")
+	if strings.Count(stdout, "dave") != 1 {
+		t.Errorf("card list after a second card = %q, want dave listed exactly once", stdout)
+	}
+
+	stdout, code = run(t, "attendance", "card", "clear", "dave")
+	if code != 0 || !strings.Contains(stdout, "cleared") {
+		t.Fatalf("card clear: code=%d out=%q", code, stdout)
+	}
+	stdout, _ = run(t, "attendance", "card", "list")
+	if strings.Contains(stdout, "dave") {
+		t.Errorf("card list after clearing = %q, want dave gone", stdout)
+	}
+}
+
+// TestAttendanceCardScanTogglesBreak is the self-serve half: scanning the
+// one printed break card toggles the scanning user's own break, same
+// StartBreak/EndBreak the break-start/break-end commands already use.
+func TestAttendanceCardScanTogglesBreak(t *testing.T) {
+	legoEnv(t)
+	if _, code := run(t, "attendance", "clock-in", "dave"); code != 0 {
+		t.Fatal("clock-in failed")
+	}
+
+	stdout, code := run(t, "attendance", "card-scan", "dave", "CARD-BREAK")
+	if code != 0 || !strings.Contains(stdout, "Break started") {
+		t.Fatalf("card-scan (start): code=%d out=%q", code, stdout)
+	}
+	stdout, _ = run(t, "attendance", "status", "dave")
+	if !strings.Contains(stdout, "On a break") {
+		t.Errorf("status after scanning the break card should show on a break, got %q", stdout)
+	}
+
+	stdout, code = run(t, "attendance", "card-scan", "dave", "CARD-BREAK")
+	if code != 0 || !strings.Contains(stdout, "Break ended") {
+		t.Fatalf("card-scan (end): code=%d out=%q", code, stdout)
+	}
+
+	if _, code := run(t, "attendance", "card-scan", "dave", "CARD-DELAY"); code != exitUsage {
+		t.Errorf("scanning a non-break code = %d, want %d -- Delay/No Work are admin-applied only", code, exitUsage)
+	}
+}

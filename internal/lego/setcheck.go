@@ -29,8 +29,21 @@ type CheckLine struct {
 	ColorName, BLID             string
 	BLColor                     int
 	Need, Have, Extra           int
-	Optional                    bool // doesn't count toward missing/completion totals — see DB.IsOptional
-	SmallBag                    bool // goes in the small-parts bag, not the main one — see DB.PartBagSize
+	// Damaged is a condition flag, not a quantity: how many of Have are
+	// present but not in good condition. Purely informational -- it does
+	// not reduce Have/Missing()/completion, LowStock's auto-tracking, or
+	// ordering; a damaged piece still counts as held, the same as before
+	// this existed. Set via the TUI's D key or the mobile app's DAMAGED
+	// button.
+	Damaged  int
+	Optional bool // doesn't count toward missing/completion totals — see DB.IsOptional
+	SmallBag bool // goes in the small-parts bag, not the main one — see DB.PartBagSize
+	// Deprioritized is the kanban board's "moved to the back" flag: set
+	// automatically in saveCheck when Missing() is at or above
+	// kanbanQtyThreshold() (default 50, see internal/config.KanbanBacklogQtyThreshold).
+	// Purely a display/sort-order hint, like Damaged — the line stays part of
+	// the same check, nothing is pulled out of it.
+	Deprioritized bool
 }
 
 // Missing is how many of the line the set is short — always 0 for an optional line.
@@ -47,7 +60,24 @@ type SetCheck struct {
 	CheckedBy            string
 	StartedAt            time.Time
 	FinishedAt           time.Time
-	Lines                []CheckLine
+	// LastPosition is the furthest line a mobile client's confirm flow has
+	// reached (see AdvanceCheckPosition) -- so opening this check on a
+	// different device, or just reopening the app, resumes there instead of
+	// always restarting at line 0. Not touched by SaveCheck/the TUI.
+	LastPosition int
+	// PaperCheckedAt is set by MarkPaperDone: the paper copy of this check is
+	// finished, but the CLI entry (the rest of this struct) may still be
+	// whatever NewCheck built it as -- see DB.PendingPaperChecks. Zero means
+	// no paper-done step happened (most checks: CLI-only, as before).
+	PaperCheckedAt time.Time
+	// Disputed and DisputeNote are set by FlagDispute, never automatically:
+	// this check's own numbers are in question, and a proof on file (see
+	// ProofsFor) is the evidence of what was actually true. Existing solely
+	// for an admin to see before deciding whether a deduction stands --
+	// never changes Totals(), RecordCheckOutcome, or anything else.
+	Disputed    bool
+	DisputeNote string
+	Lines       []CheckLine
 }
 
 // Totals are the check's piece counts.
@@ -79,6 +109,7 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 			c.Lines = last.Lines
 			for i := range c.Lines {
 				c.Lines[i].Extra = 0
+				c.Lines[i].Damaged = 0 // a recount re-verifies condition too, not just quantity
 			}
 			return c, nil
 		}
@@ -160,14 +191,18 @@ func (d *DB) DeleteDraftCheck(id int64) error {
 // GetCheck loads a check with its lines.
 func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 	c := &SetCheck{ID: id}
-	var started, finished string
-	if err := d.QueryRow(`SELECT set_num, kind, status, checked_by, started_at, finished_at FROM set_checks WHERE id = ?`, id).
-		Scan(&c.SetNum, &c.Kind, &c.Status, &c.CheckedBy, &started, &finished); err != nil {
+	var started, finished, paperChecked string
+	var disputed int
+	if err := d.QueryRow(`SELECT set_num, kind, status, checked_by, started_at, finished_at, last_position, paper_checked_at, disputed, dispute_note
+		FROM set_checks WHERE id = ?`, id).
+		Scan(&c.SetNum, &c.Kind, &c.Status, &c.CheckedBy, &started, &finished, &c.LastPosition, &paperChecked, &disputed, &c.DisputeNote); err != nil {
 		return nil, err
 	}
 	c.StartedAt, _ = time.Parse(timeLayout, started)
 	c.FinishedAt, _ = time.Parse(timeLayout, finished)
-	rows, err := d.Query(`SELECT part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra
+	c.PaperCheckedAt, _ = time.Parse(timeLayout, paperChecked)
+	c.Disputed = disputed != 0
+	rows, err := d.Query(`SELECT part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized
 		FROM set_check_lines WHERE check_id = ?`, id)
 	if err != nil {
 		return nil, err
@@ -175,7 +210,7 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var l CheckLine
-		if err := rows.Scan(&l.PartNum, &l.PartName, &l.Category, &l.ColorID, &l.ColorName, &l.BLID, &l.BLColor, &l.Need, &l.Have, &l.Extra); err != nil {
+		if err := rows.Scan(&l.PartNum, &l.PartName, &l.Category, &l.ColorID, &l.ColorName, &l.BLID, &l.BLColor, &l.Need, &l.Have, &l.Extra, &l.Damaged, &l.Deprioritized); err != nil {
 			return nil, err
 		}
 		l.Optional, _ = d.IsOptional(l.PartNum, l.Category) // recomputed fresh, in case it changed since this line was saved
@@ -205,6 +240,68 @@ func sortLinesByColorThenCategory(lines []CheckLine) {
 	})
 }
 
+// MarkPaperDone opens (or resumes) setNum's current check and stamps it
+// paper-done at `at` -- the paper copy is finished, the CLI entry is still to
+// come. This is the same draft `wms lego check`/the TUI/mobile app resume
+// into later (see NewCheck's draftCheck lookup), so paper-done and the
+// eventual CLI entry stay one check session throughout.
+func (d *DB) MarkPaperDone(ctx context.Context, rb *Client, setNum, kind, by string, at time.Time) (*SetCheck, error) {
+	c, err := d.NewCheck(ctx, rb, setNum, kind, by)
+	if err != nil {
+		return nil, err
+	}
+	c.PaperCheckedAt = at
+	if err := d.SaveCheck(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// PendingPaperChecks lists open drafts whose paper copy is done but the CLI
+// entry isn't, oldest paper-done first -- `wms lego checks pending` and the
+// login banner's count.
+func (d *DB) PendingPaperChecks() ([]SetCheck, error) {
+	rows, err := d.Query(`SELECT id, set_num, kind, checked_by, paper_checked_at FROM set_checks
+		WHERE status = ? AND paper_checked_at != '' ORDER BY paper_checked_at`, StatusDraft)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SetCheck
+	for rows.Next() {
+		var c SetCheck
+		var at string
+		if err := rows.Scan(&c.ID, &c.SetNum, &c.Kind, &c.CheckedBy, &at); err != nil {
+			return nil, err
+		}
+		c.PaperCheckedAt, _ = time.Parse(timeLayout, at)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CurrentOrLastCheck is setNum's open draft if it has one, else its most
+// recent check of any status (nil if it has never been checked at all) --
+// resolves "this set" into a specific check row for `wms lego attach`,
+// without the caller needing to know intake vs recount.
+func (d *DB) CurrentOrLastCheck(setNum string) (*SetCheck, error) {
+	var id int64
+	err := d.QueryRow(`SELECT id FROM set_checks WHERE set_num = ? AND status = ? ORDER BY id DESC LIMIT 1`, setNum, StatusDraft).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if id == 0 {
+		err = d.QueryRow(`SELECT id FROM set_checks WHERE set_num = ? ORDER BY id DESC LIMIT 1`, setNum).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return d.GetCheck(id)
+}
+
 // LastCheck is the set's most recent finished check (nil if never checked).
 func (d *DB) LastCheck(setNum string) (*SetCheck, error) {
 	var id int64
@@ -216,6 +313,17 @@ func (d *DB) LastCheck(setNum string) (*SetCheck, error) {
 		return nil, err
 	}
 	return d.GetCheck(id)
+}
+
+// AdvanceCheckPosition records that a mobile client's confirm flow has
+// reached pos — only forward (MAX), so jumping ahead to handle a missing
+// line out of order and then going back doesn't un-advance the resume point
+// a different device would pick up. Deliberately separate from
+// SaveCheck/saveCheck: the TUI's own save paths (S key, FinishCheck) never
+// touch this column, so nothing about the TUI's behavior changes.
+func (d *DB) AdvanceCheckPosition(checkID int64, pos int) error {
+	_, err := d.Exec(`UPDATE set_checks SET last_position = MAX(last_position, ?) WHERE id = ?`, pos, checkID)
+	return err
 }
 
 // SaveCheck stores the check (a draft to resume, or as it stands).
@@ -237,23 +345,33 @@ func saveCheck(tx *sql.Tx, c *SetCheck) error {
 	if !c.FinishedAt.IsZero() {
 		finished = c.FinishedAt.UTC().Format(timeLayout)
 	}
+	paperChecked := ""
+	if !c.PaperCheckedAt.IsZero() {
+		paperChecked = c.PaperCheckedAt.UTC().Format(timeLayout)
+	}
+	disputed := 0
+	if c.Disputed {
+		disputed = 1
+	}
 	if c.ID == 0 {
-		res, err := tx.Exec(`INSERT INTO set_checks (set_num, kind, status, checked_by, started_at, finished_at, lines, pieces, have, missing, extra)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, c.SetNum, c.Kind, c.Status, c.CheckedBy, c.StartedAt.UTC().Format(timeLayout), finished, len(c.Lines), pieces, have, missing, extra)
+		res, err := tx.Exec(`INSERT INTO set_checks (set_num, kind, status, checked_by, started_at, finished_at, lines, pieces, have, missing, extra, paper_checked_at, disputed, dispute_note)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.SetNum, c.Kind, c.Status, c.CheckedBy, c.StartedAt.UTC().Format(timeLayout), finished, len(c.Lines), pieces, have, missing, extra, paperChecked, disputed, c.DisputeNote)
 		if err != nil {
 			return fmt.Errorf("saving the check: %w", err)
 		}
 		c.ID, _ = res.LastInsertId()
-	} else if _, err := tx.Exec(`UPDATE set_checks SET status = ?, checked_by = ?, finished_at = ?, lines = ?, pieces = ?, have = ?, missing = ?, extra = ? WHERE id = ?`,
-		c.Status, c.CheckedBy, finished, len(c.Lines), pieces, have, missing, extra, c.ID); err != nil {
+	} else if _, err := tx.Exec(`UPDATE set_checks SET status = ?, checked_by = ?, finished_at = ?, lines = ?, pieces = ?, have = ?, missing = ?, extra = ?, paper_checked_at = ?, disputed = ?, dispute_note = ? WHERE id = ?`,
+		c.Status, c.CheckedBy, finished, len(c.Lines), pieces, have, missing, extra, paperChecked, disputed, c.DisputeNote, c.ID); err != nil {
 		return fmt.Errorf("saving the check: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM set_check_lines WHERE check_id = ?`, c.ID); err != nil {
 		return err
 	}
+	threshold := kanbanQtyThreshold()
 	for _, l := range c.Lines {
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO set_check_lines (check_id, part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`, c.ID, l.PartNum, l.PartName, l.Category, l.ColorID, l.ColorName, l.BLID, l.BLColor, l.Need, l.Have, l.Extra); err != nil {
+		deprioritized := l.Missing() >= threshold
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO set_check_lines (check_id, part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, l.PartNum, l.PartName, l.Category, l.ColorID, l.ColorName, l.BLID, l.BLColor, l.Need, l.Have, l.Extra, l.Damaged, deprioritized); err != nil {
 			return fmt.Errorf("saving line %s: %w", l.PartNum, err)
 		}
 	}
@@ -307,9 +425,55 @@ func (d *DB) FinishCheck(c *SetCheck) (extras []OwnedPart, err error) {
 		}
 		extras = append(extras, p)
 	}
+	if err := autoTrackMissing(tx, d, c); err != nil {
+		return nil, err
+	}
+	if err := releasePoolBagsForCheck(tx, c.ID); err != nil {
+		return nil, err
+	}
 	pieces, have, _, extra, _ := c.Totals()
 	d.journal(tx, "check", "set", c.SetNum, -1, "", pieces, have, fmt.Sprintf("%s check by %s: %d missing, %d extra", c.Kind, c.CheckedBy, missing, extra))
 	return extras, tx.Commit()
+}
+
+// autoTrackMissing is "a check's missing findings feed the low-stock alert
+// directly, no separate manual flag step": the first time a non-optional
+// line comes back genuinely short, its part gets a min_qty equal to the
+// shortfall (creating an owned_parts row at qty 0 if there wasn't one
+// already), so it shows up in LowStock()/`wms lego low` and the Discord
+// low-stock alert from then on without an admin having to notice and run
+// `wms lego set-min` themselves. Never touches a part that already has a
+// min_qty set -- that's an admin's own chosen threshold, not something a
+// check result should silently override.
+func autoTrackMissing(tx *sql.Tx, d *DB, c *SetCheck) error {
+	now := time.Now().UTC().Format(timeLayout)
+	for _, l := range c.Lines {
+		missing := l.Missing()
+		if missing <= 0 {
+			continue
+		}
+		cur, err := getOwnedTx(tx, l.PartNum, l.ColorID, l.ColorName)
+		if err != nil {
+			return err
+		}
+		if cur != nil && cur.MinQty > 0 {
+			continue
+		}
+		qty := 0
+		if cur == nil {
+			if _, err := tx.Exec(`INSERT INTO owned_parts (part_num, name, category, color_id, color_name, qty, min_qty, synced_part_id, updated_at)
+				VALUES (?,?,?,?,?,0,?,0,?)`, l.PartNum, l.PartName, l.Category, l.ColorID, l.ColorName, missing, now); err != nil {
+				return fmt.Errorf("auto-tracking %s as low stock: %w", l.PartNum, err)
+			}
+		} else {
+			qty = cur.Qty
+			if _, err := tx.Exec(`UPDATE owned_parts SET min_qty = ?, updated_at = ? WHERE `+ownedMatch, missing, now, l.PartNum, l.ColorID, l.ColorName); err != nil {
+				return fmt.Errorf("auto-tracking %s as low stock: %w", l.PartNum, err)
+			}
+		}
+		d.journal(tx, "min", "part", l.PartNum, l.ColorID, l.ColorName, qty, qty, fmt.Sprintf("auto-tracked: %d short on set %s check", missing, c.SetNum))
+	}
+	return nil
 }
 
 func getOwnedTx(tx *sql.Tx, partNum string, colorID int, colorName string) (*OwnedPart, error) {
@@ -466,7 +630,27 @@ type SetState struct {
 	// DB.CatalogSet so every reader — TUI, CLI, the mobile API's lineView —
 	// sees it the same way, with no separate push to keep them in sync.
 	ImageURL string
+	// MaxBags is how many bag instances (see bags.go) a check of this set may
+	// register at once -- 2 (small + main) by default; an admin raises it for
+	// a set that genuinely needs more. BagGating "" (the default) means the
+	// live bag-scan gate is on; "off" is an admin's per-set exemption.
+	MaxBags   int
+	BagGating string
+	// BoxBarcode is the retail box's own UPC/EAN, a second way to resolve this
+	// set besides its set_num -- see SetBoxBarcode/DB.GetSetByNum. Blank means
+	// none registered yet.
+	BoxBarcode string
+	// BacklogStatus is the kanban board's gate on a newly-added set: "backlog"
+	// (not yet checkable, an admin hasn't released it) or "released" (the
+	// default, and the only state any set added before this existed has ever
+	// been in). See DB.SetBacklogStatus/BacklogSets.
+	BacklogStatus                        string
+	BacklogReleasedBy, BacklogReleasedAt string
 }
+
+// BagGatingOn reports whether this set's live bag-scan gate is active --
+// true unless an admin has explicitly turned it off for this set.
+func (s *SetState) BagGatingOn() bool { return s.BagGating != "off" }
 
 // Incomplete reports whether the last check found parts missing.
 func (s *SetState) Incomplete() bool { return s.MissingQty > 0 }
@@ -476,10 +660,10 @@ func (s *SetState) Checked() bool { return s.LastCheck != nil }
 
 // GetSetState returns what is known about a set's contents (an empty state, never nil).
 func (d *DB) GetSetState(setNum string) *SetState {
-	s := &SetState{SetNum: setNum}
+	s := &SetState{SetNum: setNum, MaxBags: 2, BacklogStatus: BacklogReleased}
 	var checkID int64
-	_ = d.QueryRow(`SELECT location, condition, condition_note, missing_qty, last_check_id, pdb_location_id, image_url FROM set_state WHERE set_num = ?`, setNum).
-		Scan(&s.Location, &s.Condition, &s.ConditionNote, &s.MissingQty, &checkID, &s.PDBLocationID, &s.ImageURL)
+	_ = d.QueryRow(`SELECT location, condition, condition_note, missing_qty, last_check_id, pdb_location_id, image_url, max_bags, bag_gating, box_barcode, backlog_status, backlog_released_by, backlog_released_at FROM set_state WHERE set_num = ?`, setNum).
+		Scan(&s.Location, &s.Condition, &s.ConditionNote, &s.MissingQty, &checkID, &s.PDBLocationID, &s.ImageURL, &s.MaxBags, &s.BagGating, &s.BoxBarcode, &s.BacklogStatus, &s.BacklogReleasedBy, &s.BacklogReleasedAt)
 	if checkID > 0 {
 		c := &SetCheck{ID: checkID}
 		var started, finished string
@@ -503,6 +687,21 @@ func (d *DB) SetInfo(setNum, location, condition, note string) error {
 	return err
 }
 
+// SetBagPolicy updates a set's bag-gating knobs -- maxBags how many bag
+// instances a check of it may register (admin raises it for a set that
+// genuinely needs more than the small+main default), gating "off" to exempt
+// the set from the live scan gate entirely, "" (or any other value) to leave
+// it on. Caller enforces admin-only, same as every other set-info flag.
+func (d *DB) SetBagPolicy(setNum string, maxBags int, gating string) error {
+	if maxBags < 1 {
+		return errors.New("max bags must be at least 1")
+	}
+	_, err := d.Exec(`INSERT INTO set_state (set_num, max_bags, bag_gating) VALUES (?,?,?)
+		ON CONFLICT(set_num) DO UPDATE SET max_bags = excluded.max_bags, bag_gating = excluded.bag_gating`,
+		setNum, maxBags, strings.TrimSpace(gating))
+	return err
+}
+
 // SetImageOverride records an admin's replacement picture for a set (blank
 // clears it, back to the catalog's own cat_sets.img_url). See DB.CatalogSet.
 func (d *DB) SetImageOverride(setNum, url string) error {
@@ -512,11 +711,76 @@ func (d *DB) SetImageOverride(setNum, url string) error {
 	return err
 }
 
+// SetBoxBarcode registers setNum's retail box's own UPC/EAN as a second way
+// to resolve it (see DB.GetSetByNum) -- useful when a set's own printed set
+// number is awkward to scan or type but the box's barcode is right there.
+// Blank clears it. Rejects a barcode already registered to a different set --
+// two sets sharing one barcode would make scanning ambiguous.
+func (d *DB) SetBoxBarcode(setNum, barcode string) error {
+	barcode = strings.TrimSpace(barcode)
+	if barcode != "" {
+		var owner string
+		if err := d.QueryRow(`SELECT set_num FROM set_state WHERE box_barcode = ? AND set_num != ?`, barcode, setNum).Scan(&owner); err == nil {
+			return fmt.Errorf("barcode %s is already registered to set %s", barcode, owner)
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+	}
+	_, err := d.Exec(`INSERT INTO set_state (set_num, box_barcode) VALUES (?,?)
+		ON CONFLICT(set_num) DO UPDATE SET box_barcode = excluded.box_barcode`,
+		setNum, barcode)
+	return err
+}
+
 // SetPDBLocation remembers the Part-DB storage location made for the set.
 func (d *DB) SetPDBLocation(setNum string, id int) error {
 	_, err := d.Exec(`INSERT INTO set_state (set_num, pdb_location_id) VALUES (?,?)
 		ON CONFLICT(set_num) DO UPDATE SET pdb_location_id = excluded.pdb_location_id`, setNum, id)
 	return err
+}
+
+// Kanban backlog states for SetState.BacklogStatus — see DB.SetBacklogStatus.
+const (
+	BacklogQueued   = "backlog"
+	BacklogReleased = "released"
+)
+
+// SetBacklogStatus moves a set between the kanban backlog and the active,
+// checkable pool. Only "backlog" and "released" are valid; releasing records
+// who and when, queuing clears both (a set only goes back to backlog by being
+// newly added, never by being pulled back off the active pool).
+func (d *DB) SetBacklogStatus(setNum, status, by string) error {
+	if status != BacklogQueued && status != BacklogReleased {
+		return fmt.Errorf("backlog status must be %q or %q", BacklogQueued, BacklogReleased)
+	}
+	releasedBy, releasedAt := "", ""
+	if status == BacklogReleased {
+		releasedBy, releasedAt = by, time.Now().UTC().Format(timeLayout)
+	}
+	_, err := d.Exec(`INSERT INTO set_state (set_num, backlog_status, backlog_released_by, backlog_released_at) VALUES (?,?,?,?)
+		ON CONFLICT(set_num) DO UPDATE SET backlog_status = excluded.backlog_status, backlog_released_by = excluded.backlog_released_by, backlog_released_at = excluded.backlog_released_at`,
+		setNum, status, releasedBy, releasedAt)
+	return err
+}
+
+// BacklogSets lists sets still queued in the kanban backlog, newest-added first.
+func (d *DB) BacklogSets() ([]SetState, error) {
+	rows, err := d.Query(`SELECT set_num FROM set_state WHERE backlog_status = ? ORDER BY set_num DESC`, BacklogQueued)
+	if err != nil {
+		return nil, err
+	}
+	var nums []string
+	for rows.Next() {
+		var n string
+		_ = rows.Scan(&n)
+		nums = append(nums, n)
+	}
+	rows.Close()
+	out := make([]SetState, 0, len(nums))
+	for _, n := range nums {
+		out = append(out, *d.GetSetState(n))
+	}
+	return out, rows.Err()
 }
 
 // IncompleteSets lists sets whose last check found parts missing, most missing first.

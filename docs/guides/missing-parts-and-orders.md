@@ -16,6 +16,13 @@ have spent on it, and who checked it last. **Enter** opens a set's missing parts
 Prices are stored for a week, so looking again costs no API calls. LEGO Pick a Brick and Rebrickable have no price API, so
 those are links. `wms-go lego shopping 75192 --prices` does the same from the shell.
 
+The element id normally comes from the Rebrickable catalog sync, but a brand-new set is often checked before the catalog
+has caught up — the printed number is right there in the instructions anyway (next to each part, as a 6-8 digit number).
+If the catalog has none, the **Enter** screen shows "No LEGO element id on file — E to add one"; if it has one that looks
+wrong, **E** corrects it too. Any checker or admin can do this, not just an admin — it's the same permission as checking
+a set's parts in the first place. From the shell: `wms-go lego element-id 3001 red` shows it, `--set 6644777` records it,
+`--clear` removes your correction (back to whatever the catalog has, if anything).
+
 BrickOwl: create a key at *brickowl.com → My Account → API* and put it in `BRICKOWL_API_KEY` (the live price lookup needs
 BrickOwl to approve the key for catalog access). `BRICKOWL_COUNTRY` (default `GB`) picks the sellers.
 

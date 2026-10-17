@@ -15,6 +15,9 @@ const (
 	EventForcedOff           = "forced_off"
 	EventReassigned          = "reassigned"
 	EventFeatureRequest      = "feature_request"
+	EventSetRequest          = "set_request"
+	EventKanbanReleased      = "kanban_released"
+	EventKanbanNoteShared    = "kanban_note_shared"
 )
 
 type AdminEvent struct {

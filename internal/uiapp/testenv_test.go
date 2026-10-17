@@ -34,6 +34,7 @@ func newTestEnv(t *testing.T) (*App, *partdbtest.Fake) {
 	t.Setenv(config.PartDBAPIToken, testFakeToken)
 	t.Setenv(config.SettingsFile, filepath.Join(dir, "settings.json"))
 	t.Setenv(config.TwoFAFile, filepath.Join(dir, "2fa.json"))
+	t.Setenv(config.LoginLockFile, filepath.Join(dir, "login_lock.json"))
 	t.Setenv(config.AuditLogFile, filepath.Join(dir, "audit.log"))
 	t.Setenv(config.LegoDBPath, filepath.Join(dir, "lego.db"))
 	t.Setenv(config.ImageDir, filepath.Join(dir, "imgcache"))

@@ -15,7 +15,8 @@ import (
 )
 
 func newUsers2FACmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "2fa", Short: "Manage TOTP two-factor authentication for TUI logins"}
+	cmd := &cobra.Command{Use: "2fa", Short: "Manage TOTP two-factor authentication for TUI logins",
+		Example: "  wms users 2fa enable dave\n  wms users 2fa status dave\n  wms users 2fa unlock dave\n  wms users 2fa disable dave"}
 	cmd.AddCommand(newUsers2FAEnableCmd(), newUsers2FADisableCmd(), newUsers2FAUnlockCmd(), newUsers2FAStatusCmd())
 	return cmd
 }
@@ -25,6 +26,7 @@ func newUsers2FAEnableCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "enable <user>",
 		Short:             "Enroll a user in TOTP 2FA (opt-in, off by default)",
+		Example:           "  wms users 2fa enable dave\n  wms users 2fa enable dave --source partdb",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeUser(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,6 +74,7 @@ func newUsers2FADisableCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "disable <user>",
 		Short:             "Remove TOTP 2FA from a user",
+		Example:           "  wms users 2fa disable dave",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeUser(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -94,6 +97,7 @@ func newUsers2FAUnlockCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "unlock <user>",
 		Short:             "Clear a 2FA lockout (5 wrong codes in a row lock the account for 5 minutes, doubling each time)",
+		Example:           "  wms users 2fa unlock dave",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeUser(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -115,6 +119,7 @@ func newUsers2FAStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "status <user>",
 		Short:             "Show whether a user has TOTP 2FA enabled",
+		Example:           "  wms users 2fa status dave",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeUser(0),
 		RunE: func(cmd *cobra.Command, args []string) error {

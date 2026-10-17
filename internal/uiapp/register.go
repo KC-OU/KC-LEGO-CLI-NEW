@@ -2,7 +2,7 @@ package uiapp
 
 func buildScreens(app *App) map[string]screenModel {
 	m := buildCoreScreens(app)
-	for _, more := range []map[string]screenModel{accessScreens(), workshopScreens(), notifyScreens(), {scrLabels: &labelsScreen{}}} {
+	for _, more := range []map[string]screenModel{accessScreens(), workshopScreens(), notifyScreens(), kanbanScreens(), {scrLabels: &labelsScreen{}}} {
 		for id, s := range more {
 			m[id] = s
 		}
@@ -66,6 +66,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrMyTheme:             &themeScreen{},
 		scrFeatureRequest:      featureRequestScreen(),
 		scrMessageAdmin:        messageAdminScreen(),
+		scrRequestSet:          requestSetScreen(),
 		scrMyLoading:           loadingPrefScreen(),
 		scrMyAccuracyVis:       accuracyVisPrefScreen(),
 		scrMyPictures:          picturePrefScreen(),
@@ -128,7 +129,9 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrLiveSessions:        liveSessionsScreen(),
 		scrHandover:            handoverScreen(),
 		scrRotaView:            rotaViewScreen(),
-		scrBagCodePrompt:       bagCodePromptScreen(),
+		scrStatusCards:         statusCardsScreen(),
+		scrStatusCardNote:      statusCardNoteScreen(),
+		scrBagsNeeded:          bagsNeededScreen(),
 		scrMyExports:           myExportsScreen(),
 		scrAdminEvents:         adminEventsScreen(),
 		scrAdminEventsClear:    adminEventsClearScreen(),

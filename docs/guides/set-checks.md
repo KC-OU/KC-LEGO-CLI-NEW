@@ -23,6 +23,16 @@ The whole parts list opens, **every line already marked as have-all**, so you on
 | **Z** | **scanner mode** (below) |
 | **U** | undo · **S** save for later (resume where you left off) · **F** finish · **Esc** leave |
 
+A **MISSING N / EXTRA N** badge sits at the top of the screen the whole time — red for missing, blue for
+extra — the check's running totals, updated the moment you mark a line, in both the table and the
+**W** guided-walk view. Shown even at zero, so you never have to scan the whole list (or ask someone
+else) to know where a check currently stands. The mobile app carries the same two numbers on every
+line (`total_missing`/`total_extra`) for its own equivalent.
+
+The table view's own Miss/Extra columns carry the same colours per line — red/blue, not just plain
+text — so scanning down the list itself (not only the badge at the top) shows at a glance which lines
+still need attention.
+
 On **F**:
 
 - the check is recorded with **who did it and when**;
@@ -89,7 +99,7 @@ can replace it there (`--image-url` from the shell; blank clears it, back to the
 everywhere that set's picture shows — the TUI, label sheets, the mobile app's check/pick screen — the next time any of
 them loads it, with nothing to re-sync by hand.
 
-## The small-parts bag
+## Bags: small, main, extra — and scanning the right one
 
 Some parts are too easy to lose loose in with everything else — a loose 1x1, a minifig accessory.
 Mark them once:
@@ -100,21 +110,117 @@ wms-go lego bag-size 3024 small        # goes in the small bag from now on
 wms-go lego bag-size 3024 main         # back to the ordinary bag
 ```
 
-Every part defaults to the main bag until marked otherwise — nothing changes for a set with no
-small parts in it. Once a check has at least one small-bag line, **finishing it holds for the small
-bag's own barcode or number** — typed or scanned, confirming (and from then on, recording) exactly
-which physical bag goes with which set, not just a printed label claiming it does. Supply it the
-same moment you finish (`force`/`bag_code` on the mobile `/mobile/finish` call; the TUI's F key
-opens a one-field prompt for it) — one confirmation per check, not per part.
+Every part defaults to the main bag until marked otherwise. `small`, `main`, and `extra` are the
+three built-in **bag kinds** — a global registry, not a per-set setting — and an admin can add more
+(`wms-go lego bag-kind add wheels "Wheels & Tyres"`) for anything that deserves its own container
+across every set. `wms-go lego bag-kind list` shows what exists.
+
+Every set gets a bag **instance** per kind it actually needs: `75192-A` (small), `75192-B` (main),
+and — only once a checker actually finds something extra, never printed up front — `75192-E`
+(extra). `wms-go lego bag-labels 75192` prints every label that exists for a set so far in one run;
+`wms-go lego small-bag-label 75192 BAG-0042 -o b.pdf` still works for the single small-bag label,
+with its own chosen code, same as before.
+
+**By default, every set requires scanning the right bag before a part in it can be marked.** In the
+TUI, press **B** to scan or type a bag's code (the same barcode-wedge entry as **Z**'s part scanner);
+checking any line first checks that the right bag is active. Switch bags freely mid-session — small
+parts into the small bag, big ones into main, back and forth — there's no restriction on which order,
+only that *some* scan of the matching kind has happened before that line can be marked. Scanning a
+bag's code is also enough to open or resume its set's check directly, without already knowing the
+set number. The mobile app's `/mobile/scan-bag` does the same thing for an already-claimed check, and
+`/mobile/confirm` takes an optional `bag_code` to scan and mark in one request.
+
+Scanning the *wrong* bag (right set, wrong kind) never blocks anything — it's a warning ("wrong bag —
+scan 75192-A") that you can see and override, logged quietly for the audit trail, not scored against
+accuracy. Scanning a code from a different set names which one it belongs to; a code that matches no
+bag at all is a plain "unknown bag code" error. **Finishing a check holds** until every bag kind that
+check actually needs has been scanned at least once — small and main always, extra only if something
+was actually marked Extra during the session — the same `409`-and-structured-summary shape the old
+single small-bag prompt used, just covering every bag instance instead of one.
+
+A set normally gets one instance of each kind (one small bag, one main bag). A huge set that needs a
+second small bag, say, needs an admin to raise that set's limit first:
 
 ```bash
-wms-go lego small-bag-label 75192                  # blank label: set number, name, "SMALL PARTS"
-wms-go lego small-bag-label 75192 BAG-0042 -o b.pdf # the label's own barcode becomes the bag's code
+wms-go lego set-info 75192 --max-bags 3         # this set can have up to 3 instances of a kind
+wms-go lego set-info 75192 --bag-gating off     # turn the scan requirement off for this one set
 ```
 
-Printing with a code already decided (rather than generating one from whatever gets scanned back
-in) means the same code on the label is exactly what gets confirmed at finish time — scan the label
-once to print it, scan it again to close out the check.
+Both are admin-only, gated the same way the **V** key's Admin/Picker-Checker toggle already is — no
+extra password or 2FA step, just the existing permission check. A checker who needs a second instance
+of a kind tells an admin, who raises the limit, then registers and prints the next one:
+
+```bash
+wms-go lego set-info 75192 --max-bags 3     # was 2; this set can now have 3 instances of a kind
+wms-go lego bag-add 75192 small             # registers + prints "75192-A2"
+```
+
+Gating only applies to **new** checks started after it shipped — nothing changes for a check already
+in progress — and only to the interactive TUI/mobile flows; `wms-go lego check` from the shell stays
+the non-interactive admin bypass it always was, no bag scanning involved.
+
+### A reusable bag pool
+
+Printing a fresh one-off code for every check is the default, but if you'd rather keep a handful of
+real, permanent containers (labeled bins, say) and hand them out instead, register each one under its
+own stable code and assign it to whichever set currently needs it:
+
+```bash
+wms-go lego bag-pool add BIN-07 small          # a real bin, registered once
+wms-go lego bag-pool assign BIN-07 75192       # handed to 75192's current (or last) check
+wms-go lego bag-pool list                      # see what's out and what's free
+```
+
+A pool bag scans and gates exactly like any other bag once assigned — nothing about scanning, warnings,
+or the finish gate treats it differently. It's freed back to available automatically the moment that
+check finishes, ready to hand to the next set. `wms-go lego bag-pool release <code>` frees one by hand
+(a check abandoned rather than finished, say).
+
+### Reprinting a damaged or unscannable label
+
+`wms-go lego bag-labels <set>` is always safe to run again — it reads every bag actually registered
+on the set (a pool-assigned bag's own code, a second instance, a custom kind, included) rather than
+regenerating codes from scratch, so rerunning it after a label gets damaged, smudged, or just won't
+scan prints the exact same labels, byte for byte. The Bluetooth print page and `/mobile/print/bags`
+work the same way — pick the bag from the list and print it again, as many times as you need.
+
+### Finding a lost bag
+
+`wms-go lego bag-find <code>` looks up any code — a per-check instance (scanned in or not, on a
+finished check or a live one), a pool bag's own identity, or even a label that was printed but never
+actually scanned into anything — and says what it belongs to, independent of any active checking
+session. Useful for a bag that turns up without its checker, or for double-checking a label before it
+goes on. The Set Workshop's **F** key does the same from the TUI, and the mobile app has
+`GET /mobile/bag-find?code=...`. Unlike scanning a bag into a check, this never registers or marks
+anything — it only reports what's already known.
+
+An admin scanning or typing a bag's code also sees **who printed it and when**, and — once its check
+is finished — that check's own result (missing/extra counts, and whether it was flagged disputed):
+"what mess-ups did this bag make", without a separate incident log to maintain. Everyone else just
+sees what the bag is, same as before.
+
+### Per-bag breakdown
+
+The **Completion dashboard** (*Set Workshop → 2*) splits an incomplete set's shortfall by which bag
+each short part actually belongs in — "Main 5 · Small Parts 3" — instead of just one set-wide missing
+count, so you know which physical bag to go looking in first. The missing-parts report
+(`wms-go lego report missing`) and the extra-parts report (`wms-go lego report extra`) tag each row
+the same way — a missing row with the bag it'll go in once restocked, an extra row with the dedicated
+extra bag — shown as their own column when a report actually has one to show.
+
+### Printing straight from a Labelnize/Phomemo PM260 over Bluetooth
+
+The CLI command above writes a file; if you'd rather skip the file and print directly from whatever
+phone or laptop is actually next to the printer, open `https://<your-mobile-api-address>/mobile/print`
+(the same address the mobile app already points at) in **Chrome or Edge** — Safari/iOS has no Web
+Bluetooth support at all, and the page needs HTTPS to use Bluetooth in the first place. Sign in the
+same way the app does, tap **Connect to printer** and pick your PM260 from the Bluetooth list, then
+type a set number — the bag dropdown fills in with whichever of that set's bags exist so far (small
+and main always, extra once it's been created) — pick one and tap **Print**. The page talks to the
+printer directly over Bluetooth LE — this server is never in the loop, which is why it works wherever
+the printer actually sits, not wherever `wms-go` happens to be running. Only the 50x30 and 40x30
+small-bag sizes are offered there; for anything else (the 4x6 set label, a sheet of Avery labels) use
+the CLI/TUI export as before.
 
 ## From the shell
 

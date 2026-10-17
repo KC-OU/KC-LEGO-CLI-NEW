@@ -130,10 +130,15 @@ func legoSetConfirmScreen() screenModel {
 				owned, qty = fmt.Sprintf("%d — change it below if that's wrong", d.Existing.Qty), strconv.Itoa(d.Existing.Qty)
 			}
 			st := app.legoDB.GetSetState(catalogSetNum(d.Num))
-			// Offer the parts check when the parts list is known and the set was never checked.
+			// Offer the parts check when the parts list is known and the set was never
+			// checked -- but never for a genuinely new set (d.Existing == nil): that one
+			// goes to the kanban backlog instead (see submitSetConfirm), an admin releases
+			// it for checking later rather than it starting immediately here.
 			checkNow := "no"
-			if items, _ := app.legoDB.CatalogSetInventory(catalogSetNum(d.Num)); len(items) > 0 && !st.Checked() && app.can("sets.check") {
-				checkNow = "yes"
+			if d.Existing != nil {
+				if items, _ := app.legoDB.CatalogSetInventory(catalogSetNum(d.Num)); len(items) > 0 && !st.Checked() && app.can("sets.check") {
+					checkNow = "yes"
+				}
 			}
 			num := func(n int) string {
 				if n == 0 {
@@ -202,6 +207,7 @@ func submitSetConfirm(app *App, v []string) {
 
 	var set lego.Set
 	was := 0
+	isNew := d.Existing == nil
 	if d.Existing != nil {
 		set, was = *d.Existing, d.Existing.Qty
 	}
@@ -221,10 +227,22 @@ func submitSetConfirm(app *App, v []string) {
 	if err := app.legoDB.SetInfo(catalogSetNum(set.SetNum), v[sfLocation], cond, ""); err != nil {
 		app.setMsg("Saved the set, but not its location: "+err.Error(), true)
 	}
+	// A genuinely new set queues in the kanban backlog instead of becoming
+	// checkable immediately -- someone may already be mid-check elsewhere; an
+	// admin releases it from the Backlog screen when it's a good time. An
+	// already-owned set being re-added (a qty update) was released long ago
+	// and is untouched here.
+	if isNew {
+		if err := app.legoDB.SetBacklogStatus(catalogSetNum(set.SetNum), lego.BacklogQueued, app.session.Username); err != nil {
+			app.setMsg("Saved the set, but couldn't queue it to the backlog: "+err.Error(), true)
+		} else {
+			msg += " Queued to the kanban backlog — an admin will release it for checking."
+		}
+	}
 	app.legoSetDraft = nil
 	app.setMsg(msg, false)
 	app.popTo(scrLegoHub)
-	if a := strings.ToLower(strings.TrimSpace(v[sfCheck])); (a == "yes" || a == "y") && qty > 0 {
+	if a := strings.ToLower(strings.TrimSpace(v[sfCheck])); (a == "yes" || a == "y") && qty > 0 && !isNew {
 		startCheck(app, catalogSetNum(set.SetNum), lego.CheckIntake)
 		if app.cur == scrSetCheck {
 			app.setMsg(msg+" Now mark what is missing (M) or extra (E); F finishes.", false)

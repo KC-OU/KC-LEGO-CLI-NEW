@@ -72,3 +72,35 @@ func TestMessageAdminRecordsAnEventAndRejectsBlank(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for a blank message", resp2.StatusCode)
 	}
 }
+
+// TestRequestSetRecordsAnEventAndRejectsBlank mirrors
+// TestMessageAdminRecordsAnEventAndRejectsBlank for the "Request a Set"
+// screen's own endpoint.
+func TestRequestSetRecordsAnEventAndRejectsBlank(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mobile/request-set", jsonBody(t, requestSetRequest{Set: "75192 Millennium Falcon", Why: "UCS, would love this one"}))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/mobile/request-set", jsonBody(t, requestSetRequest{Set: "  "}))
+	req2.Header.Set("Authorization", "Bearer "+token)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a blank set", resp2.StatusCode)
+	}
+}

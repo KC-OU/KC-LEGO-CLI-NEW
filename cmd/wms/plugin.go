@@ -94,9 +94,10 @@ func newPluginEnableCmd() *cobra.Command {
 	var asUser string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "enable <name> [--hooks part_added,low_stock] [--as-user root]",
-		Short: "Review a plugin's checksum and turn it on",
-		Args:  cobra.ExactArgs(1),
+		Use:     "enable <name> [--hooks part_added,low_stock] [--as-user root]",
+		Short:   "Review a plugin's checksum and turn it on",
+		Example: "  wms plugin enable restock-notifier --hooks part_added,low_stock",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()
@@ -148,9 +149,10 @@ func splitCSV(in []string) []string {
 
 func newPluginDisableCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "disable <name>",
-		Short: "Turn a plugin off",
-		Args:  cobra.ExactArgs(1),
+		Use:     "disable <name>",
+		Short:   "Turn a plugin off",
+		Example: "  wms plugin disable restock-notifier",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := pluginManager().Disable(args[0]); err != nil {
 				return withCode(exitNotFound, err)
@@ -163,9 +165,10 @@ func newPluginDisableCmd() *cobra.Command {
 
 func newPluginNewCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "new <name>",
-		Short: "Create an example plugin (not enabled) to start from",
-		Args:  cobra.ExactArgs(1),
+		Use:     "new <name>",
+		Short:   "Create an example plugin (not enabled) to start from",
+		Example: "  wms plugin new restock-notifier",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t := ui.New()
 			p, err := pluginManager().Scaffold(args[0])
@@ -183,6 +186,7 @@ func newPluginRunCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:                "run <name> [args...]",
 		Short:              "Run an enabled plugin (same as `wms <name> [args...]`)",
+		Example:            "  wms plugin run restock-notifier",
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

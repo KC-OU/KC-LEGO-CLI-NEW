@@ -128,6 +128,7 @@ type App struct {
 	partDetailRows    [][]string
 	legoSearchTerm    string
 	legoSetDetailRows [][]string
+	bagFindRows       [][]string
 	legoFound         []foundSet // last set-search results, for the add-to-collection step
 	legoSetDraft      *setDraft  // set being added/updated, between the number prompt and the confirm screen
 	partFlow          *partFlow  // the part being added/updated, between the number prompt and the save
@@ -158,18 +159,21 @@ type App struct {
 	logoFrame int         // the sign-on logo's sweep
 	clockOn   bool
 
-	currentTicketID int64            // the job ticket app.checking/app.ws().orderID belongs to, 0 = none (see tickets_screens.go)
-	assign          *assignDraft     // an admin's in-progress "assign work" flow (see tickets_screens.go)
-	dock            *dockDraft       // an admin's in-progress "dock accuracy" flow (see accuracy_screens.go)
-	message2        *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
-	abandonAdmin    string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
-	forceOff        *forceOffDraft   // an admin's in-progress "force off a job" flow (see tickets_screens.go)
-	kick            *kickDraft       // an admin's in-progress "kick a live session" flow (see sessions_screen.go)
-	toasts          []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
-	sessionID       string           // this process's own id in live_sessions (see sessions.go)
-	parked          *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
-	viewingSubmenu  *submenuView     // which admin-named sub-menu scrSubMenuView is currently showing (see menu_catalog.go)
-	menuEdit        *menuEditDraft   // the screen+scope an admin is customizing (see main_menu_screen.go)
+	currentTicketID  int64            // the job ticket app.checking/app.ws().orderID belongs to, 0 = none (see tickets_screens.go)
+	assign           *assignDraft     // an admin's in-progress "assign work" flow (see tickets_screens.go)
+	dock             *dockDraft       // an admin's in-progress "dock accuracy" flow (see accuracy_screens.go)
+	statusCard       *statusCardDraft // an admin's in-progress "put a card on someone" flow (see status_cards_screen.go)
+	message2         *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
+	abandonAdmin     string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
+	forceOff         *forceOffDraft   // an admin's in-progress "force off a job" flow (see tickets_screens.go)
+	kick             *kickDraft       // an admin's in-progress "kick a live session" flow (see sessions_screen.go)
+	toasts           []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
+	sessionID        string           // this process's own id in live_sessions (see sessions.go)
+	parked           *parkedSession   // the checker/picker identity parked mid-admin-switch, nil = not switched (see switch_admin.go)
+	viewingSubmenu   *submenuView     // which admin-named sub-menu scrSubMenuView is currently showing (see menu_catalog.go)
+	menuEdit         *menuEditDraft   // the screen+scope an admin is customizing (see main_menu_screen.go)
+	kanbanFilterUser string           // admin board filter, "" = everyone (see kanban_screens.go)
+	kanbanNote       *kanbanNoteDraft // an in-progress "add a kanban note" flow (see kanban_screens.go)
 
 	reviewingEscalation *lego.AccuracyEscalation // the open alert scrAccuracyReport is being filed against (see alerts_screen.go)
 	viewingReportsFor   *reportsViewDraft        // whose accuracy report history scrAccuracyReportsView is showing (see alerts_screen.go)
@@ -444,7 +448,7 @@ func (a *App) View() string {
 	a.bodyRow = ui.FrameBodyRow
 	var user, role, badge, extra string
 	if a.session != nil {
-		user, role = a.session.Username, a.session.Role
+		user, role = a.headerIdentity(), a.session.Role
 		canWrite := a.session.Permissions != nil && a.session.Permissions.CanWrite
 		badge = ui.RoleBadge(a.theme, role, canWrite)
 		extra = "Source: " + a.session.Source
@@ -464,7 +468,7 @@ func (a *App) viewClassic(scr screenModel) string {
 	}
 	var user, role, badge, extra string
 	if a.session != nil {
-		user, role = a.session.Username, a.session.Role
+		user, role = a.headerIdentity(), a.session.Role
 		canWrite := a.session.Permissions != nil && a.session.Permissions.CanWrite
 		badge = ui.RoleBadge(a.theme, role, canWrite)
 		extra = "Source: " + srcLabel(a.session.Source)
@@ -505,7 +509,9 @@ func srcLabel(source string) string {
 }
 
 // handleGlobalKey intercepts Ctrl+C, Esc/F3/F12 (back), F9 (undo), F6
-// (quick add) and F10 (lock; F19 too, for keyboards that have one) always, plus the Q/U/L/+ letter mnemonics only
+// (quick add), F10 (lock; F19 too, for keyboards that have one), and
+// Shift+F1/F13 (Kanban, from a hub screen only — see openKanban) always,
+// plus the Q/U/L/+ letter mnemonics only
 // when the active screen has no form field currently holding text — the
 // same "empty buffer" gate the original's smart_input used, so typing into
 // a field never gets hijacked by a shortcut.
@@ -536,6 +542,11 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) bool {
 	case tea.KeyF10, tea.KeyF19:
 		a.lock()
 		return true
+	case tea.KeyF13: // Shift+F1 on most terminals (bubbletea maps both to this one type), F13 on a keyboard that has one
+		if a.cur == scrHub || a.cur == scrPickerHub {
+			a.openKanban()
+			return true
+		}
 	}
 	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
 		return false
@@ -747,6 +758,7 @@ func (a *App) enterHub() {
 		// and not as a corner popup a long message would spill out of.
 		got := a.pollMessages()
 		got = a.showHandoverNoteOnce() || got
+		got = a.showShiftSummaryOnce() || got
 		if got {
 			a.goTo(scrMessagesFull)
 		}

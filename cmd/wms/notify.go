@@ -27,6 +27,7 @@ func newNotifyCmd() *cobra.Command {
 	var channel string
 	test := &cobra.Command{
 		Use: "test", Short: "Send a test alert to every channel (or --channel id) and report each result", Args: cobra.NoArgs,
+		Example: "  wms notify test\n  wms notify test --channel discord",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()

@@ -20,7 +20,8 @@ var smokeTestScreens = []string{
 	scrLegoPartSearch, scrLegoPartResults, scrLegoPartAdd, scrLegoPartOwned, scrLegoStats, scrLegoBuild, scrLegoHistory, scrLegoDetailAsk, scrLegoDetail, scrLegoMissingAsk, scrLegoMissing,
 	scrOpsHub, scrAdminHub,
 	scrSettingsHub, scrSettingsRebrickable, scrSettingsSyncAdmin, scrSettings2FA, scrSettingsPartDB, scrSettingsTheme, scrSettingsBrickLink, scrLegoBLAsk, scrLegoBLResult,
-	scrWorkshop, scrReports, scrReportsSet, scrRetiring, scrReportsStocktake, scrReportsArchive, scrTour, scrMyLoading,
+	scrWorkshop, scrReports, scrReportsSet, scrRetiring, scrReportsStocktake, scrReportsArchive, scrCheckHistory, scrTour, scrMyLoading,
+	scrMySettings, scrFeatureRequest, scrMessageAdmin, scrRequestSet,
 }
 
 func newSmokeTestApp(t *testing.T) *App {

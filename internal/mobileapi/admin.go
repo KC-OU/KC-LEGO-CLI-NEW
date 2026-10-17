@@ -115,6 +115,44 @@ func (s *Server) handleAdminTickets(w http.ResponseWriter, r *http.Request, sess
 	writeJSON(w, http.StatusOK, out)
 }
 
+type checkHistoryRow struct {
+	Set        string `json:"set"`
+	Kind       string `json:"kind"`
+	CheckedBy  string `json:"checked_by"`
+	FinishedAt string `json:"finished_at"`
+	Pieces     int    `json:"pieces"`
+	Have       int    `json:"have"`
+	Missing    int    `json:"missing"`
+	Extra      int    `json:"extra"`
+}
+
+// handleAdminCheckHistory is "track down a check" from the phone: every
+// finished check, optionally narrowed to one set and/or one checker (by is a
+// substring match on checked_by, same lego.DB.CheckHistory the CLI's
+// wms lego report history --by uses) -- paired with handleAdminUsers (the
+// same list the assign-ticket picker already uses) so the app can offer a
+// pick-a-checker list instead of requiring an exact typed username.
+func (s *Server) handleAdminCheckHistory(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_CHECK_HISTORY") {
+		return
+	}
+	limit := 50
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	hist, err := s.legoDB.CheckHistory(r.URL.Query().Get("set"), r.URL.Query().Get("by"), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	out := make([]checkHistoryRow, len(hist))
+	for i, c := range hist {
+		out[i] = checkHistoryRow{Set: c.SetNum, Kind: c.Kind, CheckedBy: c.CheckedBy, FinishedAt: c.FinishedAt.Format(time.RFC3339),
+			Pieces: c.Pieces, Have: c.Have, Missing: c.Missing, Extra: c.Extra}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 type assignTicketRequest struct {
 	Kind       string `json:"kind"`
 	Target     string `json:"target"`
@@ -214,4 +252,87 @@ func orDash(s string) string {
 		return "the open queue"
 	}
 	return s
+}
+
+type statusCardRow struct {
+	Username  string `json:"username"`
+	Reason    string `json:"reason"`
+	Name      string `json:"name"`
+	Note      string `json:"note,omitempty"`
+	CreatedBy string `json:"created_by"`
+	StartedAt string `json:"started_at"`
+}
+
+func statusCardRowOf(c lego.StatusCard) statusCardRow {
+	return statusCardRow{Username: c.Username, Reason: c.Reason, Name: lego.CardReasonName(c.Reason), Note: c.Note,
+		CreatedBy: c.CreatedBy, StartedAt: c.StartedAt.Format(time.RFC3339)}
+}
+
+// handleAdminStatusCards lists everyone with a Delay/No-Work card on right
+// now (break doesn't appear here — see DB.OnBreak/attendanceStatus for
+// that), the same data the TUI's Open Assignments "Card" column and `wms
+// attendance card list` both read.
+func (s *Server) handleAdminStatusCards(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_VIEW_STATUS_CARDS") {
+		return
+	}
+	cards, err := s.legoDB.ActiveStatusCards()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	rows := make([]statusCardRow, len(cards))
+	for i, c := range cards {
+		rows[i] = statusCardRowOf(c)
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+type setStatusCardRequest struct {
+	Username string `json:"username"`
+	Reason   string `json:"reason"`
+	Note     string `json:"note"`
+}
+
+// handleAdminSetStatusCard puts a Delay/No-Work card on someone — never
+// self-serve, unlike the break card (see handleCardScan) — so a worker
+// can't excuse their own idle time from the idle-ticket nudge without an
+// admin agreeing it's warranted.
+func (s *Server) handleAdminSetStatusCard(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_SET_STATUS_CARD") {
+		return
+	}
+	var req setStatusCardRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	c, err := s.legoDB.SetStatusCard(req.Username, req.Reason, req.Note, sess.Username)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit.Log(sess.Username, sess.Role, "STATUS_CARD_SET", "SUCCESS", c.Username+": "+lego.CardReasonName(c.Reason))
+	writeJSON(w, http.StatusOK, statusCardRowOf(*c))
+}
+
+type clearStatusCardRequest struct {
+	Username string `json:"username"`
+}
+
+func (s *Server) handleAdminClearStatusCard(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	if !s.requireAdmin(w, sess, "ADMIN_SET_STATUS_CARD") {
+		return
+	}
+	var req clearStatusCardRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Username) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username is required"})
+		return
+	}
+	if err := s.legoDB.ClearStatusCard(req.Username, sess.Username); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit.Log(sess.Username, sess.Role, "STATUS_CARD_CLEARED", "SUCCESS", req.Username)
+	writeJSON(w, http.StatusOK, map[string]string{"username": req.Username})
 }

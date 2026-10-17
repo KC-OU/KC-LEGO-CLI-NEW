@@ -62,3 +62,21 @@ func TestGenerateTempPassword(t *testing.T) {
 		t.Errorf("expected minimum length 8, got %d", len(pw))
 	}
 }
+
+func TestGenerateNumericPIN(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		pin := GenerateNumericPIN(6)
+		if len(pin) != 6 {
+			t.Fatalf("expected length 6, got %d (%q)", len(pin), pin)
+		}
+		for _, r := range pin {
+			if r < '0' || r > '9' {
+				t.Fatalf("PIN %q has a non-digit character", pin)
+			}
+		}
+	}
+
+	if pin := GenerateNumericPIN(2); len(pin) != 4 {
+		t.Errorf("expected minimum length 4, got %d (%q)", len(pin), pin)
+	}
+}

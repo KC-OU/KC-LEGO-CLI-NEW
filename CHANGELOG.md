@@ -5,6 +5,14 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Security
+- **A failed-login lockout that didn't actually survive a reconnect.** 5 wrong passwords used to end
+  the session ("Maximum failed login attempts exceeded"), but the attempt counter lived only on that
+  one TUI process — and telnet (and the web terminal) spawn a fresh process per connection, so simply
+  reconnecting reset it to zero every time, making the lockout trivially bypassable. Fixed with a
+  small persisted store (`internal/loginlock`, alongside `2fa.json`) keyed by username: 5 failures now
+  locks that username out for 15 minutes regardless of how many times the session reconnects, cleared
+  by a correct login or an admin password reset. See
+  [Access control](docs/guides/access-control.md#a-real-persisted-login-lockout).
 - **Web terminal: tmux prefix-key escape to a root shell.** The shared web terminal (`/`) runs
   inside a `tmux` session for persistence across reconnects; tmux's own prefix key (Ctrl-B by
   default) was still live inside that session, so anyone with the web terminal open could press
@@ -16,6 +24,157 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   ever wraps in tmux. See [Telnet and the web terminal](docs/guides/telnet-and-web.md).
 
 ### Added
+- **A kanban board for checks and picks, with a backlog gate for new sets.** Adding a new set now
+  queues it in a backlog instead of becoming checkable immediately — an admin releases it when
+  it's a good time, since someone may already be mid-check elsewhere. Pickers/checkers get a
+  **Kanban** entry (replacing "My Current Jobs") showing their own job, recent history and the
+  shared backlog, plus private or admin-shared notes on their current job. Admins get a full board
+  (all users, both checks and picks, filterable to one person) and the backlog release action.
+  Reachable with **Shift+F1** (F13 fallback) from either hub. A check line at or above a
+  quantity threshold (default 50, `KANBAN_BACKLOG_QTY_THRESHOLD`) is automatically flagged to be
+  done last, without leaving the job. The board is read-only — claiming, finishing and abandoning
+  jobs all still happen exactly where they already did. See
+  [Kanban board](docs/guides/kanban.md).
+- **Accuracy, always visible, with a real name for numeric accounts.** Every screen's header now
+  shows the signed-in user's current accuracy (e.g. `7354 - Kieran Collins (100%)`), not just the
+  dedicated accuracy screen. `wms access user set-name <id> "<full name>"` gives a numeric-login
+  Picker/Checker account (whose "username" is otherwise just its ID) a real display name to show
+  alongside it. See [Kanban board](docs/guides/kanban.md#accuracy-always-visible).
+- **"Solo mode": a personal copy for a machine with no access to the ModernWMS/Part-DB containers.**
+  A second Arch box at home, say — not the server the real containers run on, and not the existing
+  `wms-gateway-test.service` (which still needs those containers reachable). `wms access user
+  set-password <name> --source local` sets a local sign-in password (bcrypt, stored in `access.json`,
+  same scheme as the remote-bot PIN); `WMS_SOLO_MODE=1` makes the gateway start even without a
+  Part-DB SQLite file (every Part-DB call then returns a clear error instead of aborting the whole
+  process), and routes login through that local password instead of ModernWMS/Part-DB. LEGO features
+  work exactly as they do live — they never depended on either backend. `scripts/solo-instance.sh`
+  builds and runs one entirely out of `~/.local/share/wms-solo`, no root or systemd needed, bound to
+  its own IP and port rather than loopback-only. See [Solo mode](docs/guides/solo-mode.md).
+- **A missing or wrong LEGO element id, fixable by any checker, not just admins.** Element ids
+  (the 6-8 digit number printed by each part in modern instructions, used for Pick a Brick/Bricks &
+  Pieces ordering) normally only ever came from the Rebrickable catalog sync, with no way to add one
+  the catalog is missing or correct one that's wrong. The "Where to Buy" screen's **E** key (and
+  `wms lego element-id <part> <colour> --set <id>`/`--clear`) now lets a checker or admin record one
+  directly — a new `part_element_overrides` table, checked ahead of the catalog's own value and never
+  touched by a catalog refresh (unlike `cat_element_ids` itself, which is fully reloaded every sync).
+  A manually-added id is just as scannable afterwards as a catalog one. Gated on `sets.check` (the
+  same permission as checking a set at all), not an admin-only permission. See
+  [Missing parts, prices and orders](docs/guides/missing-parts-and-orders.md).
+- **A set's own instruction book number(s) and photos, assignable directly.** `wms lego set-info
+  <set> --instruction-book <number> --instruction-book-count <n>` (or the matching fields on *Set
+  Workshop → Where the Set Is Kept*) sets or corrects a set's booklet number(s) yourself, rather than
+  only through catalog import — the existing slash-separated convention covers more than one
+  (`6644777/6644778`). `wms lego set-photo <set> <file>` attaches any number of photos to a set
+  directly (the box, the built model, ...), verified the same way a check's proof photo already is;
+  `wms lego set-photos`/`set-photo-remove` list and remove them, and the set detail screen shows how
+  many are attached. CLI-only, same reasoning as `wms lego attach` — it needs a real file on disk. See
+  [Sets, missing parts and what to build](docs/guides/sets-and-building.md#your-sets).
+- **Missing/extra are now coloured per line, not just in the top badge.** The table check view's
+  Miss/Extra columns render red/blue (`theme.Danger`/`theme.Info`) per row, matching the always-on
+  MISSING/EXTRA badge and the guided walk's own per-line colouring — scanning down the list itself
+  shows which lines need attention, not just the running total at the top. See
+  [Set checks](docs/guides/set-checks.md#the-parts-check).
+- **Bag lookup now shows who printed it and what its check found.** Scanning or typing a bag's code
+  (*Set Workshop → Find a Bag*, `wms lego bag-find`, `GET /mobile/bag-find`) shows an admin who
+  registered/printed that bag and when, plus — once its check is finished — that check's own result
+  (missing/extra counts, disputed flag and note): "what mess-ups did this bag make", reusing the
+  check's existing record rather than a new incident log. Non-admin sessions see the same lookup as
+  before. See [Set checks](docs/guides/set-checks.md#finding-a-lost-bag).
+- **Numeric user ID + PIN for new/reset Picker and Checker accounts**, for handheld barcode scanners
+  (e.g. an MC9100 over telnet) whose keypad makes a free-form username awkward to type: a 4-5 digit
+  user ID and a 5-6 digit PIN instead of a free-form name and a mixed-character temp password.
+  Validated/generated at creation (`wms users create` / *Users → Create New User*) and reset
+  (`wms users reset` / *Users → Reset Password*, which also clears the new persisted lockout above);
+  existing accounts are untouched until one is next created or reset. Admin accounts are unaffected.
+  See [Access control](docs/guides/access-control.md#numeric-login-for-handheld-scanners).
+- **A set's retail box barcode as a second way to look it up.** `wms lego set-info <set>
+  --box-barcode <code>` (or the "Box barcode" field on *Set Workshop → Where the Set Is Kept*)
+  registers a box's own UPC/EAN against a set; scanning or typing that barcode anywhere a set
+  number already works — CLI, TUI, mobile — opens the same set, same as typing its set number.
+  Rejects a barcode already registered to a different set. See
+  [Sets, missing parts and what to build](docs/guides/sets-and-building.md#your-sets).
+- **Check History, searchable by set, checker or date.** *Set Workshop → Reports → Check History*
+  lists every finished check and narrows live as you type — part of a set number, a checker's
+  username, a date, or "complete" — no separate picker, no row number to hunt for. The CLI's
+  `wms lego report history` gained a matching `--by <checker>` filter (part of a username is
+  enough), and the mobile app has the same search, admin-only, via `GET
+  /mobile/admin/check-history?set=&by=&limit=`. See [Reports](docs/guides/reports.md#from-the-interface).
+- **Request a Set**, alongside Request a Feature and Message an Admin: a picker or checker who
+  spots a set worth adding to the collection can flag it from *My Settings* or the mobile app's
+  `/mobile/request-set` — it lands in Recent Activity (and any configured notification channel)
+  without needing admin access. See
+  [Assigned work](docs/guides/assigned-work.md#a-few-extras).
+- **A visible, always-on MISSING / EXTRA count while checking.** A badge at the top of both the TUI's
+  table and guided-walk views now shows the check's running totals the whole time — red for missing,
+  blue for extra (a new `Info` style, consistent across every theme) — updated the instant a line is
+  marked, including at zero, so a checker never has to scan the whole list or guess where a check
+  stands. The guided walk's current-line detail now shows its own extra count too, alongside missing
+  and damaged. The mobile app carries the same two numbers (`total_missing`/`total_extra`) on every
+  line response for its own equivalent. See
+  [Set checks](docs/guides/set-checks.md#the-parts-check).
+- **Status cards: a visible reason for idle time, instead of a guess or a nag.** Delay and No Work
+  Available cards (`wms attendance card set/clear/list`, *Admin → Open Assignments → V*, or
+  `/mobile/admin/status-card*`) are admin-applied and show next to someone's name in the Open
+  Assignments queue; the supervisor idle-ticket alert (a claimed ticket quiet for 60+ minutes) skips
+  anyone with one on, or anyone on a break, instead of nagging about something already explained.
+  Break itself isn't a new concept — a worker can now also toggle their own existing paid break by
+  scanning one printed code (`CARD-BREAK`, `wms attendance card-scan`/`POST
+  /mobile/attendance/card-scan`) instead of finding the break button, same `StartBreak`/`EndBreak`
+  underneath either way. Every card clears itself the moment there's evidence it no longer applies —
+  claiming a ticket, or clocking out. See
+  [Assigned work](docs/guides/assigned-work.md#status-cards-why-someone-looks-idle-right-now).
+- **Per-bag scan gating for parts checks**: before a part can be marked, the checker now has to
+  scan or type the ID label of the physical bag it's actually in — scan the wrong one (right set,
+  wrong bag) and it's a warning you can see and override, not a hard block; scan a code from a
+  different set and it says which one. Bag **kinds** (`small`, `main`, and a new `extra` for
+  anything a check turns up that wasn't expected — never printed up front, only once something's
+  actually been marked Extra) are a global, admin-extensible registry (`wms lego bag-kind
+  add/list`); each set gets its own instance per kind it needs (`75192-A`, `75192-B`, `75192-E`),
+  printable in one run with the new `wms lego bag-labels <set>`, and listed on the Bluetooth
+  print page's bag dropdown the same way. Finishing a check now holds until every bag kind that
+  check actually needed has been scanned at least once, not just the one small-bag confirmation
+  the old flow asked for at the end. A set's bag limit (how many instances of a kind it can have)
+  and whether gating applies to it at all are both admin-only overrides (`wms lego set-info
+  --max-bags`/`--bag-gating`), gated the same way the **V** key's Admin/Picker-Checker toggle
+  already is — no new login or 2FA step. Only checks started after this shipped are gated; the
+  CLI's non-interactive `wms lego check` is unaffected. See
+  [Set checks](docs/guides/set-checks.md#bags-small-main-extra--and-scanning-the-right-one).
+- **Reusable bag pool, a lost-bag lookup, per-bag breakdowns, and `wms lego bag-add`** round out the
+  bag-scan gating above. `wms lego bag-pool add/assign/list/release` registers a real, permanent
+  container under its own stable code and hands it to whichever set's check currently needs it
+  instead of printing a fresh one-off code each time — it scans and gates exactly like any other
+  bag once assigned, and frees itself back to available the moment that check finishes. `wms lego
+  bag-find <code>` (TUI: Set Workshop → **F**; mobile: `GET /mobile/bag-find`) resolves any code —
+  scanned or not, a pool bag or a per-check instance, even one only ever printed — to what it
+  belongs to, independent of any active checking session, for a bag that turns up without its
+  checker. The completion dashboard now splits an incomplete set's shortfall by which bag each short
+  part belongs in ("Main 5 · Small Parts 3") instead of one set-wide total, and the missing/extra
+  parts reports (`wms lego report missing`/`report extra`) tag each row with its bag the same way.
+  `wms lego bag-add <set> <kind>` registers and prints a second (or further) instance of a kind once
+  an admin has raised a set's `--max-bags` limit — previously that limit had nothing that could
+  actually act on it. See
+  [Set checks](docs/guides/set-checks.md#a-reusable-bag-pool).
+- **Bluetooth printing for the small-bag label (Labelnize/Phomemo PM260 and
+  compatible M-series printers)**: a new page, `/mobile/print`, that signs in
+  the same way the mobile app does and then talks to the printer directly
+  over Web Bluetooth from whatever phone or laptop actually has it open — the
+  server itself never touches Bluetooth, since it's rarely anywhere near the
+  printer. Needs Chrome or Edge (Safari/iOS has no Web Bluetooth) and HTTPS.
+  `labels.Raster1bpp` turns a label into the printer's own packed 1-bit
+  raster format, centered within its 72-byte head width, reusing the same
+  rendering `wms lego small-bag-label`'s PNG export already uses so the two
+  can't drift apart. See [Set checks](docs/guides/set-checks.md#printing-straight-from-a-labelnizephomemo-pm260-over-bluetooth).
+- **Paper-first checklist workflow**: `wms lego paper-done <set>` marks a set's paper checklist
+  finished without touching any counts — it opens (or resumes) that set's check, so `wms lego
+  check` later resumes the exact same session and the set drops off `wms lego checks pending`
+  automatically. `wms lego attach <set> <scan.jpg|png|pdf>` verifies the file's actual content
+  (not just its extension) before storing a copy next to `lego.db` as proof the paper count was
+  right, with `--flag "reason"` to mark a check disputed for review if the CLI and paper counts
+  ever disagree — on its own this changes no numbers and no accuracy score. The login banner,
+  `wms sys status`, and a new **Set Workshop → 9** screen all surface the pending count. The
+  **Parts Stock-take** sheet (`wms lego report stocktake`) now prefills its header, condition,
+  cost and part/minifig counts from what's already known, and shows whether a proof was filed.
+  See [Reports](docs/guides/reports.md#paper-first-check-on-paper-enter-it-in-the-cli-later).
 - **LEGO Collection/Part-DB browsing on the picker/checker hub**: both now show there for
   searching and looking things up (never editing) — `checker`/`picker` already carried the read
   permissions by default, they just had no menu path to them before.
@@ -172,6 +331,15 @@ All notable changes. The format follows [Keep a Changelog](https://keepachangelo
   `wms lego help-sheet`, Set Workshop → 7 Reports → 8 Key cheat sheet.
 
 ### Fixed
+- **Reprinting a bag label could print the wrong code, or silently miss some bags entirely.**
+  `wms lego bag-labels`, the Bluetooth print page, and `/mobile/print/bags` all recomputed a bag's
+  code from its kind (small/main/extra) via the deterministic formula — only ever correct for that
+  kind's first, auto-generated instance. A reusable pool bag's own chosen code, a second same-kind
+  instance ("-A2"), or a custom bag kind beyond the built-in three either printed a wrong label or
+  never showed up to print at all. All three now read every bag actually registered on the set (new
+  `DB.PrintableBags`) and print its own true code — reprinting a damaged or unscannable label is now
+  just running the same command or picking it from the same list again, for any kind of bag. See
+  [Set checks](docs/guides/set-checks.md#reprinting-a-damaged-or-unscannable-label).
 - **Web terminal**: switching tabs or reconnecting no longer asks for 2FA again or loses your place — the session now
   persists in a `tmux` session across reconnects (still ends on explicit sign-out). See
   [Telnet and the web terminal](docs/guides/telnet-and-web.md#the-web-terminal-is-one-persistent-shared-session).

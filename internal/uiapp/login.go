@@ -9,6 +9,8 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
@@ -116,7 +118,25 @@ func doLoginSubmit(app *App, values []string) {
 		}
 	}
 
-	session, err := auth.AuthenticateUser(app.ctx(), app.wms, app.pdb, username, password)
+	// A real, persisted lockout -- unlike app.loginAttempts below (reset to
+	// zero by the fresh process a reconnect gets), this survives a
+	// reconnect: it's checked before the password is even validated, so a
+	// locked account can't be brute-forced by just reconnecting.
+	if until, locked, lerr := loginlock.Locked(username); lerr == nil && locked {
+		mins := max(int(time.Until(until).Minutes()), 1)
+		app.audit.Log(username, "", "LOGIN", "DENIED_LOCKED_OUT", fmt.Sprintf("locked for another %d min", mins))
+		app.setMsg(fmt.Sprintf("Too many failed attempts — locked for another %d min.", mins), true)
+		app.screens[scrLogin].OnEnter(app)
+		return
+	}
+
+	var session *auth.Session
+	var err error
+	if config.Get(config.SoloMode) == "1" {
+		session, err = auth.AuthenticateLocal(username, password)
+	} else {
+		session, err = auth.AuthenticateUser(app.ctx(), app.wms, app.pdb, username, password)
+	}
 	if err != nil {
 		app.loginAttempts++
 		status := "FAILED_INVALID_CREDENTIALS"
@@ -124,6 +144,17 @@ func doLoginSubmit(app *App, values []string) {
 			status = "FAILED_ACCOUNT_DISABLED"
 		}
 		app.audit.Log(username, "", "LOGIN", status, err.Error())
+		if justLocked, until, lerr := loginlock.RecordFailure(username); lerr == nil && justLocked {
+			mins := int(time.Until(until).Minutes())
+			app.audit.Log(username, "", "LOGIN", "LOCKED_OUT", fmt.Sprintf("%d failed attempts in a row", loginlock.MaxFailures))
+			app.setMsg(fmt.Sprintf("Too many failed attempts — locked for %d min.", mins), true)
+			// Still ends this session too (not just a message): a reconnect
+			// now hits the persisted lockout above immediately, instead of
+			// getting a fresh set of guesses the way a bare message would allow.
+			app.lockedOut = true
+			app.quitting = true
+			return
+		}
 		if app.loginAttempts >= 5 {
 			app.setMsg("Maximum failed login attempts exceeded.", true)
 			app.lockedOut = true
@@ -139,11 +170,14 @@ func doLoginSubmit(app *App, values []string) {
 		return
 	}
 
+	_ = loginlock.ClearFailures(username)
 	app.session = session
 	app.loginAttempts = 0
 	action := "LOGIN_MODERNWMS"
 	if session.Source == "partdb" {
 		action = "LOGIN_PARTDB"
+	} else if session.Source == "local" {
+		action = "LOGIN_LOCAL"
 	}
 	app.audit.Log(session.Username, session.Role, action, "SUCCESS", "from "+app.origin())
 	continueSignOn(app, session)
@@ -252,6 +286,11 @@ func doTwoFACodeSubmit(app *App, values []string) {
 }
 
 func mustChangePassword(app *App, session *auth.Session) bool {
+	if session.Source == "local" {
+		// No forced-change concept for a solo-mode local password; an admin
+		// rotates it with `wms access user set-password` instead.
+		return false
+	}
 	if session.Source == "modernwms" {
 		mc, _ := app.wms.CheckMustChangePassword(app.ctx(), session.Username)
 		return mc

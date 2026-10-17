@@ -40,10 +40,25 @@ func NewHTTPServer(engine *sync.Engine, db *partdb.DB, credsPath, linkOverridesP
 	}
 }
 
+// ServeHTTP opens CORS up only for the public, unauthenticated GET routes
+// (status/health/parts/categories/stock) -- a browser dashboard fetching
+// those cross-origin is the only known reason this exists. The mutating
+// authedPOST routes (sync, update-links, reset-password, change-password)
+// get no CORS headers at all: there's no reason an arbitrary origin should
+// be allowed to attempt a credentialed POST against a password-management
+// endpoint, even behind Basic Auth.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	method := r.Method
+	if method == http.MethodOptions {
+		if m := r.Header.Get("Access-Control-Request-Method"); m != "" {
+			method = m
+		}
+	}
+	if method == http.MethodGet {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return

@@ -95,6 +95,23 @@ func GenerateTempPassword(length int) string {
 	return string(chars)
 }
 
+// GenerateNumericPIN produces a cryptographically random, digits-only PIN —
+// for Picker/Checker accounts expected to sign in from a handheld scanner's
+// awkward keypad (e.g. the MC9100 over telnet), where GenerateTempPassword's
+// forced mixed-case/symbol mix is the opposite of what's needed. Minimum
+// length 4 regardless of a smaller requested length; a leading zero is
+// fine (it's compared as a string, never parsed as a number).
+func GenerateNumericPIN(length int) string {
+	if length < 4 {
+		length = 4
+	}
+	chars := make([]byte, length)
+	for i := range chars {
+		chars[i] = randChar(tempPasswordDigits)
+	}
+	return string(chars)
+}
+
 func randChar(set string) byte {
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(set))))
 	if err != nil {

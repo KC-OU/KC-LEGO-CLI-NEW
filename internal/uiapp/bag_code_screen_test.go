@@ -8,18 +8,24 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
-// TestFinishHoldsForABagCodeThenFinishesOnceGiven is the TUI's half of the
-// bag-barcode-verification gate: pressing F (finishCheck) on a check with a
-// small-bag line and no code yet opens the prompt instead of finishing;
-// submitting a code there both records it and completes the finish.
-func TestFinishHoldsForABagCodeThenFinishesOnceGiven(t *testing.T) {
-	app, _ := flowApp(t)
-	app.rebrick = &lego.Client{}
+func seedOneCheckablePart(t *testing.T, app *App) {
+	t.Helper()
 	seedOfflineCatalog(t, app)
 	if _, err := app.legoDB.Exec(`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1');
 		INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10)`); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestFinishHoldsForTheBagsThisCheckNeedsThenFinishesOnceAllScanned is the
+// TUI's half of the live bag-scan gate: pressing F (finishCheck) on a check
+// whose parts need a bag (every part needs at least its main/small placement
+// — gating is on by default for every set) holds at the prompt until every
+// required kind has been scanned in, then finishes.
+func TestFinishHoldsForTheBagsThisCheckNeedsThenFinishesOnceAllScanned(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOneCheckablePart(t, app)
 	if err := app.legoDB.SetBagSize("3001", lego.BagSmall); err != nil {
 		t.Fatal(err)
 	}
@@ -36,33 +42,32 @@ func TestFinishHoldsForABagCodeThenFinishesOnceGiven(t *testing.T) {
 	}
 
 	finishCheck(app)
-	if app.cur != scrBagCodePrompt {
-		t.Fatalf("expected a small-bag line with no code to hold at the bag-code prompt, got screen %q", app.cur)
+	if app.cur != scrBagsNeeded {
+		t.Fatalf("expected an unscanned small bag to hold at the bags-needed prompt, got screen %q", app.cur)
 	}
 	if st.check.Status == lego.StatusDone {
 		t.Fatal("the check must not be finished yet")
 	}
 
-	app.screens[scrBagCodePrompt].(*formScreen).submit(app, []string{"BAG-7"})
+	app.screens[scrBagsNeeded].(*formScreen).submit(app, []string{lego.BagCode("75192-1", lego.BagSmall)})
 
 	if st.check.Status != lego.StatusDone {
-		t.Fatalf("expected the check to be finished after supplying a bag code, status=%q", st.check.Status)
+		t.Fatalf("expected the check to finish after scanning the one bag it needed, status=%q, screen=%q", st.check.Status, app.cur)
 	}
-	code, err := app.legoDB.CheckBagCode(st.check.ID)
-	if err != nil || code != "BAG-7" {
-		t.Errorf("CheckBagCode = %q, %v, want BAG-7", code, err)
+	bags, err := app.legoDB.CheckBags(st.check.ID)
+	if err != nil || len(bags) != 1 || bags[0].ScannedAt.IsZero() {
+		t.Errorf("CheckBags = %+v, err = %v, want one scanned instance", bags, err)
 	}
 }
 
-// TestFinishSkipsTheBagPromptWithNoSmallBagLines confirms an ordinary check
-// (nothing marked small-bag) finishes straight away, same as before this
-// feature existed.
-func TestFinishSkipsTheBagPromptWithNoSmallBagLines(t *testing.T) {
+// TestFinishSkipsTheBagPromptWhenGatingIsOffForTheSet confirms the per-set
+// admin override (SetBagPolicy ... "off") exempts a set from the live gate
+// entirely — same immediate finish as before this feature existed.
+func TestFinishSkipsTheBagPromptWhenGatingIsOffForTheSet(t *testing.T) {
 	app, _ := flowApp(t)
 	app.rebrick = &lego.Client{}
-	seedOfflineCatalog(t, app)
-	if _, err := app.legoDB.Exec(`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1');
-		INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10)`); err != nil {
+	seedOneCheckablePart(t, app)
+	if err := app.legoDB.SetBagPolicy("75192-1", 2, "off"); err != nil {
 		t.Fatal(err)
 	}
 	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -76,6 +81,33 @@ func TestFinishSkipsTheBagPromptWithNoSmallBagLines(t *testing.T) {
 
 	finishCheck(app)
 	if st.check.Status != lego.StatusDone {
-		t.Fatalf("expected an ordinary check to finish immediately, status=%q, screen=%q", st.check.Status, app.cur)
+		t.Fatalf("expected a gating-off set to finish immediately, status=%q, screen=%q", st.check.Status, app.cur)
+	}
+}
+
+// TestWrongBagScanWarnsButStillMarksTheLine is the "warning, not a hard
+// block" decision: marking a part while the wrong bag is active still
+// applies the mark, just with a flash warning telling the checker to scan a
+// different bag.
+func TestWrongBagScanWarnsButStillMarksTheLine(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOneCheckablePart(t, app)
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckIntake)
+	st := app.checking
+	if !st.bagGatingOn {
+		t.Fatal("expected gating on by default")
+	}
+
+	scr := app.screens[scrSetCheck].(*setCheckScreen)
+	scr.HandleKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	if scr.flash == "" {
+		t.Error("expected a warning flash for marking with no bag scanned yet")
+	}
+	if st.check.Lines[0].Have != st.check.Lines[0].Need {
+		t.Error("the mark must still apply despite the warning — this is a warning, not a block")
 	}
 }

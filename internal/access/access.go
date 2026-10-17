@@ -116,6 +116,19 @@ type User struct {
 	// intercepted never doubles as account takeover. bcrypt, see
 	// internal/auth.HashPartDB/VerifyPartDB.
 	BotPINHash string `json:"bot_pin_hash,omitempty"`
+	// PasswordHash is a local sign-in secret, independent of ModernWMS/Part-DB —
+	// for a "solo mode" instance (see internal/config.SoloMode) that has neither
+	// backend available, e.g. a personal copy on a machine with no access to the
+	// ModernWMS/Part-DB containers. Same bcrypt scheme as BotPINHash
+	// (internal/auth.HashPartDB/VerifyPartDB), set via `wms access user
+	// set-password --source local`.
+	PasswordHash string `json:"password_hash,omitempty"`
+	// FullName is a display name shown alongside a numeric-login Picker/Checker
+	// account's user ID (e.g. "7354 - Kieran Collins") — neither ModernWMS nor
+	// Part-DB carries one separately for such an account (its "username" IS
+	// the numeric ID there), so this is the one place it lives. Set via
+	// `wms access user set-name`. "" falls back to showing just the ID.
+	FullName string `json:"full_name,omitempty"`
 	// SecurityQuestion/SecurityAnswerHash back a forgotten-PIN reset: both this
 	// AND a live 2FA code are required together (see internal/twofa.Verify), so
 	// losing access to either alone can never reset the PIN on its own.

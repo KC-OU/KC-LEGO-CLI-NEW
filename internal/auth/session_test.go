@@ -2,8 +2,11 @@ package auth
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
@@ -114,6 +117,53 @@ func TestAuthenticateUser_DisabledAccount(t *testing.T) {
 	_, err := AuthenticateUser(context.Background(), wms, pdb, "bob", "secret")
 	if err != ErrAccountDisabled {
 		t.Fatalf("expected ErrAccountDisabled, got %v", err)
+	}
+}
+
+func TestAuthenticateLocal_ValidCredentials(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	hash, err := HashPartDB("my-solo-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := access.Update(func(p *access.Policy) error {
+		p.Users[access.Key("local", "kc")] = &access.User{PasswordHash: hash, Groups: []string{"admin"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := AuthenticateLocal("kc", "my-solo-password")
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if session.Source != "local" || session.Username != "kc" {
+		t.Errorf("session = %+v, want Source=local Username=kc", session)
+	}
+	if session.Permissions == nil || !session.Permissions.IsAdmin {
+		t.Errorf("expected a local session to carry IsAdmin permissions, got %+v", session.Permissions)
+	}
+}
+
+func TestAuthenticateLocal_WrongPassword(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	hash, _ := HashPartDB("correct-password")
+	if _, err := access.Update(func(p *access.Policy) error {
+		p.Users[access.Key("local", "kc")] = &access.User{PasswordHash: hash}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := AuthenticateLocal("kc", "wrong"); err != ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+	}
+}
+
+func TestAuthenticateLocal_UnknownUser(t *testing.T) {
+	t.Setenv(config.AccessFile, filepath.Join(t.TempDir(), "access.json"))
+	if _, err := AuthenticateLocal("nobody", "whatever"); err != ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
 	}
 }
 

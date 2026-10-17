@@ -161,9 +161,10 @@ func newMenuCmd() *cobra.Command {
 
 	var yes bool
 	run := &cobra.Command{
-		Use:   "run <id> [answers...]",
-		Short: "Run one tool by id, without the list",
-		Args:  cobra.MinimumNArgs(1),
+		Use:     "run <id> [answers...]",
+		Short:   "Run one tool by id, without the list",
+		Example: "  wms menu run restock-check\n  wms menu run restock-check --yes",
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			all, err := loadTools()

@@ -51,8 +51,9 @@ func newBackupCmd() *cobra.Command {
 	var encrypt, dryRun bool
 	var passFile string
 	cmd := &cobra.Command{
-		Use:   "backup",
-		Short: "Back up ModernWMS's database via SQLite's online backup API (--encrypt to seal it with a passphrase)",
+		Use:     "backup",
+		Short:   "Back up ModernWMS's database via SQLite's online backup API (--encrypt to seal it with a passphrase)",
+		Example: "  wms backup\n  wms backup --encrypt --passphrase-file ~/.config/wms-go/backup.key",
 		Long: "Writes a consistent copy of ModernWMS's database. It holds every user's password hash, so --encrypt seals\n" +
 			"it with a passphrase (age format: `age -d file.age` opens it too), proves the sealed copy decrypts, and\n" +
 			"only then deletes the plaintext. The passphrase comes from --passphrase-file, the WMS_BACKUP_PASSPHRASE\n" +
@@ -107,9 +108,10 @@ func newBackupCmd() *cobra.Command {
 func newBackupDecryptCmd() *cobra.Command {
 	var outPath, passFile string
 	cmd := &cobra.Command{
-		Use:   "decrypt <backup.db.age>",
-		Short: "Open an encrypted backup (never overwrites an existing file)",
-		Args:  cobra.ExactArgs(1),
+		Use:     "decrypt <backup.db.age>",
+		Short:   "Open an encrypted backup (never overwrites an existing file)",
+		Example: "  wms backup decrypt wms_20260101.db.age\n  wms backup decrypt wms_20260101.db.age -o restored.db --passphrase-file ~/.config/wms-go/backup.key",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()

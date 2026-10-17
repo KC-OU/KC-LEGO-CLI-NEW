@@ -34,6 +34,9 @@ type ExportRow struct {
 	// SetNum is which set the row belongs to, in a multi-set report — the display
 	// title ("75192 Millennium Falcon"), not the bare number. "" outside reports.
 	SetNum string
+	// Bag is which bag kind this row belongs in (see bags.go) — set only by
+	// MissingPartsReport/ExtraPartsReport's per-bag breakdown; "" everywhere else.
+	Bag string
 }
 
 // Image is a picture carried in an export: its source URL and, when the bytes were

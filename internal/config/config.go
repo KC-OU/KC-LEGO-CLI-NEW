@@ -33,15 +33,25 @@ const (
 	CredentialsFile    = "CREDENTIALS_FILE"
 	LinkOverridesFile  = "LINK_OVERRIDES_FILE"
 	TwoFAFile          = "TWOFA_FILE"
-	TUITheme           = "MODERNWMS_TUI_THEME"
-	ListenPorts        = "LISTEN_PORTS"
-	GatewayPort        = "GATEWAY_PORT"
-	GatewayListenHost  = "GATEWAY_LISTEN_HOST"
-	TTYDPort           = "TTYD_PORT"
-	WebSoloDirectPort  = "WMS_WEB_SOLO_DIRECT_PORT"
-	MetricsPort        = "WMS_METRICS_PORT"
-	BotAPIPort         = "WMS_BOT_API_PORT"
-	MobileAPIPort      = "WMS_MOBILE_API_PORT"
+	// LoginLockFile is the persisted login-attempt lockout store (see
+	// internal/loginlock) — a fresh telnet/web process per connection means
+	// an in-memory counter alone resets on every reconnect, so this survives
+	// it the same way 2fa.json already does for 2FA code attempts.
+	LoginLockFile = "LOGIN_LOCK_FILE"
+	// SoloMode is "1" on a personal, disconnected copy with no access to the
+	// ModernWMS/Part-DB containers (see docs/guides/solo-mode.md) — login
+	// checks internal/access's own PasswordHash instead of either backend, and
+	// a missing Part-DB file at startup no longer aborts the process.
+	SoloMode          = "WMS_SOLO_MODE"
+	TUITheme          = "MODERNWMS_TUI_THEME"
+	ListenPorts       = "LISTEN_PORTS"
+	GatewayPort       = "GATEWAY_PORT"
+	GatewayListenHost = "GATEWAY_LISTEN_HOST"
+	TTYDPort          = "TTYD_PORT"
+	WebSoloDirectPort = "WMS_WEB_SOLO_DIRECT_PORT"
+	MetricsPort       = "WMS_METRICS_PORT"
+	BotAPIPort        = "WMS_BOT_API_PORT"
+	MobileAPIPort     = "WMS_MOBILE_API_PORT"
 	// MobileAppURL is the sentry-wms mobile app's own server URL (its Flask
 	// API, a separate deployment this project doesn't own) — saved once via
 	// `wms sys mobile-setup-qr <url>` so later runs don't need it typed
@@ -55,11 +65,20 @@ const (
 	// somewhere to merge, annotate or otherwise touch up the file before
 	// printing; this project doesn't call its API — upload the file there
 	// yourself, same as you would any other PDF.
-	StirlingPDFURL             = "WMS_STIRLING_PDF_URL"
-	PartDBURL                  = "PARTDB_URL"
-	ModernWMSURL               = "MODERNWMS_URL"
-	LegoDBPath                 = "LEGO_DB_PATH"
-	RebrickableAPIKey          = "REBRICKABLE_API_KEY"
+	StirlingPDFURL = "WMS_STIRLING_PDF_URL"
+	PartDBURL      = "PARTDB_URL"
+	ModernWMSURL   = "MODERNWMS_URL"
+	LegoDBPath     = "LEGO_DB_PATH"
+	// LegoAttachmentsDir holds proof scans/photos attached via `wms lego attach`
+	// (see DB.AttachProof). "" (the default) means "next to lego.db itself", so it
+	// travels with the same backups without needing its own setting.
+	LegoAttachmentsDir = "LEGO_ATTACHMENTS_DIR"
+	RebrickableAPIKey  = "REBRICKABLE_API_KEY"
+	// KanbanBacklogQtyThreshold is the per-line quantity at or above which the
+	// kanban board flags a line "moved to the back" of its job (see
+	// internal/lego.CheckLine.Deprioritized) — "" (the default) falls back to
+	// 50, same convention as this project's other admin-tunable settings.
+	KanbanBacklogQtyThreshold  = "KANBAN_BACKLOG_QTY_THRESHOLD"
 	SettingsFile               = "WMS_SETTINGS_FILE"
 	TwoFAGraceMinutes          = "TWOFA_GRACE_MINUTES"
 	PartDBAPIURL               = "PARTDB_API_URL"
@@ -117,38 +136,48 @@ const (
 	// day) — "" (the default) is off. Only meaningful alongside
 	// RequireClockIn, same reasoning: no clock data, nothing to summarize.
 	TeamSummaryHour = "WMS_TEAM_SUMMARY_HOUR"
+	// WeeklyTeamSummaryWeekday is the day the gateway additionally sends a
+	// longer-horizon rollup (the 7 days just finished, each day's hours
+	// summed, each accuracy averaged only across the days there was any) —
+	// a lowercase English weekday name ("monday"), "" (the default) is off.
+	// Sent at TeamSummaryHour the same as the daily one; a day with nothing
+	// configured here just never fires the weekly message, same pattern.
+	WeeklyTeamSummaryWeekday = "WMS_WEEKLY_TEAM_SUMMARY_WEEKDAY"
 )
 
 func Defaults() map[string]string {
 	return map[string]string{
-		ModernWMSContainer:      "modernwms",
-		ModernWMSDBPath:         "/app/wms.db",
-		ModernWMSBackupDir:      "/root/backups/modernwms",
-		PartDBContainer:         "partdb",
-		PartDBDBPath:            "/root/docker-server/partdb/db/app.db",
-		AuditLogFile:            "/root/tui_audit.log",
-		SyncPort:                "8082",
-		SyncAdminUser:           "admin",
-		ListenPorts:             "2323,23",
-		GatewayPort:             "7681",
-		GatewayListenHost:       "127.0.0.1", // loopback: reach it through the HTTPS tunnel; 0.0.0.0 exposes raw telnet
-		TTYDPort:                "7682",
-		MetricsPort:             "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
-		BotAPIPort:              "", // empty: the remote-bot webhook (internal/botapi) is off until set, and always loopback-only when it is
-		MobileAPIPort:           "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
-		WebSoloDirectPort:       "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
-		CredentialsFile:         "/root/docker-server/partdb-sync/config/credentials.json",
-		LinkOverridesFile:       "/root/docker-server/partdb-sync/config/link_overrides.json",
-		TwoFAFile:               "/root/docker-server/wms/2fa.json",
-		PartDBURL:               "", // your Part-DB address, e.g. https://partdb.example.com/ (links are omitted when empty)
-		ModernWMSURL:            "", // your ModernWMS address
-		StirlingPDFURL:          "", // your Stirling-PDF instance's editor address, e.g. https://pdf.example.com/editor (hint omitted when empty)
-		LegoDBPath:              "/root/docker-server/wms/lego.db",
-		SettingsFile:            "/root/docker-server/wms/settings.json",
-		TwoFAGraceMinutes:       "30",
-		PartDBAPIURL:            "http://127.0.0.1:8081",
-		IdleLockMinutes:         "15",
-		CatalogAutoRefreshHours: "0",
+		ModernWMSContainer:        "modernwms",
+		ModernWMSDBPath:           "/app/wms.db",
+		ModernWMSBackupDir:        "/root/backups/modernwms",
+		PartDBContainer:           "partdb",
+		PartDBDBPath:              "/root/docker-server/partdb/db/app.db",
+		AuditLogFile:              "/root/tui_audit.log",
+		SyncPort:                  "8082",
+		SyncAdminUser:             "admin",
+		ListenPorts:               "2323,23",
+		GatewayPort:               "7681",
+		GatewayListenHost:         "127.0.0.1", // loopback: reach it through the HTTPS tunnel; 0.0.0.0 exposes raw telnet
+		TTYDPort:                  "7682",
+		MetricsPort:               "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
+		BotAPIPort:                "", // empty: the remote-bot webhook (internal/botapi) is off until set, and always loopback-only when it is
+		MobileAPIPort:             "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
+		WebSoloDirectPort:         "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
+		CredentialsFile:           "/root/docker-server/partdb-sync/config/credentials.json",
+		LinkOverridesFile:         "/root/docker-server/partdb-sync/config/link_overrides.json",
+		TwoFAFile:                 "/root/docker-server/wms/2fa.json",
+		LoginLockFile:             "/root/docker-server/wms/login_lock.json",
+		SoloMode:                  "", // "1" on a personal, ModernWMS/Part-DB-free copy — see docs/guides/solo-mode.md
+		PartDBURL:                 "", // your Part-DB address, e.g. https://partdb.example.com/ (links are omitted when empty)
+		ModernWMSURL:              "", // your ModernWMS address
+		StirlingPDFURL:            "", // your Stirling-PDF instance's editor address, e.g. https://pdf.example.com/editor (hint omitted when empty)
+		LegoDBPath:                "/root/docker-server/wms/lego.db",
+		SettingsFile:              "/root/docker-server/wms/settings.json",
+		TwoFAGraceMinutes:         "30",
+		PartDBAPIURL:              "http://127.0.0.1:8081",
+		IdleLockMinutes:           "15",
+		KanbanBacklogQtyThreshold: "50",
+		CatalogAutoRefreshHours:   "0",
 		// The "Brick Tap" community retirement-date sheet's default (public) CSV export — a
 		// third-party document, not an official API; override or use `wms lego retirement import`
 		// if it ever moves, is restructured, or you'd rather point at a different tab/copy. The
@@ -183,11 +212,12 @@ func Defaults() map[string]string {
 		// telnet-and-web.md). TestBinaryPath is the dev-built binary (e.g.
 		// /usr/local/bin/wms-go-test); TestEnvFile is that instance's own EnvironmentFile
 		// (e.g. /root/.config/wms-go/test.env), read the same way systemd would.
-		TestBinaryPath:         "",
-		TestEnvFile:            "",
-		TelnetReconnectSeconds: "0",
-		RequireClockIn:         "0",
-		TeamSummaryHour:        "",
+		TestBinaryPath:           "",
+		TestEnvFile:              "",
+		TelnetReconnectSeconds:   "0",
+		RequireClockIn:           "0",
+		TeamSummaryHour:          "",
+		WeeklyTeamSummaryWeekday: "",
 	}
 	// SyncAdminPass intentionally has no default here (see credentialStore.get
 	// in internal/api/credentials.go): bootstrapping the sync dashboard's

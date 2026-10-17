@@ -24,6 +24,9 @@ type PartDBUser struct {
 }
 
 func (d *DB) ListUsers() ([]PartDBUser, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	rows, err := d.Query(`
 		SELECT u.id, u.name, COALESCE(u.email,''), u.disabled, u.need_pw_change, u.group_id, COALESCE(g.name,''), COALESCE(u.datetime_added,'')
 		FROM users u LEFT JOIN groups g ON u.group_id = g.id
@@ -52,6 +55,9 @@ func (d *DB) ListUsers() ([]PartDBUser, error) {
 }
 
 func (d *DB) GetUserByName(name string) (*PartDBUser, error) {
+	if err := d.ready(); err != nil {
+		return nil, err
+	}
 	var u PartDBUser
 	var passwordHash string
 	err := d.QueryRow(`SELECT id, name, COALESCE(email,''), disabled, need_pw_change, group_id, password FROM users WHERE LOWER(name) = LOWER(?)`, name).
@@ -68,6 +74,9 @@ func (d *DB) GetUserByName(name string) (*PartDBUser, error) {
 // PasswordHash returns the stored bcrypt hash for a username, used by the
 // login flow (see internal/auth.VerifyPartDB).
 func (d *DB) PasswordHash(name string) (string, bool, error) {
+	if err := d.ready(); err != nil {
+		return "", false, err
+	}
 	var hash string
 	err := d.QueryRow("SELECT password FROM users WHERE LOWER(name) = LOWER(?)", name).Scan(&hash)
 	if err == sql.ErrNoRows {
@@ -81,6 +90,9 @@ func (d *DB) PasswordHash(name string) (string, bool, error) {
 
 // CreateUser mirrors user_manager.py's create_partdb_user column defaults.
 func (d *DB) CreateUser(username, role, email, bcryptHash string, needPWChange bool) (int64, error) {
+	if err := d.ready(); err != nil {
+		return 0, err
+	}
 	var existing int
 	err := d.QueryRow("SELECT id FROM users WHERE LOWER(name) = LOWER(?)", username).Scan(&existing)
 	if err == nil {
@@ -164,6 +176,9 @@ func (d *DB) DeleteUser(usernameOrID string) error {
 }
 
 func (d *DB) resolveUserID(usernameOrID string) (int, error) {
+	if err := d.ready(); err != nil {
+		return 0, err
+	}
 	var id int
 	err := d.QueryRow("SELECT id FROM users WHERE LOWER(name) = LOWER(?) OR CAST(id AS TEXT) = ?", usernameOrID, usernameOrID).Scan(&id)
 	if err == sql.ErrNoRows {

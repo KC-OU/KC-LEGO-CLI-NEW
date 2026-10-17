@@ -24,7 +24,7 @@ alias audit='wms-go sys audit' audit-full='cat /root/tui_audit.log' audit-follow
 alias wms-logs='wms-go menu run logs-wms' partdb-logs='wms-go menu run logs-partdb' sync-logs='wms-go menu run logs-sync'
 alias wms-restart='wms-go menu run restart-wms' partdb-restart='wms-go menu run restart-partdb' sync-restart='wms-go menu run restart-sync' services-restart='wms-go menu run restart-all'
 alias wms-go-doctor='wms-go doctor' wms-go-telnet-help='wms-go sys connect' wms-go-lego='wms-go lego'
-alias wms-go-deploy='bash /root/modernwms-partdb-go/scripts/deploy.sh' wms-go-publish='bash /root/modernwms-partdb-go/scripts/publish.sh' preflight='wms-go preflight'
+alias wms-go-deploy='bash /root/modernwms-partdb-go/scripts/deploy.sh' wms-go-publish='bash /root/modernwms-partdb-go/scripts/publish.sh' wms-go-promote='bash /root/modernwms-partdb-go/scripts/promote-dev.sh' preflight='wms-go preflight'
 alias receive-stock='wms-go receive' reset-password='wms-go users reset' manage-users='wms-go users' wms-backup='wms-go backup'
 
 # telnet: no args = pick an instance (1 live, 2 test, 3 QA scratch); with args it is the normal telnet

@@ -45,6 +45,7 @@ func Builtin() []Tool {
 		// LEGO
 		{ID: "lego-stats", Group: "LEGO", Title: "Collection stats", Argv: []string{self, "lego", "stats"}, Where: Both},
 		{ID: "lego-low", Group: "LEGO", Title: "Parts below their minimum", Argv: []string{self, "lego", "low"}, Where: Both},
+		{ID: "lego-paper-pending", Group: "LEGO", Title: "Sets needing CLI entry (paper done)", Argv: []string{self, "lego", "checks", "pending"}, Where: Both},
 		{ID: "lego-value", Group: "LEGO", Title: "Collection value (BrickLink prices)", Argv: []string{self, "lego", "value"}, Where: Both},
 		{ID: "lego-watch", Group: "LEGO", Title: "Check price watches", Hint: "uses BrickLink calls", Argv: []string{self, "lego", "watch", "check"}, Admin: true, Where: Both},
 		{ID: "lego-build", Group: "LEGO", Title: "What can I build?", Argv: []string{self, "lego", "build"}, Where: Both},

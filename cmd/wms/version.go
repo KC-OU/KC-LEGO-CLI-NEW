@@ -65,7 +65,8 @@ func newUpdateCmd() *cobra.Command {
 			"restart the gateway yourself (systemctl restart wms-gateway.service; sessions in progress are dropped).\n" +
 			"It refuses a package-managed install (use apt/dnf/pacman) and a version that is not newer, unless --force.\n" +
 			"Optional extra check of where a release came from: gh attestation verify <file> --repo KC-OU/KC-LEGO-CLI-NEW",
-		Args: cobra.NoArgs,
+		Example: "  wms update\n  wms update --apply",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			t := ui.New()

@@ -44,6 +44,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAttendanceCmd())
 	root.AddCommand(newMenuCmd())
 	root.AddCommand(newDocsGenCmd(root))
+	root.AddCommand(newManGenCmd(root))
 	addOutputFlags(root)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return withCode(exitUsage, err) })
 	applyFuzzyGroupArgs(root)
