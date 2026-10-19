@@ -16,6 +16,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/botapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
@@ -170,6 +171,20 @@ func newGatewayServeCmd() *cobra.Command {
 				defer legoDB.Close()
 				mobileSrv := mobileapi.NewServer(wmsdb.NewClient(), pdb, legoDB, audit.New())
 				g.Go(func() error { return mobileapi.Serve(gctx, host+":"+mobileAPIPort, mobileSrv) })
+			}
+			// The new Rust web dashboard's API — off until WMS_DASHBOARD_API_PORT
+			// is set, same convention as the bot and mobile APIs above. Binds
+			// GatewayListenHost, not loopback-only: the Rust service may run on a
+			// separate host (see the plan's open question on this).
+			if dashboardAPIPort := strings.TrimSpace(config.Get(config.DashboardAPIPort)); dashboardAPIPort != "" {
+				legoDB, err := openLego()
+				if err != nil {
+					return fmt.Errorf("opening lego db for the dashboard API: %w", err)
+				}
+				legoDB.SetActor("dashboardapi")
+				defer legoDB.Close()
+				dashboardSrv := dashboardapi.NewServer(legoDB, config.Get(config.DashboardAPIToken))
+				g.Go(func() error { return dashboardapi.Serve(gctx, host+":"+dashboardAPIPort, dashboardSrv) })
 			}
 			return g.Wait()
 		},

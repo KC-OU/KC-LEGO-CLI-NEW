@@ -40,6 +40,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `NOTIFY_URL`, `NOTIFY_FORMAT` | [alerts](../guides/alerts.md) |
 | `WMS_BACKUP_PASSPHRASE` | for unattended encrypted backups |
 | `WMS_BACKUP_GITHUB_REPO` | which private repo `wms lego backup --github` uploads to (default `KC-OU/wms-backups`) — needs `gh auth login`, created automatically (private) the first time |
+| `WMS_DASHBOARD_API_TOKEN` | the shared secret the Rust web dashboard's service presents as a bearer token to `internal/dashboardapi` — set the same value in both places before turning `WMS_DASHBOARD_API_PORT` on |
 
 ## Behaviour
 
@@ -55,6 +56,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `LISTEN_PORTS` / `GATEWAY_PORT` | `2323,23` / `7681` | telnet and web gateway |
 | `GATEWAY_LISTEN_HOST` | `127.0.0.1` | address both gateways bind; `0.0.0.0` exposes them on every interface |
 | `WMS_MOBILE_API_PORT` | *(empty, off)* | the mobile pick/check app's API (`internal/mobileapi`: login, 2FA, guided-walk `next`/`confirm`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway, so reach it through a tunnel rather than opening it to the raw internet. Logins share the telnet gateway's own brute-force protection (per-address strike/block on repeated failures), so a locked-out address gets the same refusal on either front door |
+| `WMS_DASHBOARD_API_PORT` | *(empty, off)* | the Rust web dashboard's API (`internal/dashboardapi`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway. End-user identity is BetterAuth's job in the Rust service; this is only the service-to-service trust boundary (see `WMS_DASHBOARD_API_TOKEN`) |
 | `WMS_EQUIVALENTS` | `default` | `default`, `none`, or `alt,mold,print` |
 | `BRICKLINK_CURRENCY` / `BRICKLINK_REGION` / `BRICKLINK_CONDITION` | `GBP` / `europe` / `U` | price guide selection |
 | `BRICKLINK_DAILY_BUDGET` | `4500` | hard cap on calls a day (max 5000) |

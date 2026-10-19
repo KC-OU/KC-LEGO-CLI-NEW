@@ -52,6 +52,15 @@ const (
 	MetricsPort       = "WMS_METRICS_PORT"
 	BotAPIPort        = "WMS_BOT_API_PORT"
 	MobileAPIPort     = "WMS_MOBILE_API_PORT"
+	// DashboardAPIPort/DashboardAPIToken back internal/dashboardapi, the new
+	// Rust web dashboard's only way to reach KC-Parts data (see the plan at
+	// docs/guides — the dashboard owns no business logic of its own and the
+	// Rust service's end-user auth is BetterAuth, not this token; this is
+	// purely the Rust-service-to-Go-service trust boundary, one shared
+	// secret rather than per-user). Same "off until set" convention as
+	// MobileAPIPort/BotAPIPort.
+	DashboardAPIPort  = "WMS_DASHBOARD_API_PORT"
+	DashboardAPIToken = "WMS_DASHBOARD_API_TOKEN"
 	// MobileAppURL is the sentry-wms mobile app's own server URL (its Flask
 	// API, a separate deployment this project doesn't own) — saved once via
 	// `wms sys mobile-setup-qr <url>` so later runs don't need it typed
@@ -162,6 +171,8 @@ func Defaults() map[string]string {
 		MetricsPort:               "", // empty: /metrics is off until set (listens on every interface for the dockerised Prometheus, never reverse-proxied)
 		BotAPIPort:                "", // empty: the remote-bot webhook (internal/botapi) is off until set, and always loopback-only when it is
 		MobileAPIPort:             "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
+		DashboardAPIPort:          "", // empty: the Rust web dashboard's API (internal/dashboardapi) is off until set — binds GatewayListenHost like the rest of the gateway
+		DashboardAPIToken:         "", // empty: no shared secret set yet — set this and the same value in the Rust service's config before turning DashboardAPIPort on
 		WebSoloDirectPort:         "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:           "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:         "/root/docker-server/partdb-sync/config/link_overrides.json",
