@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dashboard — KC-Parts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;font-family:'IBM Plex Sans',system-ui,sans-serif;background:#0B0D10;color:#ECEEF0}
+  *{box-sizing:border-box}
+  a{color:#33A1C9;text-decoration:none}
+  a:hover{color:#5BC0E0}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+  button{font-family:inherit;cursor:pointer}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:9px;color:#9AA3AD;font-size:13px;font-weight:500;}
+  .nav-item:hover{background:#171A1F;color:#ECEEF0}
+  .nav-item.active{background:#1B1F24;color:#ECEEF0;border:1px solid #262B31}
+  .shell{display:flex;flex-wrap:wrap;min-height:100vh;}
+  .sidebar{width:220px;flex:0 0 220px;border-right:1px solid #1D2127;padding:20px 14px;display:flex;flex-direction:column;gap:4px;}
+  .content{flex:999 1 560px;min-width:0;}
+  .stat-card{border:1px solid #262B31;border-radius:14px;background:#14171B;padding:18px 20px;display:flex;flex-direction:column;gap:8px;}
+  .panel{border:1px solid #262B31;border-radius:14px;background:#14171B;padding:20px;display:flex;flex-direction:column;gap:14px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;letter-spacing:0.06em;color:#5B6570;text-transform:uppercase;padding:0 0 10px;font-weight:500;}
+  td{padding:10px 0;border-top:1px solid #1D2127;}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="mono" style="font-size:13px;letter-spacing:0.28em;color:#F0A202;font-weight:600;padding:8px 14px 18px;">KC · PARTS</div>
+
+    <a class="nav-item active" href="/dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+      Dashboard
+    </a>
+    <a class="nav-item" href="/onboarding">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 6-6 2 2-6 6-2z"/></svg>
+      Onboarding
+    </a>
+
+    <div style="margin-top:auto;padding:14px;border-top:1px solid #1D2127;display:flex;align-items:center;gap:10px;">
+      <div class="mono" style="width:30px;height:30px;border-radius:999px;background:#1B1F24;border:1px solid #262B31;display:flex;align-items:center;justify-content:center;font-size:11px;">AD</div>
+      <div style="display:flex;flex-direction:column;">
+        <span style="font-size:12px;font-weight:600;">Alex Dunn</span>
+        <span class="mono" style="font-size:10px;color:#5B6570;">Admin</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="content">
+    <header style="display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:1px solid #1D2127;gap:20px;">
+      <div style="font-size:15px;font-weight:600;">Dashboard</div>
+      <div style="flex:1;max-width:360px;position:relative;">
+        <input type="search" placeholder="Search sets, parts, people…" aria-label="Search" style="width:100%;padding:9px 12px 9px 34px;border-radius:9px;border:1px solid #262B31;background:#14171B;color:#ECEEF0;font-size:13px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6570" stroke-width="1.8" style="position:absolute;left:11px;top:11px;" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </div>
+      <button aria-label="Notifications" style="position:relative;width:34px;height:34px;border-radius:9px;border:1px solid #262B31;background:#14171B;display:flex;align-items:center;justify-content:center;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9AA3AD" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+        <span class="mono" style="position:absolute;top:-4px;right:-4px;background:#E2574C;color:#fff;font-size:9px;border-radius:999px;padding:1px 5px;">3</span>
+      </button>
+    </header>
+
+    <main style="padding:28px 32px 48px;display:flex;flex-direction:column;gap:24px;">
+
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;">
+        <div class="stat-card">
+          <div style="font-size:12px;color:#9AA3AD;">Team accuracy</div>
+          <div class="mono" style="font-size:26px;font-weight:600;">96.4%</div>
+          <div class="mono" style="font-size:11px;color:#4CAF7D;">▲ 0.6% this week</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:12px;color:#9AA3AD;">Open tickets</div>
+          <div class="mono" style="font-size:26px;font-weight:600;">12</div>
+          <div class="mono" style="font-size:11px;color:#9AA3AD;">3 unassigned</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:12px;color:#9AA3AD;">Idle nudges today</div>
+          <div class="mono" style="font-size:26px;font-weight:600;">2</div>
+          <div class="mono" style="font-size:11px;color:#F0A202;">both checkers</div>
+        </div>
+        <div class="stat-card">
+          <div style="font-size:12px;color:#9AA3AD;">Low-stock parts</div>
+          <div class="mono" style="font-size:26px;font-weight:600;">7</div>
+          <div class="mono" style="font-size:11px;color:#9AA3AD;">2 auto-tracked</div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:16px;">
+        <div class="panel" style="flex:1 1 420px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:13px;font-weight:600;">Missing parts feed</div>
+            <span class="mono" style="font-size:12px;color:#5B6570;">coming soon</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #1D2127;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-size:13px;">3001 Brick 2x4, Red <span class="mono" style="color:#5B6570;">· 75192-1</span></span>
+              <span class="mono" style="font-size:11px;color:#5B6570;">Priya · 12m ago</span>
+            </div>
+            <span class="mono" style="font-size:12px;color:#E2574C;white-space:nowrap;">−3</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #1D2127;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-size:13px;">93606 Plate 1x2 w/ clip <span class="mono" style="color:#5B6570;">· 10312-1</span></span>
+              <span class="mono" style="font-size:11px;color:#5B6570;">Sam · 41m ago</span>
+            </div>
+            <span class="mono" style="font-size:12px;color:#E2574C;white-space:nowrap;">−1</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #1D2127;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-size:13px;">11477 Slope 18° <span class="mono" style="color:#5B6570;">· 42151-1</span></span>
+              <span class="mono" style="font-size:11px;color:#5B6570;">Priya · 1h ago</span>
+            </div>
+            <span class="mono" style="font-size:12px;color:#E2574C;white-space:nowrap;">−2</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #1D2127;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-size:13px;">6141 Plate round 1x1 <span class="mono" style="color:#5B6570;">· 10312-1</span></span>
+              <span class="mono" style="font-size:11px;color:#5B6570;">Dave · 2h ago</span>
+            </div>
+            <span class="mono" style="font-size:12px;color:#E2574C;white-space:nowrap;">−5</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #1D2127;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-size:13px;">3024 Plate 1x1 <span class="mono" style="color:#5B6570;">· 75192-1</span></span>
+              <span class="mono" style="font-size:11px;color:#5B6570;">Sam · 3h ago</span>
+            </div>
+            <span class="mono" style="font-size:12px;color:#E2574C;white-space:nowrap;">−1</span>
+          </div>
+        </div>
+
+        <div class="panel" style="flex:1 1 360px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div style="font-size:13px;font-weight:600;">Kanban snapshot</div>
+            <span class="mono" style="font-size:12px;color:#5B6570;">coming soon</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;">
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:999px;background:#5B6570;" aria-hidden="true"></span>
+                <span class="mono" style="font-size:11px;color:#9AA3AD;">Backlog 5</span>
+              </div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">10312-1 full check</div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">317 order pick</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:999px;background:#F0A202;" aria-hidden="true"></span>
+                <span class="mono" style="font-size:11px;color:#9AA3AD;">Active 3</span>
+              </div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">75192-1 check — Priya</div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">42151-1 pick — Dave</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:999px;background:#4CAF7D;" aria-hidden="true"></span>
+                <span class="mono" style="font-size:11px;color:#9AA3AD;">Done 9</span>
+              </div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">10294-1 check</div>
+              <div style="border:1px solid #262B31;border-radius:8px;background:#0B0D10;padding:8px;font-size:11px;">295 order pick</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div style="font-size:13px;font-weight:600;">Recent shift handovers</div>
+        <table>
+          <thead><tr><th>Staff</th><th>Shift</th><th>Tickets done</th><th>Accuracy</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Priya N.</td>
+              <td class="mono" style="color:#9AA3AD;">06:00–14:00</td>
+              <td class="mono">6</td>
+              <td class="mono" style="color:#4CAF7D;">98%</td>
+            </tr>
+            <tr>
+              <td>Sam K.</td>
+              <td class="mono" style="color:#9AA3AD;">06:00–14:00</td>
+              <td class="mono">4</td>
+              <td class="mono" style="color:#4CAF7D;">95%</td>
+            </tr>
+            <tr>
+              <td>Dave R.</td>
+              <td class="mono" style="color:#9AA3AD;">14:00–22:00</td>
+              <td class="mono">5</td>
+              <td class="mono" style="color:#F0A202;">91%</td>
+            </tr>
+            <tr>
+              <td>Jo M. (seasonal)</td>
+              <td class="mono" style="color:#9AA3AD;">14:00–22:00</td>
+              <td class="mono">2</td>
+              <td class="mono" style="color:#F0A202;">88%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

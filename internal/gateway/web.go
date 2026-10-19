@@ -155,6 +155,7 @@ func RunWebGateway(ctx context.Context, listenHost string, gatewayPort, ttydPort
 
 	mux := http.NewServeMux()
 	servePWAAssets(mux)
+	serveKCDashboard(mux)
 	dl := downloadHandler(exports.Dir, auditDownload)
 	mux.Handle("/dl/", dl)
 	mux.Handle("/DL/", dl) // QR codes carry the link upper case (see exports.URL)
