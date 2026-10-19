@@ -66,6 +66,7 @@ func newTestServer(s *Server) *httptest.Server {
 	mux.HandleFunc("POST /mobile/login/2fa", s.handleLogin2FA)
 	mux.HandleFunc("POST /mobile/logout", s.withSession(s.handleLogout))
 	mux.HandleFunc("GET /mobile/me", s.withSession(s.handleMe))
+	mux.HandleFunc("POST /mobile/change-password", s.withSession(s.handleChangePassword))
 	return httptest.NewServer(mux)
 }
 

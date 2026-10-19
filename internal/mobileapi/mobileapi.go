@@ -62,6 +62,10 @@ type Server struct {
 	// users backs the admin endpoints' "who can I assign this to" list (see
 	// admin.go) — built the same way uiapp's own app.users is.
 	users *users.Service
+	// wms is the concrete client, kept alongside the narrow authWMS
+	// interface only for CheckMustChangePassword (internal/uiapp/login.go's
+	// mustChangePassword check), which auth.WMSAuthenticator doesn't expose.
+	wms *wmsdb.Client
 }
 
 func NewServer(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, auditLog *audit.Logger) *Server {
@@ -71,6 +75,7 @@ func NewServer(wms *wmsdb.Client, pdb *partdb.DB, legoDB *lego.DB, auditLog *aud
 		throttle: gateway.NewThrottle(),
 		pdbw:     partdb.NewWriter(pdb),
 		users:    users.New(wms, pdb),
+		wms:      wms,
 	}
 }
 
@@ -94,6 +99,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /mobile/login/2fa", s.handleLogin2FA)
 	mux.HandleFunc("POST /mobile/logout", s.withSession(s.handleLogout))
 	mux.HandleFunc("GET /mobile/me", s.withSession(s.handleMe))
+	mux.HandleFunc("POST /mobile/change-password", s.withSession(s.handleChangePassword))
 	mux.HandleFunc("GET /mobile/next", s.withSession(s.handleNext))
 	mux.HandleFunc("GET /mobile/next/all", s.withSession(s.handleFull))
 	mux.HandleFunc("POST /mobile/confirm", s.withSession(s.handleConfirm))
@@ -273,7 +279,78 @@ func (s *Server) withSession(next func(w http.ResponseWriter, r *http.Request, s
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
-	writeJSON(w, http.StatusOK, map[string]any{"username": sess.Username, "source": sess.Source, "role": sess.Role})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":             sess.Username,
+		"source":               sess.Source,
+		"role":                 sess.Role,
+		"must_change_password": s.mustChangePassword(r.Context(), sess),
+	})
+}
+
+// mustChangePassword mirrors internal/uiapp/login.go's mustChangePassword
+// check for a mobile session — same two backends, same flag, so a temporary
+// password created by an admin forces a change here too instead of only at
+// the terminal. s.wms/s.pdb are nil in tests that build a Server literal
+// directly (same reasoning as the throttle nil-check in handleLogin), so
+// this just reports "no change needed" rather than needing every such test
+// to wire up a live ModernWMS/Part-DB backend just to answer /mobile/me.
+func (s *Server) mustChangePassword(ctx context.Context, sess lego.MobileSession) bool {
+	switch sess.Source {
+	case "modernwms":
+		if s.wms == nil {
+			return false
+		}
+		mc, _ := s.wms.CheckMustChangePassword(ctx, sess.Username)
+		return mc
+	case "partdb":
+		if s.pdb == nil {
+			return false
+		}
+		u, err := s.pdb.GetUserByName(sess.Username)
+		return err == nil && u != nil && u.NeedPWChange
+	default:
+		return false
+	}
+}
+
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// handleChangePassword lets a signed-in user change their own password:
+// verifies the current one the same way login does (auth.AuthenticateUser),
+// then writes the new one with users.ResetUnified — accounts are created
+// unified across ModernWMS and Part-DB (internal/users.CreateUnified), so a
+// self-service change keeps both sides in sync the same way an admin reset
+// does, rather than only updating whichever backend this session happened
+// to authenticate against.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OldPassword == "" || req.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "old_password and new_password are required"})
+		return
+	}
+	if len(req.NewPassword) < 4 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must be at least 4 characters"})
+		return
+	}
+	if _, err := auth.AuthenticateUser(r.Context(), s.authWMS, s.authPDB, sess.Username, req.OldPassword); err != nil {
+		s.audit.Log(sess.Username, sess.Role, "MOBILE_CHANGE_PASSWORD", "DENIED_WRONG_OLD_PASSWORD", "")
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "current password is incorrect"})
+		return
+	}
+	if s.users == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password change is not available in this environment"})
+		return
+	}
+	if err := s.users.ResetUnified(r.Context(), sess.Username, req.NewPassword, false); err != nil {
+		s.audit.Log(sess.Username, sess.Role, "MOBILE_CHANGE_PASSWORD", "ERROR", err.Error())
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	s.audit.Log(sess.Username, sess.Role, "MOBILE_CHANGE_PASSWORD", "SUCCESS", "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, sess lego.MobileSession) {
