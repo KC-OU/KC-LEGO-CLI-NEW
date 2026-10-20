@@ -43,6 +43,10 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
+	mux.HandleFunc("GET /dashboard/admin/alerts", s.withToken(s.handleAlerts))
+	mux.HandleFunc("POST /dashboard/admin/alerts/file", s.withToken(s.handleFileAccuracyReport))
+	mux.HandleFunc("GET /dashboard/admin/accuracy-reports/{username}", s.withToken(s.handleAccuracyReportsFor))
+	mux.HandleFunc("POST /dashboard/admin/sets/image", s.withToken(s.handleSetImage))
 	return db, httptest.NewServer(mux)
 }
 

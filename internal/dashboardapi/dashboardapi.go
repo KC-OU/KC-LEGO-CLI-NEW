@@ -81,6 +81,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
+	mux.HandleFunc("GET /dashboard/admin/alerts", s.withToken(s.handleAlerts))
+	mux.HandleFunc("POST /dashboard/admin/alerts/file", s.withToken(s.handleFileAccuracyReport))
+	mux.HandleFunc("GET /dashboard/admin/accuracy-reports/{username}", s.withToken(s.handleAccuracyReportsFor))
+	mux.HandleFunc("POST /dashboard/admin/sets/image", s.withToken(s.handleSetImage))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
@@ -161,10 +165,18 @@ func (s *Server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// CatalogSet is the one place an admin's image override (SetImageOverride)
+	// is applied -- the same picture the TUI and every other reader see, so
+	// the dashboard shows it here rather than reading cat_sets.img_url itself.
+	var imageURL string
+	if hit, _ := s.legoDB.CatalogSet(setNum); hit != nil {
+		imageURL = hit.ImgURL
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"set":       set,
 		"state":     s.legoDB.GetSetState(setNum),
 		"inventory": inventory,
+		"image_url": imageURL,
 	})
 }
 
