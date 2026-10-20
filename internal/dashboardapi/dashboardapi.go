@@ -45,6 +45,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
 	mux.HandleFunc("GET /dashboard/sets", s.withToken(s.handleSets))
 	mux.HandleFunc("GET /dashboard/sets/{setNum}", s.withToken(s.handleSetDetail))
+	mux.HandleFunc("GET /dashboard/accuracy/{username}", s.withToken(s.handleAccuracy))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
@@ -129,5 +130,44 @@ func (s *Server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 		"set":       set,
 		"state":     s.legoDB.GetSetState(setNum),
 		"inventory": inventory,
+	})
+}
+
+// handleAccuracy is the same "My Accuracy" picture the TUI's own palette
+// entry shows (today's %, the 7-day trend, today's event log) -- for
+// whichever Go username the caller names via ?role=picker|checker (default
+// checker). There is deliberately no lookup from the signed-in BetterAuth
+// dashboard identity to a Go username here: dashboard accounts (email) and
+// Go CLI/mobile accounts (a separate username space) aren't linked yet, so
+// this is a named-username lookup, not an auto-scoped "my own" view, until
+// that identity bridge is designed.
+func (s *Server) handleAccuracy(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	role := r.URL.Query().Get("role")
+	if role == "" {
+		role = lego.AccuracyChecker
+	}
+
+	today, err := s.legoDB.AccuracyToday(username, role)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	trend, err := s.legoDB.AccuracyTrend(username, role, 7)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	history, err := s.legoDB.AccuracyHistory(username, role, "")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username": username,
+		"role":     role,
+		"today":    today,
+		"trend":    trend,
+		"history":  history,
 	})
 }

@@ -24,6 +24,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
 	mux.HandleFunc("GET /dashboard/sets", s.withToken(s.handleSets))
 	mux.HandleFunc("GET /dashboard/sets/{setNum}", s.withToken(s.handleSetDetail))
+	mux.HandleFunc("GET /dashboard/accuracy/{username}", s.withToken(s.handleAccuracy))
 	return db, httptest.NewServer(mux)
 }
 
@@ -239,6 +240,90 @@ func TestSetDetailOnAnUnknownSetIs404(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAccuracyDefaultsToTodaysScoreOf100WithNoEventsYet(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/accuracy/dave", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Username string               `json:"username"`
+		Role     string               `json:"role"`
+		Today    float64              `json:"today"`
+		Trend    []float64            `json:"trend"`
+		History  []lego.AccuracyEvent `json:"history"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Role != "checker" {
+		t.Fatalf("expected the default role to be checker, got %q", body.Role)
+	}
+	if body.Today != 100 {
+		t.Fatalf("expected a fresh account to be at 100%%, got %v", body.Today)
+	}
+	if len(body.Trend) != 7 {
+		t.Fatalf("expected a 7-day trend, got %d entries", len(body.Trend))
+	}
+	if len(body.History) != 0 {
+		t.Fatalf("expected no events yet, got %+v", body.History)
+	}
+}
+
+func TestAccuracyReflectsAMissingPartsDeduction(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	if _, _, err := db.RecordCheckOutcome("dave", lego.AccuracyChecker, lego.TicketCheck, "75192-1", 100, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/accuracy/dave?role=checker", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Today   float64              `json:"today"`
+		History []lego.AccuracyEvent `json:"history"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Today >= 100 {
+		t.Fatalf("expected a deduction to bring the score below 100, got %v", body.Today)
+	}
+	if len(body.History) != 1 || body.History[0].Missing != 3 {
+		t.Fatalf("expected one logged event with 3 missing, got %+v", body.History)
+	}
+}
+
+func TestAccuracyRequiresTheSharedToken(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/dashboard/accuracy/dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
 }
 
