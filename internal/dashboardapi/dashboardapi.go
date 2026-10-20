@@ -23,10 +23,15 @@ import (
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
 type Server struct {
 	legoDB *lego.DB
+	// usersSvc backs the admin "assign to" user list (handleUsers) -- nil in
+	// tests that only exercise Kanban/Sets/accuracy, same "nil disables"
+	// convention as token below.
+	usersSvc *users.Service
 	// token is the shared secret the Rust service presents. Empty disables
 	// the check entirely -- only ever intentional in tests that build a
 	// Server literal directly, the same "nil/empty disables" convention
@@ -34,8 +39,8 @@ type Server struct {
 	token string
 }
 
-func NewServer(legoDB *lego.DB, token string) *Server {
-	return &Server{legoDB: legoDB, token: token}
+func NewServer(legoDB *lego.DB, usersSvc *users.Service, token string) *Server {
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, token: token}
 }
 
 // Serve runs the dashboard API until ctx is cancelled.
@@ -46,6 +51,11 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/sets", s.withToken(s.handleSets))
 	mux.HandleFunc("GET /dashboard/sets/{setNum}", s.withToken(s.handleSetDetail))
 	mux.HandleFunc("GET /dashboard/accuracy/{username}", s.withToken(s.handleAccuracy))
+	mux.HandleFunc("GET /dashboard/admin/users", s.withToken(s.handleUsers))
+	mux.HandleFunc("GET /dashboard/admin/tickets", s.withToken(s.handleTickets))
+	mux.HandleFunc("GET /dashboard/admin/status-cards", s.withToken(s.handleStatusCards))
+	mux.HandleFunc("POST /dashboard/admin/assign", s.withToken(s.handleAssignTicket))
+	mux.HandleFunc("POST /dashboard/admin/reopen", s.withToken(s.handleReopenTicket))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

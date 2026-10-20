@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
@@ -18,13 +19,18 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := NewServer(db, token)
+	s := NewServer(db, nil, token)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
 	mux.HandleFunc("GET /dashboard/sets", s.withToken(s.handleSets))
 	mux.HandleFunc("GET /dashboard/sets/{setNum}", s.withToken(s.handleSetDetail))
 	mux.HandleFunc("GET /dashboard/accuracy/{username}", s.withToken(s.handleAccuracy))
+	mux.HandleFunc("GET /dashboard/admin/users", s.withToken(s.handleUsers))
+	mux.HandleFunc("GET /dashboard/admin/tickets", s.withToken(s.handleTickets))
+	mux.HandleFunc("GET /dashboard/admin/status-cards", s.withToken(s.handleStatusCards))
+	mux.HandleFunc("POST /dashboard/admin/assign", s.withToken(s.handleAssignTicket))
+	mux.HandleFunc("POST /dashboard/admin/reopen", s.withToken(s.handleReopenTicket))
 	return db, httptest.NewServer(mux)
 }
 
@@ -324,6 +330,179 @@ func TestAccuracyRequiresTheSharedToken(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestUsersIsEmptyWithNoUsersServiceWired(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var rows []adminUserRow
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected an empty list with no users service wired, got %+v", rows)
+	}
+}
+
+func TestAssignTicketCreatesAnOpenTicket(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"kind":"check","target":"75192-1","assigned_to":"dave","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/assign", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	var row adminTicketRow
+	if err := json.NewDecoder(resp.Body).Decode(&row); err != nil {
+		t.Fatal(err)
+	}
+	if row.Target != "75192-1" || row.AssignedTo != "dave" {
+		t.Fatalf("unexpected ticket row %+v", row)
+	}
+
+	tickets, err := db.AllOpenTickets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 1 || tickets[0].AssignedTo != "dave" {
+		t.Fatalf("expected the assignment to land in the open queue, got %+v", tickets)
+	}
+}
+
+func TestAssignTicketRequiresAnActingUsername(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"kind":"check","target":"75192-1","assigned_to":"dave"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/assign", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 without a by field", resp.StatusCode)
+	}
+}
+
+func TestTicketsListsWhatWasAssigned(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	if _, err := db.AssignTicket(lego.TicketCheck, "75192-1", "Falcon", "dave", "", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/admin/tickets", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var rows []adminTicketRow
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].AssignedTo != "dave" {
+		t.Fatalf("expected the one assigned ticket, got %+v", rows)
+	}
+}
+
+func TestReopenTicketStartsARecount(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	tk, err := db.AssignTicket(lego.TicketCheck, "75192-1", "Falcon", "dave", "", "", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ClaimTicket(tk.ID, "dave"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishTicket(lego.TicketCheck, "75192-1", "dave"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"kind":"check","target":"75192-1","reason":"looks wrong","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/reopen", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	var row adminTicketRow
+	if err := json.NewDecoder(resp.Body).Decode(&row); err != nil {
+		t.Fatal(err)
+	}
+	if row.Status == lego.TicketDone {
+		t.Fatalf("expected a fresh open ticket, got %+v", row)
+	}
+}
+
+func TestStatusCardsIsEmptyWithNoneActive(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/admin/status-cards", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var rows []statusCardRow
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected no active status cards, got %+v", rows)
+	}
+}
+
+func TestAdminRoutesRequireTheSharedToken(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	for _, path := range []string{"/dashboard/admin/users", "/dashboard/admin/tickets", "/dashboard/admin/status-cards"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: status = %d, want 401", path, resp.StatusCode)
+		}
 	}
 }
 
