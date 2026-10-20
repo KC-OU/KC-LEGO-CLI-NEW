@@ -91,6 +91,50 @@ known yet, so this isn't tied to either one. A correct sign-in, or an admin rese
 password (*Users → Reset Password*, or `wms users reset`), clears it immediately — no separate
 "unlock" step.
 
+## Lockout policy across every surface
+
+Several surfaces each lock out repeated failures on their own terms. They are **not** the same
+mechanism wearing different thresholds by accident — each guards a different thing, at a different
+point in the flow, so a wrong guess against one never counts against another:
+
+| Surface | Trigger | Threshold | Lock duration | Keyed by |
+|---|---|---|---|---|
+| Password sign-in (TUI/telnet/web terminal) | wrong password | 5 in a row | 15 min flat | username — see above |
+| 2FA code | wrong code | 5 in a row | 5 min, **doubling** each further lock up to 1 hr | username + source |
+| Discord bot admin PIN | wrong PIN | 5 in a row | 5 min flat | the linked admin's policy entry |
+| Telnet/mobile gateway connection throttle | 3 failed sessions in an hour from one address | 3 strikes | 15 min, doubling up to 1 hr | the client's network address, not an account |
+| KC-Parts dashboard login (BetterAuth, separate service) | wrong password | 3 in a row | 5 min flat | email |
+
+Why they differ rather than share one number:
+
+- **Password vs. 2FA are two separate gates on purpose.** A password lockout (`internal/loginlock`)
+  stops account guessing before 2FA is even reached; the 2FA lockout (`internal/twofa`) separately
+  stops someone who already has a valid password from brute-forcing the second factor. Merging them
+  would let a mistyped 2FA code start eating into the password-attempt budget, or vice versa — two
+  unrelated mistakes punishing each other.
+- **The 2FA lock doubles; the others don't.** A code guesser who keeps coming back is a more
+  deliberate attack than someone who mistypes a password once and gets distracted — the escalating
+  backoff targets persistence specifically, where the flat 15 min on a password lock is already a
+  long wait for a legitimate user who just needs an admin reset anyway.
+- **The gateway throttle is address-keyed, not account-keyed** — a different attacker model entirely
+  (one address hammering *many* accounts) from the other four (repeated wrong guesses against *one*
+  account). It has to stay separate: collapsing it into an account-level lockout would do nothing
+  against credential stuffing across many usernames from one source.
+- **The bot PIN gets the shortest, flattest lock** because the credential it protects is the
+  shortest (a 5-6 digit PIN on a bot-linked admin account, not a full password), and it has no
+  2FA-style "worth escalating" step behind it to protect.
+- **The dashboard's 3 attempts / 5 minutes is deliberately stricter**, not an unreconciled fourth
+  number invented separately — it's the newest, most internet-exposed sign-in surface (the Go CLI/
+  telnet/mobile stack sits behind existing network/access controls the dashboard doesn't yet have),
+  and it was specified explicitly in the dashboard's own requirements doc rather than inherited from
+  this table. It lives entirely in `kc-parts-auth-node` (see that repo's `src/lockout.ts`) since
+  BetterAuth owns dashboard identity on its own, separate user store — it can never interact with,
+  lock, or unlock any of the four mechanisms above, which all protect the existing Go-side accounts.
+
+None of the four Go-side mechanisms share a store or a counter; each is unlocked independently
+(password: a successful login or a password reset; 2FA: `wms users 2fa unlock`; bot PIN: a fresh PIN
+reset; gateway throttle: waiting it out, since it's not tied to an account at all).
+
 ## Numeric login for handheld scanners
 
 A Picker or Checker account created or reset from now on gets a short, **numeric-only** user ID

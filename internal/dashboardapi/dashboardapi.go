@@ -43,6 +43,8 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
+	mux.HandleFunc("GET /dashboard/sets", s.withToken(s.handleSets))
+	mux.HandleFunc("GET /dashboard/sets/{setNum}", s.withToken(s.handleSetDetail))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
@@ -92,4 +94,40 @@ func (s *Server) handleKanban(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cards": cards})
+}
+
+// handleSets lists the owned collection, optionally filtered by ?q= (name,
+// theme or set number) -- the exact same lego.DB.SearchSets an empty-term
+// call already uses for "show me everything" (bounded to 200 rows, a
+// personal collection, not a paginated catalog).
+func (s *Server) handleSets(w http.ResponseWriter, r *http.Request) {
+	sets, err := s.legoDB.SearchSets(r.URL.Query().Get("q"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sets": sets})
+}
+
+// handleSetDetail is one set's full picture for the dashboard's Sets
+// section: the owned-collection record, its check/location/missing-qty
+// state, and its parts list from the offline catalog (no network call --
+// CatalogSetInventory, not the live Rebrickable client).
+func (s *Server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
+	setNum := r.PathValue("setNum")
+	set, err := s.legoDB.GetSetByNum(setNum)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	inventory, err := s.legoDB.CatalogSetInventory(setNum)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"set":       set,
+		"state":     s.legoDB.GetSetState(setNum),
+		"inventory": inventory,
+	})
 }
