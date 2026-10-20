@@ -40,6 +40,9 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/admin/proofs/flag", s.withToken(s.handleFlagDispute))
 	mux.HandleFunc("GET /dashboard/queries/parts", s.withToken(s.handleQueryParts))
 	mux.HandleFunc("GET /dashboard/queries/minifigs", s.withToken(s.handleQueryMinifigs))
+	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
+	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
+	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
 	return db, httptest.NewServer(mux)
 }
 

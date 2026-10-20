@@ -78,6 +78,9 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/proofs/flag", s.withToken(s.handleFlagDispute))
 	mux.HandleFunc("GET /dashboard/queries/parts", s.withToken(s.handleQueryParts))
 	mux.HandleFunc("GET /dashboard/queries/minifigs", s.withToken(s.handleQueryMinifigs))
+	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
+	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
+	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
