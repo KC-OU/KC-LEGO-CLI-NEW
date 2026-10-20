@@ -193,6 +193,8 @@ func (s *Server) Dispatch(req ActionRequest) (int, map[string]any) {
 		return s.listOpenTickets()
 	case "list_alerts":
 		return s.listAlerts()
+	case "attach_proof":
+		return s.attachProof(name, req.Params)
 	default:
 		return http.StatusBadRequest, map[string]any{"error": "unknown action"}
 	}

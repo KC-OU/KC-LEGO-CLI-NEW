@@ -75,13 +75,21 @@ curl -X PUT "https://discord.com/api/v10/applications/YOUR_APPLICATION_ID/comman
       ]},
       {"type":1,"name":"alerts","description":"List open accuracy alerts","options":[
         {"type":3,"name":"pin","description":"Your bot PIN","required":true}
+      ]},
+      {"type":1,"name":"proof","description":"Attach a photo/scan of a finished paper checklist","options":[
+        {"type":3,"name":"set","description":"Set number (e.g. 75192)","required":true},
+        {"type":11,"name":"photo","description":"A jpg, png or PDF of the finished paper checklist","required":true},
+        {"type":3,"name":"note","description":"Optional note","required":false},
+        {"type":3,"name":"pin","description":"Your bot PIN","required":true}
       ]}
     ]
   }]'
 ```
 
-If you already registered `/wms` before `alerts` existed, re-run this same command — it's a full
-replace, not an append, so it picks up the new subcommand along with the existing ones.
+Option `type:11` is Discord's ATTACHMENT type — it adds a file-upload button right inside the slash command, so there's nothing to paste or link.
+
+If you already registered `/wms` before `proof` (or `alerts`) existed, re-run this same command — it's
+a full replace, not an append, so it picks up the new subcommand along with the existing ones.
 
 A JSON array in reply (one object, `"name":"wms"`) means it registered. It can take up to an hour to
 show up for everyone the first time (Discord's own caching, nothing to do with WMS), though usually
@@ -125,7 +133,15 @@ In any server the bot's been invited to:
 /wms message username:pat body:"please double check your last set" pin:1234
 /wms kick session_id:abc123 message:"logged off remotely" pin:1234
 /wms alerts pin:1234
+/wms proof set:75192 photo:[attach a file] note:"all parts present" pin:1234
 ```
+
+`/wms proof` is the same effect as `wms lego attach` from the CLI: it verifies the attached file is a
+genuine, readable jpg/png/PDF (not just trusting the extension), stores a copy, and records it against
+the set's current (or most recent) check — set it going first with `wms lego paper-done <set>` (or an
+in-progress CLI check) if there isn't one yet, same requirement as the CLI command has. It doesn't flag
+the check disputed on its own; an admin does that from the CLI (`wms lego attach --flag`) or the
+dashboard's recheck action after actually looking at the attached photo.
 
 Every reply is visible only to you (Discord calls this "ephemeral") — the same instinct as the API's
 collapsed 401s: a bot action's result isn't meant for the whole channel to see.
@@ -139,3 +155,5 @@ collapsed 401s: a bot action's result isn't meant for the whole channel to see.
 | Discord won't save the Interactions Endpoint URL | `WMS_DISCORD_PUBLIC_KEY` isn't set yet, the gateway hasn't restarted since, or the URL doesn't point at a hostname actually proxying to this server |
 | `/wms` doesn't show up in Discord at all | Give it up to an hour the first time; otherwise double-check Part 2 actually returned the command back in its JSON reply |
 | Locked out (`429`-equivalent reply) | Same five-wrong-PINs, five-minute lock as the API — see the API guide's Part 4 |
+| `❌ set 75192-1 has no check yet...` on `/wms proof` | Run `wms lego paper-done <set>` (or start a CLI check) first — a proof attaches to an existing check, it doesn't create one |
+| `❌ ... isn't a readable jpg, png or pdf` | The attached file is corrupt, or isn't actually one of those three formats despite its name/extension |

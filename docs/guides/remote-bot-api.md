@@ -118,6 +118,7 @@ Every other action in the table below works the same way: same `platform`/`id`/`
 | `kick_session` | `{"session_id": "...", "message": "..."}` | Admin → Live Sessions → K |
 | `list_open_tickets` | *(none)* | the Assign Work list — read-only |
 | `list_alerts` | *(none)* | Admin → Alerts — open accuracy escalations needing a manual review, read-only |
+| `attach_proof` | `{"set_num": "75192", "note": "...", "attachment_url": "https://..."}` | `wms lego attach` — see the [Discord guide](remote-bot-discord.md) for the slash-command version with a real file-upload button |
 
 ```json
 {"platform": "discord", "id": "your-id", "pin": "your-pin", "action": "reassign_ticket", "params": {"ticket_id": 42, "to": "pat"}}

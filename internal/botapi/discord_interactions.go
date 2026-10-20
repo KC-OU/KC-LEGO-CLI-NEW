@@ -51,6 +51,13 @@ type discordOption struct {
 	Options []discordOption `json:"options"`
 }
 
+// discordAttachment is a Discord message/interaction attachment object --
+// see https://discord.com/developers/docs/resources/message#attachment-object.
+// Only the fields the proof-upload flow actually needs.
+type discordAttachment struct {
+	URL string `json:"url"`
+}
+
 type discordInteraction struct {
 	Type   int `json:"type"`
 	Member struct {
@@ -59,9 +66,25 @@ type discordInteraction struct {
 		} `json:"user"`
 	} `json:"member"`
 	Data struct {
-		Name    string          `json:"name"`
-		Options []discordOption `json:"options"`
+		Name     string          `json:"name"`
+		Options  []discordOption `json:"options"`
+		Resolved struct {
+			// Keyed by attachment snowflake ID -- an ATTACHMENT-type option's
+			// own Value is just that ID; the actual file lives here.
+			Attachments map[string]discordAttachment `json:"attachments"`
+		} `json:"resolved"`
 	} `json:"data"`
+}
+
+// optAttachmentURL resolves an ATTACHMENT-type option to the file's
+// Discord CDN URL: the option's value is the attachment's snowflake ID,
+// looked up in the interaction's top-level resolved data.
+func optAttachmentURL(opts []discordOption, resolved map[string]discordAttachment, name string) string {
+	id := optString(opts, name)
+	if id == "" {
+		return ""
+	}
+	return resolved[id].URL
 }
 
 func optString(opts []discordOption, name string) string {
@@ -150,6 +173,13 @@ func InteractionsHandler(s *Server, publicKeyHex string) http.HandlerFunc {
 			req.Action = "list_open_tickets"
 		case "alerts":
 			req.Action = "list_alerts"
+		case "proof":
+			req.Action = "attach_proof"
+			req.Params, _ = json.Marshal(attachProofParams{
+				SetNum:        optString(opts, "set"),
+				Note:          optString(opts, "note"),
+				AttachmentURL: optAttachmentURL(opts, in.Data.Resolved.Attachments, "photo"),
+			})
 		default:
 			writeJSON(w, http.StatusOK, interactionReply("Unknown command."))
 			return
@@ -185,6 +215,8 @@ func describeResult(action string, status int, result map[string]any) string {
 			n = len(alerts)
 		}
 		return fmt.Sprintf("✅ %d open alert(s) — see Admin → Alerts for details", n)
+	case "proof":
+		return fmt.Sprintf("✅ proof attached for %s (check #%v)", result["set"], result["check_id"])
 	}
 	return "✅ done"
 }
