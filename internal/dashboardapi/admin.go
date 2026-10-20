@@ -27,10 +27,17 @@ import (
 
 type adminUserRow struct {
 	Username, Role string
+	// Status is "ACTIVE"/"DISABLED" -- added for the account-management
+	// table; the "assign to" dropdown (the only other consumer) just
+	// ignores it. Same first-system-wins simplification as Role already
+	// had: a username registered in both ModernWMS and Part-DB with
+	// differing status shows whichever system ListAll returned first.
+	Status string
 }
 
 // handleUsers is the combined ModernWMS+Part-DB user list -- the same one
-// mobileapi's "assign to" picker uses.
+// mobileapi's "assign to" picker uses, now also the account-management
+// table's data source.
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	if s.usersSvc == nil {
 		writeJSON(w, http.StatusOK, []adminUserRow{})
@@ -44,7 +51,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[row.Username] = true
-		out = append(out, adminUserRow{Username: row.Username, Role: row.RoleOrGroup})
+		out = append(out, adminUserRow{Username: row.Username, Role: row.RoleOrGroup, Status: row.Status})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -151,7 +158,15 @@ func (s *Server) handleAssignTicket(w http.ResponseWriter, r *http.Request) {
 	if req.AssignedTo != "" {
 		_ = s.legoDB.SendMessage(req.By, req.AssignedTo, "You've been assigned: "+tk.Label)
 	}
+	s.logAudit(req.By, "DASHBOARD_TICKET_ASSIGNED", "SUCCESS", tk.Label+" -> "+orDash(req.AssignedTo)+" ("+tk.Kind+")")
 	writeJSON(w, http.StatusOK, adminTicketRow{ID: tk.ID, Kind: tk.Kind, Target: tk.Target, Label: tk.Label, AssignedTo: tk.AssignedTo, Status: tk.Status})
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "the open queue"
+	}
+	return s
 }
 
 type reopenTicketRequest struct {
@@ -180,6 +195,7 @@ func (s *Server) handleReopenTicket(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	s.logAudit(req.By, "DASHBOARD_TICKET_REOPENED", "SUCCESS", tk.Label+" ("+tk.Kind+"): "+req.Reason)
 	writeJSON(w, http.StatusOK, adminTicketRow{ID: tk.ID, Kind: tk.Kind, Target: tk.Target, Label: tk.Label, AssignedTo: tk.AssignedTo, Status: tk.Status})
 }
 

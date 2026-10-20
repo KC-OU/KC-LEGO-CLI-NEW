@@ -22,16 +22,22 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
 type Server struct {
 	legoDB *lego.DB
-	// usersSvc backs the admin "assign to" user list (handleUsers) -- nil in
-	// tests that only exercise Kanban/Sets/accuracy, same "nil disables"
-	// convention as token below.
+	// usersSvc backs the admin "assign to" user list (handleUsers) and the
+	// account-management endpoints -- nil in tests that only exercise
+	// Kanban/Sets/accuracy, same "nil disables" convention as token below.
 	usersSvc *users.Service
+	// audit is the same tamper-evident, hash-chained log every other
+	// surface (TUI, telnet, mobile) writes admin actions to -- nil in tests
+	// that don't care about it; every write handler below nil-checks it the
+	// same way internal/mobileapi's handlers nil-check their own audit field.
+	audit *audit.Logger
 	// token is the shared secret the Rust service presents. Empty disables
 	// the check entirely -- only ever intentional in tests that build a
 	// Server literal directly, the same "nil/empty disables" convention
@@ -39,8 +45,15 @@ type Server struct {
 	token string
 }
 
-func NewServer(legoDB *lego.DB, usersSvc *users.Service, token string) *Server {
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, token: token}
+func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string) *Server {
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token}
+}
+
+func (s *Server) logAudit(user, action, status, details string) {
+	if s.audit == nil {
+		return
+	}
+	_ = s.audit.Log(user, "dashboard-admin", action, status, details)
 }
 
 // Serve runs the dashboard API until ctx is cancelled.
@@ -56,6 +69,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/admin/status-cards", s.withToken(s.handleStatusCards))
 	mux.HandleFunc("POST /dashboard/admin/assign", s.withToken(s.handleAssignTicket))
 	mux.HandleFunc("POST /dashboard/admin/reopen", s.withToken(s.handleReopenTicket))
+	mux.HandleFunc("POST /dashboard/admin/accounts/create", s.withToken(s.handleCreateAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/reset", s.withToken(s.handleResetAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/lock", s.withToken(s.handleLockAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/unlock", s.withToken(s.handleUnlockAccount))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

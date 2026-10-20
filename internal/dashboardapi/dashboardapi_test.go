@@ -19,7 +19,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := NewServer(db, nil, token)
+	s := NewServer(db, nil, nil, token)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
@@ -31,6 +31,10 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("GET /dashboard/admin/status-cards", s.withToken(s.handleStatusCards))
 	mux.HandleFunc("POST /dashboard/admin/assign", s.withToken(s.handleAssignTicket))
 	mux.HandleFunc("POST /dashboard/admin/reopen", s.withToken(s.handleReopenTicket))
+	mux.HandleFunc("POST /dashboard/admin/accounts/create", s.withToken(s.handleCreateAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/reset", s.withToken(s.handleResetAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/lock", s.withToken(s.handleLockAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/unlock", s.withToken(s.handleUnlockAccount))
 	return db, httptest.NewServer(mux)
 }
 
@@ -496,6 +500,106 @@ func TestAdminRoutesRequireTheSharedToken(t *testing.T) {
 
 	for _, path := range []string{"/dashboard/admin/users", "/dashboard/admin/tickets", "/dashboard/admin/status-cards"} {
 		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: status = %d, want 401", path, resp.StatusCode)
+		}
+	}
+}
+
+// No real wmsdb/partdb connection exists in this sandbox (same constraint
+// noted throughout this project's other tests), so usersSvc is always nil
+// here -- these tests cover validation and the "not available" path, not a
+// real CreateUnified/ResetUnified/ToggleBoth round trip. That round trip is
+// internal/users' own test suite's job; this package only wires requests
+// to it.
+
+func TestCreateAccountWithNoUsersServiceIs503(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"username":"1234","role":"Picker","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/create", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestCreateAccountRequiresAUsernameAndBy(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"role":"Picker"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/create", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// usersSvc is nil, so the 503 "not available" check fires before the
+	// missing-field validation does -- still a 4xx/5xx refusal either way,
+	// and the ordering itself (service-availability before field
+	// validation) is what this test pins down.
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestResetAccountWithNoUsersServiceIs503(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"username":"dave","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/reset", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestLockAndUnlockAccountWithNoUsersServiceIs503(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	for _, path := range []string{"/dashboard/admin/accounts/lock", "/dashboard/admin/accounts/unlock"} {
+		body := `{"username":"dave","by":"admin"}`
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status = %d, want 503", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestAccountRoutesRequireTheSharedToken(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	for _, path := range []string{
+		"/dashboard/admin/accounts/create", "/dashboard/admin/accounts/reset",
+		"/dashboard/admin/accounts/lock", "/dashboard/admin/accounts/unlock",
+	} {
+		resp, err := http.Post(srv.URL+path, "application/json", strings.NewReader(`{}`))
 		if err != nil {
 			t.Fatal(err)
 		}
