@@ -50,10 +50,16 @@ archive libraries with vulnerabilities that have no fixed release, which a gatew
 | `order_shipped` / `order_received` | an order moves along |
 | `low_stock`, `price_drop`, `backup`, `export_done` | as before |
 
-The admin activity feed's own events (`message`, `accuracy_dock`, `accuracy_escalation`, `missing_parts`, `forced_off`,
-`reassigned`, `theme_request` — see [Recent Activity](assigned-work.md) and [theme requests](keys-and-accessibility.md))
-reach every configured channel the same way, just not individually routable here (they're left off the table above to
-keep it short) — a Slack `provider-config.yaml` entry like the one above gets all of them, theme requests included.
+The admin activity feed's own events (`message`, `accuracy_dock`, `accuracy_escalation`, `accuracy_report_filed`,
+`missing_parts`, `forced_off`, `reassigned`, `theme_request` — see [Recent Activity](assigned-work.md) and
+[theme requests](keys-and-accessibility.md)) reach every configured channel the same way, just not individually
+routable here (they're left off the table above to keep it short) — a Slack `provider-config.yaml` entry like the
+one above gets all of them, theme requests included. The web dashboard's admin screen (`internal/dashboardapi`)
+fires three of these same events over the same path — `message` and `forced_off` when an admin messages/kicks
+someone from its Live Sessions panel, `accuracy_report_filed` when an admin files an accuracy report from its
+Alerts panel — so there is nothing extra to configure for the dashboard specifically: whatever channels/routing
+you set up here cover it automatically. See [Dashboard notifications, email and your own
+domain](dashboard-notifications-and-domain.md) for a concrete, from-scratch walkthrough.
 
 Every event goes to every channel until you route it:
 
