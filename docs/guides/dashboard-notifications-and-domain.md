@@ -128,17 +128,19 @@ term.yourdomain.tld {
 
 Set `kc-parts-auth-node`'s `.env`: `BETTER_AUTH_URL=https://dashboard.yourdomain.tld` and `DASHBOARD_ORIGIN=https://dashboard.yourdomain.tld` (same origin as the dashboard itself now — the cross-origin cookie problem the README flagged goes away entirely with this layout). Point `kc-parts-dashboard-rs`'s `BETTER_AUTH_URL` at the same address.
 
-### Domain name recommendation
+### Domain name — `kcparts.xyz`
 
 Avoid putting "lego" itself in the domain — LEGO Group is known for aggressively policing trademark use in
 commercial domain names, and this is a resale/checking business, not a fan project. "KC-Parts" is already this
-project's own brand everywhere else (`modernwms-partdb-go`'s own docs, the GitHub org), so:
+project's own brand everywhere else (`modernwms-partdb-go`'s own docs, the GitHub org), and **`kcparts.xyz` is the
+chosen domain** — short, no trademark exposure, cheap at Hostinger. `.xyz` carries no forced-HTTPS quirk (that
+was only ever a `.app`-specific consideration, and a non-issue either way since every browser-facing piece is
+already behind TLS via Cloudflare/Caddy regardless of TLD).
 
-**Top pick: `kcparts.app`** — reads naturally ("the KC-Parts app"), and `.app` requiring HTTPS everywhere is a
-non-issue here since every browser-facing piece (dashboard, auth, web terminal) is behind TLS via Cloudflare/Caddy
-anyway — it only applies to things a browser loads over http(s), so the raw telnet port is unaffected.
+The subdomain table and Caddyfile above apply directly with this domain: `dashboard.kcparts.xyz`,
+`auth.kcparts.xyz`, `term.kcparts.xyz` (all proxied), `cli.kcparts.xyz` (DNS-only, for the raw telnet port) — use
+these in place of every `yourdomain.tld` placeholder above, including `kc-parts-auth-node`'s `BETTER_AUTH_URL`/
+`DASHBOARD_ORIGIN` and `kc-parts-dashboard-rs`'s `BETTER_AUTH_URL`.
 
-**Alternatives, in order:**
-- `kcparts.io` — the classic short SaaS/dev-tool domain, no forced-HTTPS quirk at all if you'd rather not think about it.
-- `kcpartswms.com` — more literal/descriptive, `.com` familiarity if that matters to whoever else sees it.
-- `kc-parts.net` — a plain fallback if the others are taken.
+Alternatives, if `kcparts.xyz` turns out to already be taken at registration time: `kcparts.app`, `kcparts.io`,
+`kcpartswms.com`.
