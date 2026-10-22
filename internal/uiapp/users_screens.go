@@ -22,7 +22,8 @@ func usersHubScreen() screenModel {
 				{Key: "3", Label: "Reset Password", Go: func(app *App) { app.goTo(scrUsersReset) }},
 				{Key: "4", Label: "Modify Role & Email", Go: func(app *App) { app.goTo(scrUsersModify) }},
 				{Key: "5", Label: "Toggle Active/Disabled", Go: func(app *App) { app.goTo(scrUsersToggle) }},
-				{Key: "6", Label: "Delete User", Go: func(app *App) { app.goTo(scrUsersDelete) }},
+				{Key: "6", Label: "Change ID/Username", Go: func(app *App) { app.goTo(scrUsersRename) }},
+				{Key: "7", Label: "Delete User", Go: func(app *App) { app.goTo(scrUsersDelete) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -161,6 +162,30 @@ func usersToggleScreen() screenModel {
 				status = "enabled"
 			}
 			app.setMsg(fmt.Sprintf("User %q is now %s.", username, status), false)
+			app.onBack()
+		},
+	}
+}
+
+func usersRenameScreen() screenModel {
+	return &formScreen{
+		panelID: "USRREN",
+		title:   "Change ID / Username",
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Current Username/ID"}, {Label: "New Username/ID"}, {Label: "Role (Picker/Checker if a numeric ID is required, blank otherwise)"}}
+		},
+		submit: func(app *App, values []string) {
+			oldUsername, newUsername, role := values[0], values[1], values[2]
+			if oldUsername == "" || newUsername == "" {
+				app.setMsg("Current and new username/ID are both required.", true)
+				return
+			}
+			if err := app.users.RenameUnified(app.ctx(), oldUsername, newUsername, role); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			app.audit.Log(app.session.Username, app.session.Role, "RENAME_USER", "SUCCESS", oldUsername+" -> "+newUsername)
+			app.setMsg(fmt.Sprintf("User %q renamed to %q.", oldUsername, newUsername), false)
 			app.onBack()
 		},
 	}

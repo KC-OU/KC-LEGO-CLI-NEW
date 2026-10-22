@@ -13,7 +13,7 @@ var smokeTestScreens = []string{
 	scrScripts, scrAuditLog,
 	scrASN, scrInventory,
 	scrMasterData, scrMasterDataSPU, scrMasterDataSup, scrMasterDataCus,
-	scrUsers, "users_list", scrUsersCreate, scrUsersReset, scrUsersModify, scrUsersToggle, scrUsersDelete,
+	scrUsers, "users_list", scrUsersCreate, scrUsersReset, scrUsersModify, scrUsersToggle, scrUsersRename, scrUsersDelete,
 	scrOutbound, scrContainers,
 	scrLegoHub, scrLegoSetSearch, scrLegoSetResults, scrLegoSetLookup, scrLegoSetDetail, scrLegoSetAdd, scrLegoSetConfirm, scrPick, scrPartConfirm,
 	scrLegoSetFind, scrLegoSetFound, scrLegoSetFoundAdd,

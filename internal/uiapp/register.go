@@ -49,6 +49,7 @@ func buildCoreScreens(app *App) map[string]screenModel {
 		scrUsersReset:  usersResetScreen(),
 		scrUsersModify: usersModifyScreen(),
 		scrUsersToggle: usersToggleScreen(),
+		scrUsersRename: usersRenameScreen(),
 		scrUsersDelete: usersDeleteScreen(),
 
 		scrOutbound:   outboundScreen(),

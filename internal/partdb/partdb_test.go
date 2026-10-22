@@ -264,13 +264,28 @@ func TestPartDBUserCRUD(t *testing.T) {
 	if u, _ := db.GetUserByName("picker1"); !u.Disabled {
 		t.Error("expected user to be disabled")
 	}
+	if err := db.RenameUser("kcollins", "newname"); err == nil {
+		t.Error("expected rename of protected account kcollins to fail")
+	}
+	if err := db.RenameUser("picker1", "seconduser"); err == nil {
+		t.Error("expected rename onto an existing username to fail")
+	}
+	if err := db.RenameUser("picker1", "picker2"); err != nil {
+		t.Fatalf("RenameUser: %v", err)
+	}
+	if u, _ := db.GetUserByName("picker1"); u != nil {
+		t.Error("expected the old username to no longer resolve after rename")
+	}
+	if u, err := db.GetUserByName("picker2"); err != nil || u == nil {
+		t.Fatalf("expected the new username to resolve after rename, got %v, %v", u, err)
+	}
 	if err := db.DeleteUser("kcollins"); err == nil {
 		t.Error("expected delete of protected account kcollins to fail")
 	}
 	if err := db.DeleteUser("seconduser"); err == nil {
 		t.Error("expected delete of protected low-id account to fail")
 	}
-	if err := db.DeleteUser("picker1"); err != nil {
+	if err := db.DeleteUser("picker2"); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}
 	if users, _ = db.ListUsers(); len(users) != 2 {

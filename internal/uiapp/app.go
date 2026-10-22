@@ -48,6 +48,7 @@ const (
 	scrUsersReset    = "users_reset"
 	scrUsersModify   = "users_modify"
 	scrUsersToggle   = "users_toggle"
+	scrUsersRename   = "users_rename"
 	scrUsersDelete   = "users_delete"
 	scrOutbound      = "outbound"
 	scrContainers    = "containers"

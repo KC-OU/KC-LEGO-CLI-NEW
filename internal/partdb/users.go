@@ -163,6 +163,31 @@ func (d *DB) ToggleActive(usernameOrID string, isValid bool) error {
 	return d.ModifyUser(usernameOrID, nil, nil, &isValid)
 }
 
+// RenameUser changes a user's name/login id -- the one thing CreateUser,
+// ResetPassword, ModifyUser etc. all treat as fixed once set. Guarded the
+// same way DeleteUser is (protected accounts can't be renamed away from
+// their protected identity either), and the new name must not collide with
+// an existing user.
+func (d *DB) RenameUser(usernameOrID, newUsername string) error {
+	id, err := d.resolveUserID(usernameOrID)
+	if err != nil {
+		return err
+	}
+	if isProtectedPartDBUser(usernameOrID, id) {
+		return fmt.Errorf("protected administrator account %q cannot be renamed", usernameOrID)
+	}
+	var existing int
+	err = d.QueryRow("SELECT id FROM users WHERE LOWER(name) = LOWER(?)", newUsername).Scan(&existing)
+	if err == nil {
+		return fmt.Errorf("user %q already exists", newUsername)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, err = d.Exec("UPDATE users SET name = ? WHERE id = ? AND LOWER(name) != 'kcollins' AND id > 2", newUsername, id)
+	return err
+}
+
 func (d *DB) DeleteUser(usernameOrID string) error {
 	id, err := d.resolveUserID(usernameOrID)
 	if err != nil {

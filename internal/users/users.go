@@ -164,6 +164,32 @@ func (s *Service) DeleteBoth(ctx context.Context, username string) error {
 	return nil
 }
 
+// RenameUnified changes a user's ID/username in both systems, best effort.
+// A numeric-login role (see WantsNumericLogin) still must land on a 4-5
+// digit id afterward -- the handheld keypad rule applies to a rename just
+// as much as it does to creation. Non-numeric-login accounts (admins, and
+// the dashboard's own accounts) can rename to any valid username, text or
+// numeric -- the ID is mandatory-numeric only where a physical keypad is
+// what actually logs in with it.
+func (s *Service) RenameUnified(ctx context.Context, usernameOrID, newUsername, role string) error {
+	newUsername = strings.TrimSpace(newUsername)
+	if newUsername == "" {
+		return fmt.Errorf("new username is required")
+	}
+	if protectedIdentities[strings.ToLower(usernameOrID)] {
+		return fmt.Errorf("protected administrator account %q cannot be renamed", usernameOrID)
+	}
+	if WantsNumericLogin(role) && !NumericLoginUsernameRE.MatchString(newUsername) {
+		return fmt.Errorf("%s accounts need a 4-5 digit numeric user ID (for a handheld scanner's keypad) — got %q", role, newUsername)
+	}
+	wmsErr := s.WMS.RenameUser(ctx, usernameOrID, newUsername)
+	pdbErr := s.PDB.RenameUser(usernameOrID, newUsername)
+	if wmsErr != nil && pdbErr != nil {
+		return fmt.Errorf("ModernWMS: %v; Part-DB: %v", wmsErr, pdbErr)
+	}
+	return nil
+}
+
 func (s *Service) DeleteOne(ctx context.Context, system, username string) error {
 	switch strings.ToLower(system) {
 	case "wms", "modernwms":

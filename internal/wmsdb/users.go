@@ -145,6 +145,38 @@ func (c *Client) ToggleActive(ctx context.Context, usernameOrID string, isValid 
 	return c.ModifyUser(ctx, usernameOrID, nil, nil, &isValid)
 }
 
+// RenameUser changes user_num and user_name together -- CreateUser writes
+// the same value to both on creation (there's no separate "ID" vs "display
+// name" split in this schema today), so a rename keeps that in sync rather
+// than leaving them to drift apart.
+func (c *Client) RenameUser(ctx context.Context, usernameOrID, newUsername string) error {
+	if protectedWMSUsers[strings.ToLower(usernameOrID)] {
+		return fmt.Errorf("protected administrator account %q cannot be renamed", usernameOrID)
+	}
+	script := c.connectPrelude() + fmt.Sprintf(`
+ident = %s
+new_name = %s
+try:
+    uid = int(ident)
+except ValueError:
+    uid = -1
+cur.execute("SELECT id FROM user WHERE LOWER(user_name)=LOWER(?) AND LOWER(user_name) != 'admin'", (new_name,))
+if cur.fetchone():
+    print(json.dumps({"ok": False, "error": "User already exists"}))
+else:
+    cur.execute("SELECT id FROM user WHERE (LOWER(user_name)=LOWER(?) OR LOWER(user_num)=LOWER(?) OR id=?) AND LOWER(user_name) != 'admin'", (ident, ident, uid))
+    row = cur.fetchone()
+    if row is None:
+        print(json.dumps({"ok": False, "error": "User not found or protected"}))
+    else:
+        cur.execute("UPDATE user SET user_num=?, user_name=?, last_update_time=datetime('now') WHERE id=?", (new_name, new_name, row["id"]))
+        con.commit()
+        print(json.dumps({"ok": True}))
+`, pyStringLit(usernameOrID), pyStringLit(newUsername))
+
+	return c.runOKScript(ctx, script)
+}
+
 // DeleteUser guards the WMS-side protected identities and never deletes a
 // row whose user_name is literally "admin", matching the original's extra
 // belt-and-suspenders check in the SQL itself.
