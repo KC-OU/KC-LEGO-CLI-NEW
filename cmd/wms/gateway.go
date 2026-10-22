@@ -194,7 +194,7 @@ func newGatewayServeCmd() *cobra.Command {
 				}
 				legoDB.SetActor("dashboardapi")
 				defer legoDB.Close()
-				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken))
+				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken), lego.NewClientFor(legoDB))
 				g.Go(func() error { return dashboardapi.Serve(gctx, host+":"+dashboardAPIPort, dashboardSrv) })
 			}
 			return g.Wait()

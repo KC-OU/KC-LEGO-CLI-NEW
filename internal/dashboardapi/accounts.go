@@ -120,6 +120,77 @@ func (s *Server) handleResetAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resetAccountResponse{Username: req.Username, TemporaryPassword: password, MustChangePassword: true})
 }
 
+type deleteAccountRequest struct {
+	Username string `json:"username"`
+	Confirm  string `json:"confirm"`
+	By       string `json:"by"`
+}
+
+// handleDeleteAccount removes the account from both systems permanently --
+// the TUI's own "Delete User" screen requires the same typed "yes" before
+// calling DeleteBoth, which also still guards the protected identities
+// (admin/1/kcollins/2) regardless of what's typed here.
+func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	if s.usersSvc == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "account management is not available in this environment"})
+		return
+	}
+	var req deleteAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.Username, req.Confirm, req.By = strings.TrimSpace(req.Username), strings.TrimSpace(req.Confirm), strings.TrimSpace(req.By)
+	if req.Username == "" || req.By == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and by are required"})
+		return
+	}
+	if strings.ToLower(req.Confirm) != "yes" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `type "yes" to confirm`})
+		return
+	}
+	if err := s.usersSvc.DeleteBoth(r.Context(), req.Username); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_USER_DELETED", "SUCCESS", req.Username)
+	writeJSON(w, http.StatusOK, map[string]string{"username": req.Username})
+}
+
+type renameAccountRequest struct {
+	Username    string `json:"username"`
+	NewUsername string `json:"new_username"`
+	Role        string `json:"role"`
+	By          string `json:"by"`
+}
+
+// handleRenameAccount is "Change ID" from the dashboard -- the same
+// RenameUnified the TUI's own screen calls, including its numeric-login
+// policy (a Picker/Checker account's new id must still be 4-5 digits) and
+// protected-identity guard.
+func (s *Server) handleRenameAccount(w http.ResponseWriter, r *http.Request) {
+	if s.usersSvc == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "account management is not available in this environment"})
+		return
+	}
+	var req renameAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.Username, req.NewUsername, req.Role, req.By = strings.TrimSpace(req.Username), strings.TrimSpace(req.NewUsername), strings.TrimSpace(req.Role), strings.TrimSpace(req.By)
+	if req.Username == "" || req.NewUsername == "" || req.By == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username, new_username and by are required"})
+		return
+	}
+	if err := s.usersSvc.RenameUnified(r.Context(), req.Username, req.NewUsername, req.Role); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_USER_RENAMED", "SUCCESS", req.Username+" -> "+req.NewUsername)
+	writeJSON(w, http.StatusOK, map[string]string{"username": req.NewUsername})
+}
+
 type toggleAccountRequest struct {
 	Username string `json:"username"`
 	By       string `json:"by"`

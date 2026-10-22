@@ -19,7 +19,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := NewServer(db, nil, nil, token)
+	s := NewServer(db, nil, nil, token, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
@@ -35,11 +35,14 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/admin/accounts/reset", s.withToken(s.handleResetAccount))
 	mux.HandleFunc("POST /dashboard/admin/accounts/lock", s.withToken(s.handleLockAccount))
 	mux.HandleFunc("POST /dashboard/admin/accounts/unlock", s.withToken(s.handleUnlockAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/delete", s.withToken(s.handleDeleteAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/rename", s.withToken(s.handleRenameAccount))
 	mux.HandleFunc("GET /dashboard/admin/proofs/{setNum}", s.withToken(s.handleProofsForSet))
 	mux.HandleFunc("GET /dashboard/admin/proofs/{setNum}/{proofID}/file", s.withToken(s.handleProofFile))
 	mux.HandleFunc("POST /dashboard/admin/proofs/flag", s.withToken(s.handleFlagDispute))
 	mux.HandleFunc("GET /dashboard/queries/parts", s.withToken(s.handleQueryParts))
 	mux.HandleFunc("GET /dashboard/queries/minifigs", s.withToken(s.handleQueryMinifigs))
+	mux.HandleFunc("GET /dashboard/catalog/sets/{setNum}", s.withToken(s.handleCatalogSetLookup))
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
@@ -573,6 +576,63 @@ func TestResetAccountWithNoUsersServiceIs503(t *testing.T) {
 
 	body := `{"username":"dave","by":"admin"}`
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/reset", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestDeleteAccountWithNoUsersServiceIs503(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"username":"dave","confirm":"yes","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/delete", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestDeleteAccountWithoutConfirmIs400BeforeServiceCheckEvenMatters(t *testing.T) {
+	// usersSvc is nil here too, so this still can't observe DeleteBoth not
+	// being called -- but it does pin that the handler decodes/validates the
+	// body at all, same spirit as TestCreateAccountRequiresAUsernameAndBy.
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"username":"dave","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/delete", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// usersSvc is nil, so the 503 "not available" check fires before the
+	// missing-confirm validation does -- same ordering TestCreateAccount
+	// RequiresAUsernameAndBy pins down for the create endpoint.
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestRenameAccountWithNoUsersServiceIs503(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	body := `{"username":"dave","new_username":"dave2","by":"admin"}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/dashboard/admin/accounts/rename", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer secret")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -43,10 +43,14 @@ type Server struct {
 	// Server literal directly, the same "nil/empty disables" convention
 	// internal/mobileapi's throttle field already uses.
 	token string
+	// rebrick backs the catalog-only set lookup (handleCatalogSetLookup) --
+	// nil is fine, LookupSet/LookupSetInventory both already tolerate a nil
+	// *lego.Client and fall back to the offline catalog alone.
+	rebrick *lego.Client
 }
 
-func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string) *Server {
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token}
+func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client) *Server {
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {
@@ -73,11 +77,14 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/accounts/reset", s.withToken(s.handleResetAccount))
 	mux.HandleFunc("POST /dashboard/admin/accounts/lock", s.withToken(s.handleLockAccount))
 	mux.HandleFunc("POST /dashboard/admin/accounts/unlock", s.withToken(s.handleUnlockAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/delete", s.withToken(s.handleDeleteAccount))
+	mux.HandleFunc("POST /dashboard/admin/accounts/rename", s.withToken(s.handleRenameAccount))
 	mux.HandleFunc("GET /dashboard/admin/proofs/{setNum}", s.withToken(s.handleProofsForSet))
 	mux.HandleFunc("GET /dashboard/admin/proofs/{setNum}/{proofID}/file", s.withToken(s.handleProofFile))
 	mux.HandleFunc("POST /dashboard/admin/proofs/flag", s.withToken(s.handleFlagDispute))
 	mux.HandleFunc("GET /dashboard/queries/parts", s.withToken(s.handleQueryParts))
 	mux.HandleFunc("GET /dashboard/queries/minifigs", s.withToken(s.handleQueryMinifigs))
+	mux.HandleFunc("GET /dashboard/catalog/sets/{setNum}", s.withToken(s.handleCatalogSetLookup))
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
