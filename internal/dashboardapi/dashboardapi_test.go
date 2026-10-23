@@ -109,6 +109,8 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/admin/access/user/password", s.withToken(s.handleAccessUserSetPassword))
 	mux.HandleFunc("POST /dashboard/admin/access/user/rename", s.withToken(s.handleAccessUserRename))
 	mux.HandleFunc("POST /dashboard/admin/access/user/remove", s.withToken(s.handleAccessUserRemove))
+	mux.HandleFunc("GET /dashboard/bags/{setNum}", s.withToken(s.handlePrintableBags))
+	mux.HandleFunc("GET /dashboard/labels/bags/{setNum}/{code}", s.withToken(s.handleBagLabel))
 	return db, httptest.NewServer(mux)
 }
 
