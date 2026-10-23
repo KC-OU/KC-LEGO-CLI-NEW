@@ -67,6 +67,10 @@ type Server struct {
 	// existed; this is a wire-up, not a fix for either.
 	bl *bricklink.Client
 	bo *brickowl.Client
+	// currencies is a plain JSON-file store, never nil -- there's no
+	// external service to inject here, just a user-editable currency list
+	// and a cache of the last fetched rates (see currencies.go).
+	currencies *currencyStore
 }
 
 func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client, bl *bricklink.Client, bo *brickowl.Client) *Server {
@@ -74,7 +78,7 @@ func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger,
 	if pdb != nil {
 		pdbw = partdb.NewWriter(pdb)
 	}
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo}
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo, currencies: newCurrencyStore("")}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {
@@ -184,6 +188,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos/{id}/remove", s.withToken(s.handleRemoveSetPhoto))
 	mux.HandleFunc("GET /dashboard/lego/value", s.withToken(s.handleCollectionValue))
 	mux.HandleFunc("GET /dashboard/admin/system-health", s.withToken(s.handleSystemHealth))
+	mux.HandleFunc("GET /dashboard/currencies", s.withToken(s.handleListCurrencies))
+	mux.HandleFunc("POST /dashboard/currencies/add", s.withToken(s.handleAddCurrency))
+	mux.HandleFunc("POST /dashboard/currencies/remove", s.withToken(s.handleRemoveCurrency))
+	mux.HandleFunc("POST /dashboard/currencies/refresh", s.withToken(s.handleRefreshCurrencies))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

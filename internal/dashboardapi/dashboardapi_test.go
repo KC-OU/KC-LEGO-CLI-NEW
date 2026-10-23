@@ -20,6 +20,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	}
 	t.Cleanup(func() { db.Close() })
 	s := NewServer(db, nil, nil, token, nil, nil, nil, nil, nil)
+	s.currencies = newCurrencyStore(filepath.Join(dir, "currencies.json")) // isolate from the real CURRENCIES_FILE/LEGO_DB_PATH default
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
@@ -118,6 +119,10 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos/{id}/remove", s.withToken(s.handleRemoveSetPhoto))
 	mux.HandleFunc("GET /dashboard/lego/value", s.withToken(s.handleCollectionValue))
 	mux.HandleFunc("GET /dashboard/admin/system-health", s.withToken(s.handleSystemHealth))
+	mux.HandleFunc("GET /dashboard/currencies", s.withToken(s.handleListCurrencies))
+	mux.HandleFunc("POST /dashboard/currencies/add", s.withToken(s.handleAddCurrency))
+	mux.HandleFunc("POST /dashboard/currencies/remove", s.withToken(s.handleRemoveCurrency))
+	mux.HandleFunc("POST /dashboard/currencies/refresh", s.withToken(s.handleRefreshCurrencies))
 	return db, httptest.NewServer(mux)
 }
 

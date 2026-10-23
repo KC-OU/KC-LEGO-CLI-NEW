@@ -82,7 +82,12 @@ const (
 	// (see DB.AttachProof). "" (the default) means "next to lego.db itself", so it
 	// travels with the same backups without needing its own setting.
 	LegoAttachmentsDir = "LEGO_ATTACHMENTS_DIR"
-	RebrickableAPIKey  = "REBRICKABLE_API_KEY"
+	// CurrenciesFile holds the dashboard's user-added currency list and its
+	// cached exchange rates (see internal/dashboardapi/currencies.go). ""
+	// (the default) means "next to lego.db itself", same convention as
+	// LegoAttachmentsDir above.
+	CurrenciesFile    = "CURRENCIES_FILE"
+	RebrickableAPIKey = "REBRICKABLE_API_KEY"
 	// KanbanBacklogQtyThreshold is the per-line quantity at or above which the
 	// kanban board flags a line "moved to the back" of its job (see
 	// internal/lego.CheckLine.Deprioritized) — "" (the default) falls back to
