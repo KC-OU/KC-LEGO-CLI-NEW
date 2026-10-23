@@ -25,6 +25,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/brickowl"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
@@ -74,6 +75,10 @@ type Server struct {
 	// lang is a plain JSON-file store, never nil -- same reasoning as
 	// currencies above (see i18n.go).
 	lang *langStore
+	// dashLinks tracks which Go-side usernames have a provisioned
+	// web-dashboard login -- never nil, deliberately NOT part of
+	// internal/access.Policy (see internal/dashboardlink's own comment).
+	dashLinks *dashboardlink.Store
 }
 
 func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client, bl *bricklink.Client, bo *brickowl.Client) *Server {
@@ -81,7 +86,10 @@ func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger,
 	if pdb != nil {
 		pdbw = partdb.NewWriter(pdb)
 	}
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo, currencies: newCurrencyStore(""), lang: newLangStore("")}
+	return &Server{
+		legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo,
+		currencies: newCurrencyStore(""), lang: newLangStore(""), dashLinks: dashboardlink.New(""),
+	}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {

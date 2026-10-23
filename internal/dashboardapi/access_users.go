@@ -49,8 +49,12 @@ type accessUserView struct {
 	Dashboard   bool     `json:"dashboard"`
 }
 
-func userToView(key string, u *access.User) accessUserView {
-	v := accessUserView{Key: key, Governed: u != nil}
+// userToView builds the response view for key/u. dashboardLinked comes
+// from internal/dashboardlink, not access.User -- it's tracked separately
+// precisely so it can be true (or false) independent of whether the user
+// is governed at all; see that package's own comment for why.
+func userToView(key string, u *access.User, dashboardLinked bool) accessUserView {
+	v := accessUserView{Key: key, Governed: u != nil, Dashboard: dashboardLinked}
 	if u == nil {
 		return v
 	}
@@ -59,7 +63,6 @@ func userToView(key string, u *access.User) accessUserView {
 	v.GraceMin, v.IdleMin, v.MaxHours = u.GraceMin, u.IdleMin, u.MaxHours
 	v.HasBadge = u.BadgeToken != ""
 	v.HasPassword = u.PasswordHash != ""
-	v.Dashboard = u.Dashboard
 	return v
 }
 
@@ -121,7 +124,12 @@ func (s *Server) handleAccessUserShow(w http.ResponseWriter, r *http.Request) {
 	}
 	key := resolveUserKey(p, source, username)
 	u := p.Users[key]
-	view := userToView(key, u)
+	linked, err := s.dashLinks.Has(username)
+	if err != nil {
+		writeAccessErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	view := userToView(key, u, linked)
 	if u == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"user": view})
 		return
@@ -144,7 +152,13 @@ func (s *Server) handleAccessUserList(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]accessUserView, 0, len(p.Users))
 	for key, u := range p.Users {
-		views = append(views, userToView(key, u))
+		_, name, _ := strings.Cut(key, ":")
+		linked, err := s.dashLinks.Has(name)
+		if err != nil {
+			writeAccessErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		views = append(views, userToView(key, u, linked))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": views})
 }
@@ -290,10 +304,12 @@ type setDashboardResponse struct {
 
 // handleAccessUserSetDashboard is POST /dashboard/admin/access/user/dashboard
 // -- the yes/no toggle that auto-provisions a matching kc-parts-auth-node
-// login (see internal/authbridge) the moment it's turned on. Turning off
-// only clears the policy flag; it never deprovisions the BetterAuth side,
-// the same "no automatic deletion" caution every other toggle in this
-// package follows.
+// login (see internal/authbridge) the moment it's turned on. Recorded in
+// internal/dashboardlink, NOT internal/access.Policy -- see that
+// package's own comment for why (in short: it must never flip an
+// otherwise-untouched account from "ungoverned, full legacy telnet
+// access" to "governed, zero permissions" as a side effect). Turning it
+// off only unlinks it there; it never deprovisions the BetterAuth side.
 func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Request) {
 	var req setDashboardRequest
 	if err := decodeAccessReq(r, &req); err != nil {
@@ -308,12 +324,11 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 	}
 
 	if !req.On {
-		key, err := s.editUser(req.Source, req.Username, func(u *access.User) error { u.Dashboard = false; return nil })
-		if err != nil {
-			writeAccessErr(w, http.StatusBadRequest, err)
+		if err := s.dashLinks.Set(req.Username, false); err != nil {
+			writeAccessErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", key+" dashboard=off")
+		s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", req.Username+" dashboard=off")
 		writeJSON(w, http.StatusOK, setDashboardResponse{Saved: true})
 		return
 	}
@@ -343,16 +358,15 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 		writeAccessErr(w, http.StatusBadGateway, fmt.Errorf("account password was reset, but dashboard provisioning failed: %w", err))
 		return
 	}
-	key, err := s.editUser(req.Source, req.Username, func(u *access.User) error { u.Dashboard = true; return nil })
-	if err != nil {
-		writeAccessErr(w, http.StatusBadRequest, err)
+	if err := s.dashLinks.Set(req.Username, true); err != nil {
+		writeAccessErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	note := ""
 	if !result.Provisioned {
 		note = result.Reason
 	}
-	s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", key+" dashboard=on")
+	s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", req.Username+" dashboard=on")
 	writeJSON(w, http.StatusOK, setDashboardResponse{Saved: true, TemporaryPassword: password, MustChangePassword: true, ProvisionNote: note})
 }
 

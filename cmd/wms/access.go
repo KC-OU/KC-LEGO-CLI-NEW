@@ -19,6 +19,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
@@ -421,7 +422,11 @@ func newAccessUserCmd() *cobra.Command {
 				return usageError("expected \"on\" or \"off\", got %q", on)
 			}
 			if on == "off" {
-				return edit(username, "dashboard=off", func(u *access.User) error { u.Dashboard = false; return nil })
+				if err := dashboardlink.New("").Set(username, false); err != nil {
+					return err
+				}
+				say(ui.Status(ui.New(), true, username+": dashboard=off"))
+				return nil
 			}
 			if !authbridge.Configured() {
 				return fmt.Errorf("dashboard login provisioning is not configured on this machine (set WMS_AUTH_SERVICE_URL and WMS_DASHBOARD_PROVISION_TOKEN)")
@@ -441,9 +446,10 @@ func newAccessUserCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("password reset, but dashboard provisioning failed: %w", err)
 			}
-			if err := edit(username, "dashboard=on", func(u *access.User) error { u.Dashboard = true; return nil }); err != nil {
+			if err := dashboardlink.New("").Set(username, true); err != nil {
 				return err
 			}
+			say(ui.Status(ui.New(), true, username+": dashboard=on"))
 			say(ui.Fact(ui.New(), "Generated Temporary Password", password))
 			say(ui.Warn(ui.New(), "This password must be changed at next login."))
 			if !result.Provisioned {

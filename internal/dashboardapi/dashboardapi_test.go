@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
@@ -22,6 +23,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	s := NewServer(db, nil, nil, token, nil, nil, nil, nil, nil)
 	s.currencies = newCurrencyStore(filepath.Join(dir, "currencies.json")) // isolate from the real CURRENCIES_FILE/LEGO_DB_PATH default
 	s.lang = newLangStore(filepath.Join(dir, "translations"))              // isolate from the real WMS_TRANSLATIONS_DIR/LEGO_DB_PATH default
+	s.dashLinks = dashboardlink.New(filepath.Join(dir, "dashboard_links.json"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))

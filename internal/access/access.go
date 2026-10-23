@@ -97,21 +97,11 @@ type User struct {
 	TwoFA       string            `json:"twofa,omitempty"`        // "", required, exempt
 	ExemptCIDRs []string          `json:"exempt_cidrs,omitempty"` // exempt only from these networks (none = anywhere)
 	Channels    []string          `json:"channels,omitempty"`     // allowed ways in; none = all
-	// Dashboard is a deliberately separate yes/no flag, not another
-	// Channels value -- Channels' own "none = all" default means every
-	// existing ungoverned account already allows every *current* channel,
-	// and folding a brand-new, more sensitive one (a web-dashboard login)
-	// into that same enum would silently grant it to every such account
-	// the moment this shipped. This is opt-in only, set at account
-	// creation or via the dedicated dashboard-channel toggle, which also
-	// provisions a matching kc-parts-auth-node login (see
-	// internal/dashboardapi's account/channel handlers).
-	Dashboard bool   `json:"dashboard,omitempty"`
-	Expires   string `json:"expires,omitempty"` // YYYY-MM-DD: access ends at the start of this day
-	GraceMin  *int   `json:"grace_minutes,omitempty"`
-	IdleMin   *int   `json:"idle_minutes,omitempty"`
-	MaxHours  *int   `json:"max_session_hours,omitempty"`
-	Note      string `json:"note,omitempty"`
+	Expires     string            `json:"expires,omitempty"`      // YYYY-MM-DD: access ends at the start of this day
+	GraceMin    *int              `json:"grace_minutes,omitempty"`
+	IdleMin     *int              `json:"idle_minutes,omitempty"`
+	MaxHours    *int              `json:"max_session_hours,omitempty"`
+	Note        string            `json:"note,omitempty"`
 	// BadgeToken is an unguessable string printed on a barcode badge — never the
 	// literal username, so a lost badge is revoked by reprinting, not by changing
 	// a real credential. See NewBadgeToken and Policy.FindByBadge.

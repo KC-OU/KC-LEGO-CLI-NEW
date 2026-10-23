@@ -70,6 +70,11 @@ const (
 	// kc-parts-auth-node's own env.
 	AuthServiceURL          = "WMS_AUTH_SERVICE_URL"
 	DashboardProvisionToken = "WMS_DASHBOARD_PROVISION_TOKEN"
+	// DashboardLinksFile backs internal/dashboardlink -- see that
+	// package's own comment for why this is deliberately not part of
+	// internal/access's own policy file. "" (the default) means "next to
+	// lego.db itself", same convention as LegoAttachmentsDir.
+	DashboardLinksFile = "WMS_DASHBOARD_LINKS_FILE"
 	// MobileAppURL is the sentry-wms mobile app's own server URL (its Flask
 	// API, a separate deployment this project doesn't own) — saved once via
 	// `wms sys mobile-setup-qr <url>` so later runs don't need it typed
@@ -193,6 +198,7 @@ func Defaults() map[string]string {
 		DashboardAPIToken:         "", // empty: no shared secret set yet — set this and the same value in the Rust service's config before turning DashboardAPIPort on
 		AuthServiceURL:            "", // empty: dashboard-login provisioning is off until set, e.g. "http://127.0.0.1:3001"
 		DashboardProvisionToken:   "", // empty: no shared secret set yet — set this and the same value as DASHBOARD_PROVISION_TOKEN in kc-parts-auth-node's env
+		DashboardLinksFile:        "", // empty: next to lego.db itself, same convention as LegoAttachmentsDir
 		WebSoloDirectPort:         "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:           "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:         "/root/docker-server/partdb-sync/config/link_overrides.json",

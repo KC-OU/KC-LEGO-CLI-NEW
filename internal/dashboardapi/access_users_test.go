@@ -46,6 +46,36 @@ func TestAccessUserGroupsRoundTrips(t *testing.T) {
 	}
 }
 
+// Regression test: dashboard linking must NEVER touch access.Policy.
+// internal/uiapp's own governed()/legacyCan() treat the mere existence of
+// an access.Policy entry as "governed" (only explicit groups/perms apply,
+// no more legacy ModernWMS/Part-DB role fallback) -- an earlier version of
+// this feature stored the dashboard flag ON access.User and would have
+// silently stripped an ungoverned Picker/Checker of their existing full
+// legacy telnet access the moment an admin turned dashboard access on for
+// them. Turning dashboard off here must leave the user exactly as
+// ungoverned as they started.
+func TestSetDashboardOffNeverCreatesAnAccessPolicyEntry(t *testing.T) {
+	isolateAccessStores(t)
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	resp := postJSON(t, srv.URL, "/dashboard/admin/access/user/dashboard", `{"username":"77777","on":false,"by":"admin"}`)
+	resp.Body.Close()
+
+	show := getWithToken(t, srv.URL, "/dashboard/admin/access/user/77777")
+	defer show.Body.Close()
+	var out struct {
+		User accessUserView `json:"user"`
+	}
+	if err := json.NewDecoder(show.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.User.Governed {
+		t.Fatal("expected the user to remain ungoverned -- dashboard linking must not create an access.Policy entry")
+	}
+}
+
 func TestSetDashboardOffClearsTheFlagWithoutNeedingUsersService(t *testing.T) {
 	isolateAccessStores(t)
 	_, srv := testServer(t, "secret")

@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
@@ -101,17 +100,8 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 			case !result.Provisioned:
 				note = result.Reason
 			default:
-				if _, err := access.Update(func(p *access.Policy) error {
-					key := resolveUserKey(p, "", req.Username)
-					u := p.Users[key]
-					if u == nil {
-						u = &access.User{}
-						p.Users[key] = u
-					}
-					u.Dashboard = true
-					return nil
-				}); err != nil {
-					note = "dashboard login was created, but recording it in the access policy failed: " + err.Error()
+				if err := s.dashLinks.Set(req.Username, true); err != nil {
+					note = "dashboard login was created, but recording the link failed: " + err.Error()
 				}
 			}
 		}
