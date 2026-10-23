@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
@@ -111,7 +112,11 @@ func (s *Server) handleBLPrice(w http.ResponseWriter, r *http.Request) {
 	if q.Get("stock") == "1" {
 		guide = bricklink.Stock
 	}
-	condition := strings.ToUpper(q.Get("condition"))
+	condition := q.Get("condition")
+	if condition == "" {
+		condition = config.Get(config.BricklinkCondition)
+	}
+	condition = strings.ToUpper(condition)
 	price, err := s.bl.PriceGuide(r.Context(), t, number, colorID, guide, condition)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
