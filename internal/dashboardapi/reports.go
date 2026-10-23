@@ -6,28 +6,55 @@
 package dashboardapi
 
 import (
+	"encoding/csv"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
+// writeCSVOrJSON serves data as JSON by default, or as CSV (via
+// lego.Encode's own "csv" format, same bytes `wms lego report ... --format
+// csv` would produce) when ?format=csv is given.
+func writeExportDataCSVOrJSON(w http.ResponseWriter, data *lego.ExportData, filename string) {
+	body, _, _, err := lego.Encode("csv", data)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = w.Write(body)
+}
+
 // handleMissingReport is `wms report missing` -- ?sets=71788,10312 (comma
-// separated set numbers), empty means every owned set.
+// separated set numbers), empty means every owned set; ?format=csv for a
+// download instead of JSON.
 func (s *Server) handleMissingReport(w http.ResponseWriter, r *http.Request) {
 	data, err := s.legoDB.MissingPartsReport(splitCommaList(r.URL.Query().Get("sets")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeExportDataCSVOrJSON(w, data, "missing-parts.csv")
+		return
+	}
 	writeJSON(w, http.StatusOK, data)
 }
 
-// handleExtraReport is `wms report extra` (spares beyond what's needed).
+// handleExtraReport is `wms report extra` (spares beyond what's needed);
+// ?format=csv for a download instead of JSON.
 func (s *Server) handleExtraReport(w http.ResponseWriter, r *http.Request) {
 	data, err := s.legoDB.ExtraPartsReport(splitCommaList(r.URL.Query().Get("sets")))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeExportDataCSVOrJSON(w, data, "extra-parts.csv")
 		return
 	}
 	writeJSON(w, http.StatusOK, data)
@@ -86,6 +113,17 @@ func (s *Server) handleStockSheet(w http.ResponseWriter, r *http.Request) {
 	title, lines, meta, err := s.legoDB.StockSheet(r.Context(), s.rebrick, setNum)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if r.URL.Query().Get("format") == "csv" {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+setNum+`-stock-sheet.csv"`)
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"Part", "Name", "Category", "Colour", "Expected", "Optional"})
+		for _, l := range lines {
+			_ = cw.Write([]string{l.PartNum, l.PartName, l.Category, l.ColorName, strconv.Itoa(l.Expected), strconv.FormatBool(l.Optional)})
+		}
+		cw.Flush()
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"title": title, "lines": lines, "meta": meta})

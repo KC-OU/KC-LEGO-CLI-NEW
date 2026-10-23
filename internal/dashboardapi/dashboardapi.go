@@ -182,6 +182,8 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/sets/{setNum}/photos/{id}/file", s.withToken(s.handleSetPhotoFile))
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos", s.withToken(s.handleUploadSetPhoto))
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos/{id}/remove", s.withToken(s.handleRemoveSetPhoto))
+	mux.HandleFunc("GET /dashboard/lego/value", s.withToken(s.handleCollectionValue))
+	mux.HandleFunc("GET /dashboard/admin/system-health", s.withToken(s.handleSystemHealth))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
