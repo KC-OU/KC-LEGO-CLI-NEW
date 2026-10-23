@@ -24,7 +24,9 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
 
 type Server struct {
@@ -47,10 +49,24 @@ type Server struct {
 	// nil is fine, LookupSet/LookupSetInventory both already tolerate a nil
 	// *lego.Client and fall back to the offline catalog alone.
 	rebrick *lego.Client
+	// pdb/pdbw back the Part-DB browse/create/adjust-stock endpoints -- nil
+	// disables them the same way usersSvc being nil disables account
+	// management (solo mode opens no Part-DB at all; see gateway.go).
+	pdb  *partdb.DB
+	pdbw *partdb.Writer
+	// wms backs the Operations endpoints (inventory lookup, master data,
+	// receive/ASN, dispatch) -- never nil in practice (wmsdb.NewClient()
+	// doesn't itself open a connection), kept as a field for parity with the
+	// other injected services and so tests can swap it.
+	wms *wmsdb.Client
 }
 
-func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client) *Server {
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick}
+func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client) *Server {
+	var pdbw *partdb.Writer
+	if pdb != nil {
+		pdbw = partdb.NewWriter(pdb)
+	}
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {
@@ -92,6 +108,35 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/alerts/file", s.withToken(s.handleFileAccuracyReport))
 	mux.HandleFunc("GET /dashboard/admin/accuracy-reports/{username}", s.withToken(s.handleAccuracyReportsFor))
 	mux.HandleFunc("POST /dashboard/admin/sets/image", s.withToken(s.handleSetImage))
+	mux.HandleFunc("GET /dashboard/admin/activity", s.withToken(s.handleActivity))
+	mux.HandleFunc("POST /dashboard/admin/activity/clear", s.withToken(s.handleClearActivity))
+	mux.HandleFunc("GET /dashboard/admin/audit", s.withToken(s.handleAuditLog))
+	mux.HandleFunc("GET /dashboard/admin/containers", s.withToken(s.handleContainers))
+	mux.HandleFunc("GET /dashboard/admin/handover", s.withToken(s.handleGetHandover))
+	mux.HandleFunc("POST /dashboard/admin/handover", s.withToken(s.handleSetHandover))
+	mux.HandleFunc("GET /dashboard/admin/rota", s.withToken(s.handleRotaWeek))
+	mux.HandleFunc("POST /dashboard/admin/rota/set", s.withToken(s.handleSetRota))
+	mux.HandleFunc("POST /dashboard/admin/rota/override", s.withToken(s.handleRotaOverride))
+	mux.HandleFunc("POST /dashboard/admin/rota/clear", s.withToken(s.handleRotaClear))
+	mux.HandleFunc("POST /dashboard/admin/accuracy/adjust", s.withToken(s.handleAdjustAccuracy))
+	mux.HandleFunc("GET /dashboard/admin/access/groups", s.withToken(s.handleAccessGroups))
+	mux.HandleFunc("GET /dashboard/admin/access/effective", s.withToken(s.handleAccessEffective))
+	mux.HandleFunc("POST /dashboard/admin/access/groups/perm", s.withToken(s.handleSetGroupPerm))
+	mux.HandleFunc("POST /dashboard/lego/sets", s.withToken(s.handleUpsertSet))
+	mux.HandleFunc("POST /dashboard/lego/parts", s.withToken(s.handleUpsertPart))
+	mux.HandleFunc("GET /dashboard/lego/retiring", s.withToken(s.handleRetiringSoon))
+	mux.HandleFunc("GET /dashboard/reports/missing", s.withToken(s.handleMissingReport))
+	mux.HandleFunc("GET /dashboard/reports/extra", s.withToken(s.handleExtraReport))
+	mux.HandleFunc("GET /dashboard/reports/orders-list", s.withToken(s.handleOrderListReport))
+	mux.HandleFunc("GET /dashboard/reports/history", s.withToken(s.handleCheckHistory))
+	mux.HandleFunc("GET /dashboard/reports/stocktake/{setNum}", s.withToken(s.handleStockSheet))
+	mux.HandleFunc("GET /dashboard/orders/spend", s.withToken(s.handleSpendReport))
+	mux.HandleFunc("GET /dashboard/orders", s.withToken(s.handleListOrders))
+	mux.HandleFunc("GET /dashboard/orders/{id}", s.withToken(s.handleGetOrder))
+	mux.HandleFunc("POST /dashboard/orders", s.withToken(s.handleCreateOrder))
+	mux.HandleFunc("POST /dashboard/orders/{id}/lines", s.withToken(s.handleAddOrderLine))
+	mux.HandleFunc("POST /dashboard/orders/{id}/status", s.withToken(s.handleSetOrderStatus))
+	mux.HandleFunc("GET /dashboard/labels/{setNum}", s.withToken(s.handleLabel))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
