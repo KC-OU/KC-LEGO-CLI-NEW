@@ -132,6 +132,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/admin/languages", s.withToken(s.handleAddLanguage))
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/string", s.withToken(s.handleUpsertLanguageString))
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/remove", s.withToken(s.handleDeleteLanguage))
+	mux.HandleFunc("GET /dashboard/me/permissions", s.withToken(s.handleMyPermissions))
 	return db, httptest.NewServer(mux)
 }
 

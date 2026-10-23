@@ -209,6 +209,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/languages", s.withToken(s.handleAddLanguage))
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/string", s.withToken(s.handleUpsertLanguageString))
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/remove", s.withToken(s.handleDeleteLanguage))
+	mux.HandleFunc("GET /dashboard/me/permissions", s.withToken(s.handleMyPermissions))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
