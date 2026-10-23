@@ -86,7 +86,11 @@ const (
 	// cached exchange rates (see internal/dashboardapi/currencies.go). ""
 	// (the default) means "next to lego.db itself", same convention as
 	// LegoAttachmentsDir above.
-	CurrenciesFile    = "CURRENCIES_FILE"
+	CurrenciesFile = "CURRENCIES_FILE"
+	// TranslationsDir holds the dashboard's per-locale JSON string files
+	// (see internal/dashboardapi/i18n.go). "" (the default) means "next to
+	// lego.db itself", same convention as LegoAttachmentsDir above.
+	TranslationsDir   = "WMS_TRANSLATIONS_DIR"
 	RebrickableAPIKey = "REBRICKABLE_API_KEY"
 	// KanbanBacklogQtyThreshold is the per-line quantity at or above which the
 	// kanban board flags a line "moved to the back" of its job (see

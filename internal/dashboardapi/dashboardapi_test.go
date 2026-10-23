@@ -21,6 +21,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	t.Cleanup(func() { db.Close() })
 	s := NewServer(db, nil, nil, token, nil, nil, nil, nil, nil)
 	s.currencies = newCurrencyStore(filepath.Join(dir, "currencies.json")) // isolate from the real CURRENCIES_FILE/LEGO_DB_PATH default
+	s.lang = newLangStore(filepath.Join(dir, "translations"))              // isolate from the real WMS_TRANSLATIONS_DIR/LEGO_DB_PATH default
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
@@ -123,6 +124,11 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/currencies/add", s.withToken(s.handleAddCurrency))
 	mux.HandleFunc("POST /dashboard/currencies/remove", s.withToken(s.handleRemoveCurrency))
 	mux.HandleFunc("POST /dashboard/currencies/refresh", s.withToken(s.handleRefreshCurrencies))
+	mux.HandleFunc("GET /dashboard/admin/languages", s.withToken(s.handleListLanguages))
+	mux.HandleFunc("GET /dashboard/admin/languages/{code}", s.withToken(s.handleGetLanguage))
+	mux.HandleFunc("POST /dashboard/admin/languages", s.withToken(s.handleAddLanguage))
+	mux.HandleFunc("POST /dashboard/admin/languages/{code}/string", s.withToken(s.handleUpsertLanguageString))
+	mux.HandleFunc("POST /dashboard/admin/languages/{code}/remove", s.withToken(s.handleDeleteLanguage))
 	return db, httptest.NewServer(mux)
 }
 

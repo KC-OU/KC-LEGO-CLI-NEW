@@ -71,6 +71,9 @@ type Server struct {
 	// external service to inject here, just a user-editable currency list
 	// and a cache of the last fetched rates (see currencies.go).
 	currencies *currencyStore
+	// lang is a plain JSON-file store, never nil -- same reasoning as
+	// currencies above (see i18n.go).
+	lang *langStore
 }
 
 func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client, bl *bricklink.Client, bo *brickowl.Client) *Server {
@@ -78,7 +81,7 @@ func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger,
 	if pdb != nil {
 		pdbw = partdb.NewWriter(pdb)
 	}
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo, currencies: newCurrencyStore("")}
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo, currencies: newCurrencyStore(""), lang: newLangStore("")}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {
@@ -192,6 +195,11 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/currencies/add", s.withToken(s.handleAddCurrency))
 	mux.HandleFunc("POST /dashboard/currencies/remove", s.withToken(s.handleRemoveCurrency))
 	mux.HandleFunc("POST /dashboard/currencies/refresh", s.withToken(s.handleRefreshCurrencies))
+	mux.HandleFunc("GET /dashboard/admin/languages", s.withToken(s.handleListLanguages))
+	mux.HandleFunc("GET /dashboard/admin/languages/{code}", s.withToken(s.handleGetLanguage))
+	mux.HandleFunc("POST /dashboard/admin/languages", s.withToken(s.handleAddLanguage))
+	mux.HandleFunc("POST /dashboard/admin/languages/{code}/string", s.withToken(s.handleUpsertLanguageString))
+	mux.HandleFunc("POST /dashboard/admin/languages/{code}/remove", s.withToken(s.handleDeleteLanguage))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
