@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/brickowl"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
@@ -59,14 +61,20 @@ type Server struct {
 	// doesn't itself open a connection), kept as a field for parity with the
 	// other injected services and so tests can swap it.
 	wms *wmsdb.Client
+	// bl/bo back the BrickLink/BrickOwl read-only lookup endpoints -- nil
+	// disables them the same way every other optional service here does.
+	// Both were already fully configured and working before these fields
+	// existed; this is a wire-up, not a fix for either.
+	bl *bricklink.Client
+	bo *brickowl.Client
 }
 
-func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client) *Server {
+func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client, bl *bricklink.Client, bo *brickowl.Client) *Server {
 	var pdbw *partdb.Writer
 	if pdb != nil {
 		pdbw = partdb.NewWriter(pdb)
 	}
-	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms}
+	return &Server{legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo}
 }
 
 func (s *Server) logAudit(user, action, status, details string) {
@@ -150,6 +158,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/admin/settings", s.withToken(s.handleGetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings", s.withToken(s.handleSetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings/sync-admin", s.withToken(s.handleSetSyncAdmin))
+	mux.HandleFunc("GET /dashboard/bricklink/item/{type}/{number}", s.withToken(s.handleBLItem))
+	mux.HandleFunc("GET /dashboard/bricklink/price/{type}/{number}", s.withToken(s.handleBLPrice))
+	mux.HandleFunc("GET /dashboard/bricklink/where-used/{number}", s.withToken(s.handleBLWhereUsed))
+	mux.HandleFunc("POST /dashboard/admin/bricklink/colors/sync", s.withToken(s.handleBLColorsSync))
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

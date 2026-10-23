@@ -15,6 +15,8 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/botapi"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/brickowl"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
@@ -194,7 +196,7 @@ func newGatewayServeCmd() *cobra.Command {
 				}
 				legoDB.SetActor("dashboardapi")
 				defer legoDB.Close()
-				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken), lego.NewClientFor(legoDB), pdb, wmsdb.NewClient())
+				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken), lego.NewClientFor(legoDB), pdb, wmsdb.NewClient(), bricklink.FromConfig(legoDB), brickowl.FromConfig())
 				g.Go(func() error { return dashboardapi.Serve(gctx, host+":"+dashboardAPIPort, dashboardSrv) })
 			}
 			return g.Wait()

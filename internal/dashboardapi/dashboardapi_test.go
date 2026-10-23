@@ -19,7 +19,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := NewServer(db, nil, nil, token, nil, nil, nil)
+	s := NewServer(db, nil, nil, token, nil, nil, nil, nil, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /dashboard/health", s.handleHealth)
 	mux.HandleFunc("GET /dashboard/kanban", s.withToken(s.handleKanban))
@@ -92,6 +92,10 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("GET /dashboard/admin/settings", s.withToken(s.handleGetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings", s.withToken(s.handleSetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings/sync-admin", s.withToken(s.handleSetSyncAdmin))
+	mux.HandleFunc("GET /dashboard/bricklink/item/{type}/{number}", s.withToken(s.handleBLItem))
+	mux.HandleFunc("GET /dashboard/bricklink/price/{type}/{number}", s.withToken(s.handleBLPrice))
+	mux.HandleFunc("GET /dashboard/bricklink/where-used/{number}", s.withToken(s.handleBLWhereUsed))
+	mux.HandleFunc("POST /dashboard/admin/bricklink/colors/sync", s.withToken(s.handleBLColorsSync))
 	return db, httptest.NewServer(mux)
 }
 
