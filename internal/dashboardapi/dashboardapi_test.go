@@ -104,6 +104,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("POST /dashboard/admin/access/user/groups", s.withToken(s.handleAccessUserSetGroups))
 	mux.HandleFunc("POST /dashboard/admin/access/user/twofa", s.withToken(s.handleAccessUserSetTwoFA))
 	mux.HandleFunc("POST /dashboard/admin/access/user/channels", s.withToken(s.handleAccessUserSetChannels))
+	mux.HandleFunc("POST /dashboard/admin/access/user/dashboard", s.withToken(s.handleAccessUserSetDashboard))
 	mux.HandleFunc("POST /dashboard/admin/access/user/expires", s.withToken(s.handleAccessUserSetExpires))
 	mux.HandleFunc("POST /dashboard/admin/access/user/timeouts", s.withToken(s.handleAccessUserSetTimeouts))
 	mux.HandleFunc("POST /dashboard/admin/access/user/note", s.withToken(s.handleAccessUserSetNote))

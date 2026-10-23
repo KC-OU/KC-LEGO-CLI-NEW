@@ -20,8 +20,10 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
 // numericIDRE mirrors cmd/wms/access.go's own -- a renamed Picker/Checker
@@ -44,6 +46,7 @@ type accessUserView struct {
 	HasBadge    bool     `json:"has_badge"`
 	HasPassword bool     `json:"has_password"`
 	Governed    bool     `json:"governed"`
+	Dashboard   bool     `json:"dashboard"`
 }
 
 func userToView(key string, u *access.User) accessUserView {
@@ -56,6 +59,7 @@ func userToView(key string, u *access.User) accessUserView {
 	v.GraceMin, v.IdleMin, v.MaxHours = u.GraceMin, u.IdleMin, u.MaxHours
 	v.HasBadge = u.BadgeToken != ""
 	v.HasPassword = u.PasswordHash != ""
+	v.Dashboard = u.Dashboard
 	return v
 }
 
@@ -259,6 +263,97 @@ func (s *Server) handleAccessUserSetChannels(w http.ResponseWriter, r *http.Requ
 	}
 	s.logAudit(req.By, "DASHBOARD_ACCESS_USER_CHANNELS_SET", "SUCCESS", key+" channels="+strings.Join(channels, ","))
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
+type setDashboardRequest struct {
+	accessUserBaseRequest
+	On bool `json:"on"`
+	// Email is optional -- kc-parts-auth-node synthesizes a placeholder
+	// when it's "", the same precedent already used for a Discord sign-in
+	// with no public email.
+	Email string `json:"email"`
+}
+
+type setDashboardResponse struct {
+	Saved bool `json:"saved"`
+	// TemporaryPassword/MustChangePassword are only set when turning
+	// dashboard access ON -- the same one-time-ever shape every other
+	// create/reset response in this package already uses.
+	TemporaryPassword  string `json:"temporary_password,omitempty"`
+	MustChangePassword bool   `json:"must_change_password,omitempty"`
+	// ProvisionNote is set when the Go-side password was reset but the
+	// dashboard login itself was NOT updated to match -- e.g. a BetterAuth
+	// account for this username already existed from an earlier hand-off,
+	// so the returned temp password works for telnet/TUI only.
+	ProvisionNote string `json:"provision_note,omitempty"`
+}
+
+// handleAccessUserSetDashboard is POST /dashboard/admin/access/user/dashboard
+// -- the yes/no toggle that auto-provisions a matching kc-parts-auth-node
+// login (see internal/authbridge) the moment it's turned on. Turning off
+// only clears the policy flag; it never deprovisions the BetterAuth side,
+// the same "no automatic deletion" caution every other toggle in this
+// package follows.
+func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Request) {
+	var req setDashboardRequest
+	if err := decodeAccessReq(r, &req); err != nil {
+		writeAccessErr(w, http.StatusBadRequest, err)
+		return
+	}
+	req.accessUserBaseRequest = req.trimmed()
+	req.Email = strings.TrimSpace(req.Email)
+	if err := req.valid(); err != nil {
+		writeAccessErr(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if !req.On {
+		key, err := s.editUser(req.Source, req.Username, func(u *access.User) error { u.Dashboard = false; return nil })
+		if err != nil {
+			writeAccessErr(w, http.StatusBadRequest, err)
+			return
+		}
+		s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", key+" dashboard=off")
+		writeJSON(w, http.StatusOK, setDashboardResponse{Saved: true})
+		return
+	}
+
+	if s.usersSvc == nil {
+		writeAccessErr(w, http.StatusServiceUnavailable, fmt.Errorf("account management is not available in this environment"))
+		return
+	}
+	if !authbridge.Configured() {
+		writeAccessErr(w, http.StatusServiceUnavailable, fmt.Errorf("dashboard login provisioning is not configured on this server"))
+		return
+	}
+
+	// A fresh temp password/PIN, same generation rule as `wms users reset`
+	// -- there's no other way to hand kc-parts-auth-node a usable
+	// plaintext credential, since the Go side only ever stores a hash.
+	password := auth.GenerateTempPassword(10)
+	if users.NumericLoginUsernameRE.MatchString(req.Username) {
+		password = auth.GenerateNumericPIN(6)
+	}
+	if err := s.usersSvc.ResetUnified(r.Context(), req.Username, password, true); err != nil {
+		writeAccessErr(w, http.StatusBadRequest, err)
+		return
+	}
+	result, err := authbridge.Provision(req.Username, req.Email, password)
+	if err != nil {
+		writeAccessErr(w, http.StatusBadGateway, fmt.Errorf("account password was reset, but dashboard provisioning failed: %w", err))
+		return
+	}
+	key, err := s.editUser(req.Source, req.Username, func(u *access.User) error { u.Dashboard = true; return nil })
+	if err != nil {
+		writeAccessErr(w, http.StatusBadRequest, err)
+		return
+	}
+	note := ""
+	if !result.Provisioned {
+		note = result.Reason
+	}
+	s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", key+" dashboard=on")
+	writeJSON(w, http.StatusOK, setDashboardResponse{Saved: true, TemporaryPassword: password, MustChangePassword: true, ProvisionNote: note})
 }
 
 type setExpiresRequest struct {

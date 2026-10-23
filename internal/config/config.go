@@ -61,6 +61,15 @@ const (
 	// MobileAPIPort/BotAPIPort.
 	DashboardAPIPort  = "WMS_DASHBOARD_API_PORT"
 	DashboardAPIToken = "WMS_DASHBOARD_API_TOKEN"
+	// AuthServiceURL/DashboardProvisionToken back internal/authbridge's
+	// call to kc-parts-auth-node's POST /internal/provision-dashboard-user
+	// -- how a Go-side account that opts into the "dashboard" access
+	// channel (access.User.Dashboard) gets a matching BetterAuth login.
+	// Same "off until both are set" convention as DashboardAPIPort/Token
+	// above; set the same token value as DASHBOARD_PROVISION_TOKEN in
+	// kc-parts-auth-node's own env.
+	AuthServiceURL          = "WMS_AUTH_SERVICE_URL"
+	DashboardProvisionToken = "WMS_DASHBOARD_PROVISION_TOKEN"
 	// MobileAppURL is the sentry-wms mobile app's own server URL (its Flask
 	// API, a separate deployment this project doesn't own) — saved once via
 	// `wms sys mobile-setup-qr <url>` so later runs don't need it typed
@@ -182,6 +191,8 @@ func Defaults() map[string]string {
 		MobileAPIPort:             "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
 		DashboardAPIPort:          "", // empty: the Rust web dashboard's API (internal/dashboardapi) is off until set — binds GatewayListenHost like the rest of the gateway
 		DashboardAPIToken:         "", // empty: no shared secret set yet — set this and the same value in the Rust service's config before turning DashboardAPIPort on
+		AuthServiceURL:            "", // empty: dashboard-login provisioning is off until set, e.g. "http://127.0.0.1:3001"
+		DashboardProvisionToken:   "", // empty: no shared secret set yet — set this and the same value as DASHBOARD_PROVISION_TOKEN in kc-parts-auth-node's env
 		WebSoloDirectPort:         "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:           "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:         "/root/docker-server/partdb-sync/config/link_overrides.json",

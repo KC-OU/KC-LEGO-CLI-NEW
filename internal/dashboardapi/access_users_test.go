@@ -46,6 +46,38 @@ func TestAccessUserGroupsRoundTrips(t *testing.T) {
 	}
 }
 
+func TestSetDashboardOffClearsTheFlagWithoutNeedingUsersService(t *testing.T) {
+	isolateAccessStores(t)
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	resp := postJSON(t, srv.URL, "/dashboard/admin/access/user/dashboard", `{"username":"12345","on":false,"by":"admin"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+// No real wmsdb/partdb connection exists in this sandbox (same constraint
+// dashboardapi_test.go's own create-account tests document), so usersSvc
+// is always nil here -- these tests cover the "not available"/"not
+// configured" refusals, not a real ResetUnified+provision round trip.
+// That round trip is covered live against the isolated verify.env
+// instance plus a throwaway kc-parts-auth-node, per this session's
+// established pattern for anything crossing a process boundary.
+
+func TestSetDashboardOnWithNoUsersServiceIs503(t *testing.T) {
+	isolateAccessStores(t)
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	resp := postJSON(t, srv.URL, "/dashboard/admin/access/user/dashboard", `{"username":"12345","on":true,"by":"admin"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
 func TestAccessUserShowOnAnUngovernedUserSaysSo(t *testing.T) {
 	isolateAccessStores(t)
 	_, srv := testServer(t, "secret")

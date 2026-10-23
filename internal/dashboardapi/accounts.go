@@ -17,7 +17,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
@@ -26,6 +28,11 @@ type createAccountRequest struct {
 	Role     string `json:"role"`
 	Email    string `json:"email"`
 	By       string `json:"by"`
+	// Dashboard, when true, also provisions a matching kc-parts-auth-node
+	// login with this same freshly generated password -- the "yes/no" the
+	// account-creation form offers, per internal/access's own
+	// ChannelDashboard-adjacent Dashboard flag.
+	Dashboard bool `json:"dashboard"`
 }
 
 type createAccountResponse struct {
@@ -33,6 +40,12 @@ type createAccountResponse struct {
 	Role               string `json:"role"`
 	TemporaryPassword  string `json:"temporary_password"`
 	MustChangePassword bool   `json:"must_change_password"`
+	// ProvisionNote is set only when Dashboard was requested but the
+	// dashboard login wasn't actually set up -- provisioning not
+	// configured on this server, or a BetterAuth account for this
+	// username already exists. The account itself is still created
+	// either way; this never fails the whole request.
+	ProvisionNote string `json:"provision_note,omitempty"`
 }
 
 // handleCreateAccount creates a Picker/Checker/Admin account with a
@@ -74,7 +87,36 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logAudit(req.By, "DASHBOARD_USER_CREATED", "SUCCESS", req.Username+" ("+req.Role+")")
-	writeJSON(w, http.StatusOK, createAccountResponse{Username: req.Username, Role: req.Role, TemporaryPassword: password, MustChangePassword: true})
+
+	note := ""
+	if req.Dashboard {
+		switch {
+		case !authbridge.Configured():
+			note = "dashboard login provisioning is not configured on this server"
+		default:
+			result, err := authbridge.Provision(req.Username, req.Email, password)
+			switch {
+			case err != nil:
+				note = "dashboard provisioning failed: " + err.Error()
+			case !result.Provisioned:
+				note = result.Reason
+			default:
+				if _, err := access.Update(func(p *access.Policy) error {
+					key := resolveUserKey(p, "", req.Username)
+					u := p.Users[key]
+					if u == nil {
+						u = &access.User{}
+						p.Users[key] = u
+					}
+					u.Dashboard = true
+					return nil
+				}); err != nil {
+					note = "dashboard login was created, but recording it in the access policy failed: " + err.Error()
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, createAccountResponse{Username: req.Username, Role: req.Role, TemporaryPassword: password, MustChangePassword: true, ProvisionNote: note})
 }
 
 type resetAccountRequest struct {
