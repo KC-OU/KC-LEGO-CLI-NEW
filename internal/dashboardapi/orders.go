@@ -1,12 +1,8 @@
 // Parts Orders workflow: list/get/create an order, add a line to it,
 // advance its status (which is also how a line gets marked received --
-// there's no separate per-line receive call), and a spend report. Mirrors
-// cmd/wms/lego_sets.go's `orders` subcommands over the same
-// internal/lego/orders.go functions.
-//
-// Scope cut: OrderFromMissing (auto-build an order from a set's shortages)
-// stays CLI-only for now -- it needs a caller-supplied pricing callback
-// that has no obvious web-form shape yet.
+// there's no separate per-line receive call), auto-build one from a set's
+// shortages, and a spend report. Mirrors cmd/wms/lego_sets.go's `orders`
+// subcommands over the same internal/lego/orders.go functions.
 package dashboardapi
 
 import (
@@ -74,6 +70,44 @@ func (s *Server) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logAudit(req.By, "DASHBOARD_ORDER_CREATED", "SUCCESS", strconv.FormatInt(order.ID, 10))
+	writeJSON(w, http.StatusOK, order)
+}
+
+type createOrderFromMissingRequest struct {
+	SetNum       string  `json:"set_num"`
+	SupplierKind string  `json:"supplier_kind"`
+	Supplier     string  `json:"supplier"`
+	OrderNo      string  `json:"order_no"`
+	Currency     string  `json:"currency"`
+	Shipping     float64 `json:"shipping"`
+	Note         string  `json:"note"`
+	By           string  `json:"by"`
+}
+
+// handleCreateOrderFromMissing starts an order and fills it with a line for
+// every part setNum is still short, prices left at 0 -- the dashboard form
+// has no per-part pricing shape, same as the CLI's own default (a nil price
+// func), so this always passes nil rather than a flat per-line guess.
+func (s *Server) handleCreateOrderFromMissing(w http.ResponseWriter, r *http.Request) {
+	var req createOrderFromMissingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.SetNum, req.By = strings.TrimSpace(req.SetNum), strings.TrimSpace(req.By)
+	if req.SetNum == "" || req.By == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "set_num and by are required"})
+		return
+	}
+	order := &lego.Order{
+		SupplierKind: req.SupplierKind, Supplier: req.Supplier, OrderNo: req.OrderNo,
+		Currency: req.Currency, Shipping: req.Shipping, Note: req.Note, CreatedBy: req.By,
+	}
+	if err := s.legoDB.OrderFromMissing(req.SetNum, order, nil); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_ORDER_FROM_MISSING", "SUCCESS", req.SetNum+" -> order #"+strconv.FormatInt(order.ID, 10))
 	writeJSON(w, http.StatusOK, order)
 }
 

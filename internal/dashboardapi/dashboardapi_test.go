@@ -76,6 +76,7 @@ func testServer(t *testing.T, token string) (*lego.DB, *httptest.Server) {
 	mux.HandleFunc("GET /dashboard/orders", s.withToken(s.handleListOrders))
 	mux.HandleFunc("GET /dashboard/orders/{id}", s.withToken(s.handleGetOrder))
 	mux.HandleFunc("POST /dashboard/orders", s.withToken(s.handleCreateOrder))
+	mux.HandleFunc("POST /dashboard/orders/from-missing", s.withToken(s.handleCreateOrderFromMissing))
 	mux.HandleFunc("POST /dashboard/orders/{id}/lines", s.withToken(s.handleAddOrderLine))
 	mux.HandleFunc("POST /dashboard/orders/{id}/status", s.withToken(s.handleSetOrderStatus))
 	mux.HandleFunc("GET /dashboard/labels/{setNum}", s.withToken(s.handleLabel))
