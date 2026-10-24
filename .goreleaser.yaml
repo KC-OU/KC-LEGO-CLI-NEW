@@ -8,13 +8,13 @@ project_name: wms-go
 # can never drift from --help. Picked up below by both archives.files (so a
 # manual tar.gz install can `man` them locally) and nfpms.contents (so a
 # .deb/.rpm/.apk install puts them straight into /usr/share/man/man1 --
-# nothing further for a package-manager install to do). Not exercised by an
-# actual `goreleaser release` run in this environment (no man/mandb
-# installed here to verify against); `go run ./cmd/wms man-gen <dir>` itself
-# is verified -- it wrote all 177 pages correctly.
+# nothing further for a package-manager install to do). Generated outside
+# dist/: goreleaser's own dist-must-be-empty check runs after before.hooks,
+# so writing into dist/man here (as a first real `goreleaser release` run
+# found) fails that check even with --clean.
 before:
   hooks:
-    - sh -c 'go run ./cmd/wms man-gen dist/man'
+    - sh -c 'go run ./cmd/wms man-gen man-gen'
 
 builds:
   - id: wms
@@ -40,7 +40,7 @@ archives:
       - src: deploy/systemd/*.service
         dst: systemd
         strip_parent: true
-      - src: dist/man/*.1
+      - src: man-gen/*.1
         dst: man
         strip_parent: true
 
@@ -66,7 +66,7 @@ nfpms:
       - src: config.example.env
         dst: /etc/wms-go/wms-go.env.example
         type: config|noreplace
-      - src: dist/man/*.1
+      - src: man-gen/*.1
         dst: /usr/share/man/man1/
 
 changelog:

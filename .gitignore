@@ -1,6 +1,7 @@
 # builds
 /bin/
 /dist/
+/man-gen/
 /wms
 /wms-go
 *.exe
