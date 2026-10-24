@@ -126,6 +126,23 @@ func (s *Server) handleStockSheet(w http.ResponseWriter, r *http.Request) {
 		cw.Flush()
 		return
 	}
+	if r.URL.Query().Get("format") == "html" {
+		// The same printable checklist `wms lego report` already writes to a
+		// file for the paper-first workflow (see docs/guides/reports.md) --
+		// this just serves those bytes directly so the dashboard's Downloads
+		// page can link to it. Inline, not an attachment: the browser's own
+		// Print -> Save as PDF covers "give me a PDF" without a from-scratch
+		// PDF table renderer (internal/labels' PDF builder is label-geometry
+		// specific, not a fit for a multi-row grid).
+		body, err := lego.StockSheetHTML(title, lines, meta)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(body)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"title": title, "lines": lines, "meta": meta})
 }
 

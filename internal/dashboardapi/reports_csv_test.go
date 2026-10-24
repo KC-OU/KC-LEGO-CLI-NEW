@@ -52,3 +52,21 @@ func TestStockSheetCSVFormatSurfacesTheUnderlyingErrorAsJSON(t *testing.T) {
 		t.Fatalf("content-type = %q, want the plain JSON error path, not a CSV header", ct)
 	}
 }
+
+// Same error-path check as the CSV test above, mirrored for the printable
+// checklist branch the dashboard's Downloads page links to.
+func TestStockSheetHTMLFormatSurfacesTheUnderlyingErrorAsJSON(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+	if err := db.UpsertSet(lego.Set{SetNum: "75192-1", Name: "Millennium Falcon", Theme: "Star Wars", Qty: 1}); err != nil {
+		t.Fatal(err)
+	}
+	resp := getWithToken(t, srv.URL, "/dashboard/reports/stocktake/75192-1?format=html")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (no catalog parts list seeded)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("content-type = %q, want the plain JSON error path, not an HTML header", ct)
+	}
+}
