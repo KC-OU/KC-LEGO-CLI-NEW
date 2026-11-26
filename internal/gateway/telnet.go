@@ -27,13 +27,16 @@ import (
 // reconnectGraceSeconds is 0 (off) unless the caller (cmd/wms/gateway.go, from
 // config.TelnetReconnectSeconds) turns it on — see reconnectRegistry's doc
 // comment for why this defaults off.
-func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, wmsBinaryPath, testBinaryPath string, testEnv []string, reconnectGraceSeconds int) error {
+//
+// handheldPorts are extra ports for small Windows CE/Mobile telnet clients (Symbol MC9090 and
+// similar): sessions there get plain-ASCII output and a 40x16 starting window — see asciiConn.
+func RunTelnetServer(ctx context.Context, listenHost string, listenPorts, handheldPorts []int, wmsBinaryPath, testBinaryPath string, testEnv []string, reconnectGraceSeconds int) error {
 	var wg sync.WaitGroup
 	th := NewThrottle()
 	rc := newReconnectRegistry(time.Duration(reconnectGraceSeconds) * time.Second)
 	defer rc.closeAll()
 
-	for _, port := range listenPorts {
+	listen := func(port int, handheld bool) error {
 		ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, strconv.Itoa(port)))
 		if err != nil {
 			return fmt.Errorf("listening on port %d: %w", port, err)
@@ -41,13 +44,24 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 		wg.Add(1)
 		go func(ln net.Listener) {
 			defer wg.Done()
-			acceptLoop(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th, rc)
+			acceptLoopMode(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th, rc, handheld)
 		}(ln)
 
 		go func(ln net.Listener) {
 			<-ctx.Done()
 			_ = ln.Close()
 		}(ln)
+		return nil
+	}
+	for _, port := range listenPorts {
+		if err := listen(port, false); err != nil {
+			return err
+		}
+	}
+	for _, port := range handheldPorts {
+		if err := listen(port, true); err != nil {
+			return err
+		}
 	}
 
 	wg.Wait()
@@ -55,6 +69,10 @@ func RunTelnetServer(ctx context.Context, listenHost string, listenPorts []int, 
 }
 
 func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry) {
+	acceptLoopMode(ctx, ln, wmsBinaryPath, testBinaryPath, testEnv, th, rc, false)
+}
+
+func acceptLoopMode(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry, handheld bool) {
 	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
@@ -78,7 +96,7 @@ func acceptLoop(ctx context.Context, ln net.Listener, wmsBinaryPath, testBinaryP
 			continue
 		}
 		backoff = 0
-		go handleTelnetSession(ctx, conn, wmsBinaryPath, testBinaryPath, testEnv, th, rc)
+		go handleTelnetSession(ctx, conn, wmsBinaryPath, testBinaryPath, testEnv, th, rc, handheld)
 	}
 }
 
@@ -160,7 +178,7 @@ func clampDim(v, max uint16) uint16 {
 // runs forever.
 const telnetIdleTimeout = 30 * time.Minute
 
-func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry) {
+func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, testBinaryPath string, testEnv []string, th *Throttle, rc *reconnectRegistry, handheld bool) {
 	defer conn.Close()
 
 	host, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
@@ -207,13 +225,19 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, test
 	// blank line. Re-applied on a resumed session too since this is a fresh TCP connection whose
 	// own NAWS report (if any) hasn't arrived yet, and the resize also makes the TUI (bubbletea)
 	// repaint its full screen — the resumed client's one and only "redraw" after reattaching.
-	_ = pty.Setsize(sess.ptmx, &pty.Winsize{Rows: 24, Cols: 80})
+	rows, cols := uint16(24), uint16(80)
+	var out net.Conn = conn
+	if handheld {
+		rows, cols = 16, 40 // a client that reports its own size (NAWS) overrides this
+		out = &asciiConn{Conn: conn}
+	}
+	_ = pty.Setsize(sess.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
 
 	done := make(chan struct{})
 	var once sync.Once
 	closeDone := func() { once.Do(func() { close(done) }) }
 
-	sess.attach(conn, closeDone)
+	sess.attach(out, closeDone)
 
 	go func() {
 		st := &IACState{}
@@ -243,7 +267,7 @@ func handleTelnetSession(ctx context.Context, conn net.Conn, wmsBinaryPath, test
 	}()
 
 	<-done
-	sess.detach(conn)
+	sess.detach(out)
 
 	// Reconnect enabled and this client is identifiable by address: keep the
 	// child alive for the grace window instead of killing it now, so a

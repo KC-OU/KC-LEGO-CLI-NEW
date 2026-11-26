@@ -90,11 +90,10 @@ func remoteHost(r *http.Request) string {
 	return host
 }
 
-// Serve runs the mobile API until ctx is cancelled. Unlike botapi.Serve,
-// addr is not restricted to loopback — a phone has to reach this over the
-// network (LAN, or whatever's in front of it, same as the web gateway).
-func Serve(ctx context.Context, addr string, s *Server) error {
-	mux := http.NewServeMux()
+// Mount registers every /mobile/ route on mux. Serve uses it for the standalone mobile port;
+// the dashboard API uses it to serve the same routes behind its shared token, so the KC app can
+// record checks without a second port.
+func (s *Server) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /mobile/login", s.handleLogin)
 	mux.HandleFunc("POST /mobile/login/2fa", s.handleLogin2FA)
 	mux.HandleFunc("POST /mobile/logout", s.withSession(s.handleLogout))
@@ -130,6 +129,14 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /mobile/admin/check-history", s.withSession(s.handleAdminCheckHistory))
 	mux.HandleFunc("POST /mobile/admin/assign-ticket", s.withSession(s.handleAdminAssignTicket))
 	mux.HandleFunc("POST /mobile/admin/reopen-ticket", s.withSession(s.handleAdminReopenTicket))
+}
+
+// Serve runs the mobile API until ctx is cancelled. Unlike botapi.Serve,
+// addr is not restricted to loopback — a phone has to reach this over the
+// network (LAN, or whatever's in front of it, same as the web gateway).
+func Serve(ctx context.Context, addr string, s *Server) error {
+	mux := http.NewServeMux()
+	s.Mount(mux)
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

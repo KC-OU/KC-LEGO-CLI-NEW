@@ -77,7 +77,7 @@ func applyEdits(c *lego.SetCheck, spec string, apply func(l *lego.CheckLine, n i
 }
 
 func newLegoCheckCmd() *cobra.Command {
-	var missing, extra, by string
+	var missing, extra, by, borrowed string
 	var stocktake, noPartDB bool
 	cmd := &cobra.Command{
 		Use:   "check <set>",
@@ -85,7 +85,7 @@ func newLegoCheckCmd() *cobra.Command {
 		Long: "Records a parts check (or, with --stocktake, a recount) for a set: the set's parts go into its own Part-DB storage\n" +
 			"location (LEGO / Sets / <num> <name>), extras become loose parts that remember this set, and the set is flagged\n" +
 			"INCOMPLETE when anything is missing. The TUI's Set Workshop does the same interactively.",
-		Example: "  wms lego check 75192 --missing 3001:red:2,3023:1:1 --extra 3710:black:3\n  wms lego check 10696 --stocktake --by alex",
+		Example: "  wms lego check 75192 --missing 3001:red:2,3023:1:1 --extra 3710:black:3\n  wms lego check 75192 --borrowed 3001:red:2:10696-1\n  wms lego check 10696 --stocktake --by alex",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -104,6 +104,9 @@ func newLegoCheckCmd() *cobra.Command {
 				by = cliActor()
 			}
 			db.SetActor(by)
+			if err := onboardingGate(db, num, kind, by); err != nil {
+				return withCode(exitUsage, err)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			c, err := db.NewCheck(ctx, rb, num, kind, by)
@@ -120,6 +123,9 @@ func newLegoCheckCmd() *cobra.Command {
 				return err
 			}
 			if err := applyEdits(c, extra, func(l *lego.CheckLine, n int) { l.Extra = n }); err != nil {
+				return err
+			}
+			if err := applyBorrowed(db, c, borrowed, by); err != nil {
 				return err
 			}
 			extras, err := db.FinishCheck(c)
@@ -165,6 +171,7 @@ func newLegoCheckCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&missing, "missing", "", "missing parts: part:colour:qty,… (colour = Rebrickable id or name)")
 	cmd.Flags().StringVar(&extra, "extra", "", "extra parts: part:colour:qty,…")
+	cmd.Flags().StringVar(&borrowed, "borrowed", "", "parts borrowed from another set: part:colour:qty:fromset,… (counted as present, not missing)")
 	cmd.Flags().StringVar(&by, "by", "", "who checked it (default: your login)")
 	cmd.Flags().BoolVar(&stocktake, "stocktake", false, "a recount of a checked set (starts from the last check)")
 	cmd.Flags().BoolVar(&noPartDB, "no-partdb", false, "don't update Part-DB")

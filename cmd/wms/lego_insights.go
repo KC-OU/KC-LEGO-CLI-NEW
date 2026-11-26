@@ -16,6 +16,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/backup"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/bricklink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/jev"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
@@ -286,12 +287,12 @@ func inventoryReport(ctx context.Context, db *lego.DB, rb *lego.Client, set stri
 func newLegoMissingCmd() *cobra.Command {
 	var copies int
 	var all bool
-	var equiv string
+	var equiv, sortBy string
 	var watch time.Duration
 	cmd := &cobra.Command{
 		Use:     "missing <set_num>",
 		Short:   "What a set still needs, compared with the loose parts you hold (part + colour)",
-		Example: "  wms lego missing 10312-1\n  wms lego missing 10312-1 --watch 30s   # leave it open while you sort parts",
+		Example: "  wms lego missing 10312-1\n  wms lego missing 10312-1 --sort qty\n  wms lego missing 10312-1 --watch 30s   # leave it open while you sort parts",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -318,6 +319,10 @@ func newLegoMissingCmd() *cobra.Command {
 					say(ui.Warn(t, fmt.Sprintf("%d piece(s) are held as equivalent parts (alternates/moulds), not the exact number: check the 'Covered by' column.", r.SubstitutedPieces)))
 				}
 				say(ui.Fact(t, "You hold", fmt.Sprintf("%d%% (%d of %d pieces); %d of %d lines complete", r.Percent(), r.PiecesHeld, r.PiecesNeeded, r.Complete, r.Lines)))
+				lego.SortBy(r.Missing, sortBy,
+					func(m lego.MissingLine) string { return m.PartNum },
+					func(m lego.MissingLine) string { return m.ColorName },
+					func(m lego.MissingLine) int { return m.Need })
 				shown := r.Missing
 				if !all && len(shown) > 40 {
 					shown = shown[:40]
@@ -344,6 +349,7 @@ func newLegoMissingCmd() *cobra.Command {
 	cmd.Flags().IntVar(&copies, "copies", 1, "how many copies you want to build")
 	cmd.Flags().BoolVar(&all, "all", false, "list every missing line, not just the first 40")
 	cmd.Flags().StringVar(&equiv, "equivalents", "", "parts that count as the same: default (alternates+moulds), none, or alt,mold,print (setting: WMS_EQUIVALENTS)")
+	cmd.Flags().StringVar(&sortBy, "sort", "", "sort by: part_id, color, or qty (default: part number)")
 	addWatchFlag(cmd, &watch)
 	return cmd
 }
@@ -912,7 +918,7 @@ func newLegoWatchCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: withBL(func(ctx context.Context, db *lego.DB, c *bricklink.Client, _ []string) error {
 			t := ui.New()
-			hits, err := db.CheckWatches(ctx, blFetcher{c})
+			hits, err := db.CheckWatches(ctx, blFetcher{c}, jev.FromConfig())
 			for _, h := range hits {
 				say(ui.Status(t, true, watchLine(h)))
 			}
@@ -941,7 +947,15 @@ func watchLine(h lego.WatchHit) string {
 	if h.ColorName != "" {
 		item += " " + h.ColorName
 	}
-	return fmt.Sprintf("%s: %.4f %s (your limit %.4f)", item, h.Price, h.Currency, h.MaxPrice)
+	line := fmt.Sprintf("%s: %.4f %s (your limit %.4f)", item, h.Price, h.Currency, h.MaxPrice)
+	if h.Plausible != nil {
+		if *h.Plausible >= 0.5 {
+			line += fmt.Sprintf(" -- looks genuine (%.0f%% confidence)", *h.Plausible*100)
+		} else {
+			line += fmt.Sprintf(" -- worth checking, could be a data glitch (%.0f%% confidence it's genuine)", *h.Plausible*100)
+		}
+	}
+	return line
 }
 
 // priceDropLines is what the alert monitor reports: watches at or under their limit.
@@ -955,7 +969,7 @@ func priceDropLines(ctx context.Context) []string {
 	if !c.Enabled() {
 		return nil
 	}
-	hits, _ := db.CheckWatches(ctx, blFetcher{c})
+	hits, _ := db.CheckWatches(ctx, blFetcher{c}, jev.FromConfig())
 	lines := make([]string, len(hits))
 	for i, h := range hits {
 		lines[i] = watchLine(h)
@@ -1342,6 +1356,9 @@ func newLegoExportCmd() *cobra.Command {
 
 			if withImages {
 				data.AddPartImages(img.NewFetcher(config.Get(config.ImageDir)))
+			}
+			if format == "sorting-html" {
+				db.PrepareSortingSheet(ctx, data, img.NewFetcher(config.Get(config.ImageDir)))
 			}
 			body, _, warns, err := lego.Encode(format, data)
 			if err != nil {

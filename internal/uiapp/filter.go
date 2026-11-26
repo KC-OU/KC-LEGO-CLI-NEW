@@ -69,7 +69,7 @@ rowLoop:
 // shortcuts (q, u, l, g, +, ?) must not fire.
 func (s *tableScreen) capturing() bool { return s.filtering }
 
-func (s *tableScreen) applyFilter() { s.rows, s.top = filterRows(s.all, s.filter), 0 }
+func (s *tableScreen) applyFilter() { s.rows, s.top, s.sel = filterRows(s.all, s.filter), 0, 0 }
 
 // filterLabel is what the title line appends while a filter is active.
 func (s *tableScreen) filterLabel() string {

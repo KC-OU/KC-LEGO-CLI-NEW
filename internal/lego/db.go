@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -37,8 +38,18 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening lego sqlite file %s: %w", path, err)
 	}
-	if err := sqlDB.Ping(); err != nil {
-		return nil, fmt.Errorf("connecting to lego sqlite file %s: %w", path, err)
+	// The first connection switches a not-yet-WAL file to WAL, which needs an exclusive
+	// lock; if several processes open a brand-new/legacy file at once, SQLite answers
+	// BUSY at once to the losers instead of honouring busy_timeout. Retry briefly.
+	var pingErr error
+	for i := 0; i < 10; i++ {
+		if pingErr = sqlDB.Ping(); pingErr == nil || !strings.Contains(pingErr.Error(), "SQLITE_BUSY") {
+			break
+		}
+		time.Sleep(time.Duration(20*(i+1)) * time.Millisecond)
+	}
+	if pingErr != nil {
+		return nil, fmt.Errorf("connecting to lego sqlite file %s: %w", path, pingErr)
 	}
 	if err := ensureSchema(sqlDB); err != nil {
 		return nil, fmt.Errorf("ensuring lego schema: %w", err)
@@ -189,11 +200,21 @@ func ensureSchema(db *sql.DB) error {
 			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, element_id TEXT NOT NULL,
 			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
 			PRIMARY KEY (part_num, color_id))`,
+		// A checker/admin's own direct image URL for a part+colour, checked
+		// ahead of the Rebrickable-derived picture in PartImageURLs (see
+		// DB.ImageOverrideFor) -- for a photo that's missing entirely or
+		// simply wrong for that element id. Same override-wins shape as
+		// part_element_overrides, and likewise never wiped by a catalog sync.
+		`CREATE TABLE IF NOT EXISTS part_image_overrides (
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, image_url TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			PRIMARY KEY (part_num, color_id))`,
 		`CREATE TABLE IF NOT EXISTS set_check_lines (
 			check_id INTEGER NOT NULL, part_num TEXT NOT NULL, part_name TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
 			color_id INTEGER NOT NULL, color_name TEXT NOT NULL DEFAULT '', bl_id TEXT NOT NULL DEFAULT '', bl_color INTEGER NOT NULL DEFAULT 0,
 			need INTEGER NOT NULL, have INTEGER NOT NULL, extra INTEGER NOT NULL DEFAULT 0, damaged INTEGER NOT NULL DEFAULT 0,
 			deprioritized INTEGER NOT NULL DEFAULT 0,
+			note TEXT NOT NULL DEFAULT '', borrowed_qty INTEGER NOT NULL DEFAULT 0, borrowed_from TEXT NOT NULL DEFAULT '', lent_qty INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (check_id, part_num, color_id))`,
 		// How many of a loose part came from a set's extras (for "2 spare in 10696").
 		`CREATE TABLE IF NOT EXISTS part_origins (
@@ -323,8 +344,18 @@ func ensureSchema(db *sql.DB) error {
 		// separate processes), read_at when they dismiss the toast.
 		`CREATE TABLE IF NOT EXISTS user_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, from_user TEXT NOT NULL, to_user TEXT NOT NULL, body TEXT NOT NULL,
-			created_at TEXT NOT NULL, delivered_at TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT '')`,
+			created_at TEXT NOT NULL, delivered_at TEXT NOT NULL DEFAULT '', read_at TEXT NOT NULL DEFAULT '', parent_id INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS idx_user_messages_to ON user_messages(to_user, delivered_at)`,
+		// The paper-check onboarding of one set by one checker (see onboarding_flow.go), and a set (or '*')
+		// an admin has waived the onboarding gate for.
+		`CREATE TABLE IF NOT EXISTS onboarding_flows (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, set_num TEXT NOT NULL, user_name TEXT NOT NULL,
+			status TEXT NOT NULL, paper_file TEXT NOT NULL DEFAULT '', paper_kind TEXT NOT NULL DEFAULT '', sheet_json TEXT NOT NULL DEFAULT '',
+			verifier TEXT NOT NULL DEFAULT '', verify_note TEXT NOT NULL DEFAULT '', verify_tags TEXT NOT NULL DEFAULT '', verified_at TEXT NOT NULL DEFAULT '',
+			discrepancy TEXT NOT NULL DEFAULT '', answers TEXT NOT NULL DEFAULT '', completed_at TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_onboarding_flows_set ON onboarding_flows(set_num, user_name)`,
+		`CREATE TABLE IF NOT EXISTS onboarding_waivers (set_num TEXT PRIMARY KEY, waived_by TEXT NOT NULL DEFAULT '', waived_at TEXT NOT NULL)`,
 		// A live registry of connected TUI sessions (see sessions.go) — each session
 		// upserts its own row on a slow timer and deletes it on exit; a session that
 		// crashed instead of exiting cleanly just ages out (admins see last_seen).
@@ -398,7 +429,30 @@ func ensureSchema(db *sql.DB) error {
 			note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '',
 			started_at TEXT NOT NULL, ended_at TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_status_cards_username ON status_cards(username, ended_at)`,
+		// Public blog (sets.kcparts.xyz): one row per post, normally one per set. review_state is
+		// draft -> review -> published (or rejected); only an admin's approve publishes. build_status
+		// is an optional manual override -- otherwise the public page derives it from the job ticket.
+		// A photo is public only if its set_photos note starts "blog:" (see blog.go).
+		`CREATE TABLE IF NOT EXISTS blog_posts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL UNIQUE, set_num TEXT NOT NULL DEFAULT '',
+			theme TEXT NOT NULL DEFAULT '', title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+			body TEXT NOT NULL DEFAULT '', audio TEXT NOT NULL DEFAULT '', build_status TEXT NOT NULL DEFAULT '',
+			review_state TEXT NOT NULL DEFAULT 'draft', preview_token TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'web',
+			source_hash TEXT NOT NULL DEFAULT '', updated_by TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL, updated_at TEXT NOT NULL, published_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS idx_blog_posts_state ON blog_posts(review_state, published_at)`,
+		// The structured part of a post (facts, pulled check, paper sheet, instructions, bags) and the reviewers'
+		// notes, kept apart from the Markdown so a git sync of the text never touches them (see blog_sections.go).
+		`CREATE TABLE IF NOT EXISTS blog_sections (
+			slug TEXT PRIMARY KEY, writer TEXT NOT NULL DEFAULT '', facts_json TEXT NOT NULL DEFAULT '', facts_confirmed INTEGER NOT NULL DEFAULT 0,
+			bags INTEGER NOT NULL DEFAULT 0, stamp_ack INTEGER NOT NULL DEFAULT 0, check_id INTEGER NOT NULL DEFAULT 0, check_json TEXT NOT NULL DEFAULT '',
+			sheet_files TEXT NOT NULL DEFAULT '', instr_files TEXT NOT NULL DEFAULT '', sheet_public TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS blog_notes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL, by_user TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'note',
+			body TEXT NOT NULL, created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_blog_notes_slug ON blog_notes(slug, id)`,
 	}
+	stmts = append(stmts, schemaV15...)
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			return fmt.Errorf("running %q: %w", s, err)
@@ -470,8 +524,14 @@ func seedBagKinds(db *sql.DB) error {
 // part_element_overrides (see DB.SetElementID/ElementFor). Version 13 added the
 // kanban board: set_state.backlog_status/backlog_released_by/backlog_released_at,
 // set_check_lines.deprioritized, and the kanban_notes/kanban_card_moves tables
-// (see kanban.go).
-const schemaVersion = 13
+// (see kanban.go). Version 14 added part_image_overrides (see
+// DB.SetImageOverride/ImageOverrideFor).
+// Version 15 added the Round B selling-side tables (see salesschema.go).
+// Version 16 added note/borrowed_qty/borrowed_from/lent_qty to set_check_lines and
+// color_id/color_name/check_id to borrowed_parts (see borrowed.go).
+// Version 17 added user_messages.parent_id (replies) and the onboarding_flows / onboarding_waivers tables
+// (see onboarding_flow.go).
+const schemaVersion = 17
 
 // migrate brings an older lego.db up to schemaVersion. There is no migration
 // framework in this repo, so this is deliberately small: it takes the write
@@ -795,6 +855,52 @@ func migrate(db *sql.DB) error {
 		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS kanban_card_moves (
 			ticket_id INTEGER PRIMARY KEY, column_name TEXT NOT NULL, entered_at TEXT NOT NULL)`); err != nil {
 			return fmt.Errorf("migrating kanban_card_moves: %w", err)
+		}
+	}
+	if version < 14 {
+		// part_image_overrides: a checker/admin's own direct image URL for a
+		// part+colour, same override-wins shape as part_element_overrides
+		// (see DB.ImageOverrideFor/SetImageOverride) -- its own table, never
+		// touched by a catalog sync.
+		if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS part_image_overrides (
+			part_num TEXT NOT NULL, color_id INTEGER NOT NULL, image_url TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+			PRIMARY KEY (part_num, color_id))`); err != nil {
+			return fmt.Errorf("migrating part_image_overrides: %w", err)
+		}
+	}
+	if version < 16 {
+		// Borrowed parts: a note and borrowed/lent quantities on each check line, and the colour and the
+		// check a borrowed_parts row belongs to (see borrowed.go).
+		for _, c := range []struct{ table, col, ddl string }{
+			{"set_check_lines", "note", `ALTER TABLE set_check_lines ADD COLUMN note TEXT NOT NULL DEFAULT ''`},
+			{"set_check_lines", "borrowed_qty", `ALTER TABLE set_check_lines ADD COLUMN borrowed_qty INTEGER NOT NULL DEFAULT 0`},
+			{"set_check_lines", "borrowed_from", `ALTER TABLE set_check_lines ADD COLUMN borrowed_from TEXT NOT NULL DEFAULT ''`},
+			{"set_check_lines", "lent_qty", `ALTER TABLE set_check_lines ADD COLUMN lent_qty INTEGER NOT NULL DEFAULT 0`},
+			{"borrowed_parts", "color_id", `ALTER TABLE borrowed_parts ADD COLUMN color_id INTEGER NOT NULL DEFAULT -1`},
+			{"borrowed_parts", "color_name", `ALTER TABLE borrowed_parts ADD COLUMN color_name TEXT NOT NULL DEFAULT ''`},
+			{"borrowed_parts", "check_id", `ALTER TABLE borrowed_parts ADD COLUMN check_id INTEGER NOT NULL DEFAULT 0`},
+		} {
+			var has int
+			if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", c.table, c.col).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := conn.ExecContext(ctx, c.ddl); err != nil {
+					return fmt.Errorf("migrating %s: %w", c.table, err)
+				}
+			}
+		}
+	}
+	if version < 17 {
+		var has int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('user_messages') WHERE name = 'parent_id'").Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := conn.ExecContext(ctx, `ALTER TABLE user_messages ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return fmt.Errorf("migrating user_messages: %w", err)
+			}
 		}
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

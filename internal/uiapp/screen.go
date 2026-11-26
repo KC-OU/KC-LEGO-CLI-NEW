@@ -192,7 +192,10 @@ type tableScreen struct {
 	columns        []string
 	fetch          func(app *App) (rows [][]string, subtitle string, err error)
 	extra          func(app *App, msg tea.KeyMsg)
-	boxed          bool // classic style only: draws a SQUARE-box grid table, matching the original's Field/Value "record inspector" tables
+	// onRow makes the list selectable: Up/Down move a "> " cursor and every other key is
+	// offered with the highlighted row first (Enter, A, D...); it reports whether it used the key.
+	onRow func(app *App, row []string, msg tea.KeyMsg) bool
+	boxed bool // classic style only: draws a SQUARE-box grid table, matching the original's Field/Value "record inspector" tables
 
 	all       [][]string // what fetch returned; rows is all narrowed by the "/" filter (see filter.go)
 	rows      [][]string
@@ -200,13 +203,14 @@ type tableScreen struct {
 	filter    string
 	filtering bool
 	top       int // first visible row when the list is longer than the screen
+	sel       int // highlighted row in rows (only with onRow)
 }
 
 func (s *tableScreen) PanelID() string { return s.panelID }
 func (s *tableScreen) Title() string   { return s.title }
 
 func (s *tableScreen) OnEnter(app *App) {
-	s.filter, s.filtering, s.top = "", false, 0
+	s.filter, s.filtering, s.top, s.sel = "", false, 0, 0
 	s.reload(app)
 }
 
@@ -227,12 +231,27 @@ func (s *tableScreen) Body(app *App) string {
 	}
 	rows, pos := s.rows, ""
 	lines := strings.Split(title, "\n")
-	if c := s.capacity(app) - (len(lines) - 1); len(rows) > c {
+	s.sel = max(0, min(s.sel, len(s.rows)-1))
+	c := s.capacity(app) - (len(lines) - 1)
+	if s.onRow != nil { // keep the cursor on screen
+		s.top = max(s.sel-c+1, min(s.top, s.sel))
+	}
+	if len(rows) > c {
 		s.top = max(0, min(s.top, len(rows)-c))
 		rows = rows[s.top : s.top+c]
 		pos = fmt.Sprintf("  rows %d-%d of %d (PgUp/PgDn)", s.top+1, s.top+c, len(s.rows))
 	} else {
 		s.top = 0
+	}
+	if s.onRow != nil {
+		marked := make([][]string, len(rows))
+		for i, r := range rows {
+			marked[i] = append([]string{"  " + r[0]}, r[1:]...)
+			if s.top+i == s.sel {
+				marked[i][0] = "> " + r[0]
+			}
+		}
+		rows = marked
 	}
 	label := pos + s.filterLabel() // never cut: it is how the person sees a filter or a scroll position
 	last := len(lines) - 1
@@ -260,6 +279,28 @@ func (s *tableScreen) capacity(app *App) int {
 	return max(3, app.height-chrome)
 }
 
+func (s *tableScreen) moveSel(app *App, msg tea.KeyMsg) bool {
+	page := max(s.capacity(app)-1, 1)
+	switch msg.Type {
+	case tea.KeyUp:
+		s.sel--
+	case tea.KeyDown:
+		s.sel++
+	case tea.KeyPgUp:
+		s.sel -= page
+	case tea.KeyPgDown:
+		s.sel += page
+	case tea.KeyHome:
+		s.sel = 0
+	case tea.KeyEnd:
+		s.sel = len(s.rows) - 1
+	default:
+		return false
+	}
+	s.sel = max(0, min(s.sel, len(s.rows)-1))
+	return true
+}
+
 func (s *tableScreen) scroll(app *App, msg tea.KeyMsg) bool {
 	c := s.capacity(app)
 	switch msg.Type {
@@ -283,7 +324,16 @@ func (s *tableScreen) scroll(app *App, msg tea.KeyMsg) bool {
 }
 
 func (s *tableScreen) HandleKey(app *App, msg tea.KeyMsg) {
-	if s.handleFilterKey(msg) || s.scroll(app, msg) {
+	if s.handleFilterKey(msg) {
+		return
+	}
+	if s.onRow != nil && len(s.rows) > 0 {
+		s.sel = max(0, min(s.sel, len(s.rows)-1))
+		if s.moveSel(app, msg) || s.onRow(app, s.rows[s.sel], msg) {
+			return
+		}
+	}
+	if s.scroll(app, msg) {
 		return
 	}
 	switch msg.Type {

@@ -60,13 +60,18 @@ type setCheckScreen struct {
 	sel, top      int
 	filter        string
 	filtering     bool
-	prompt, input string // an open number prompt: "missing", "extra", "have"
+	prompt, input string // an open prompt: "missing", "extra", "have" (numbers), or "loan-qty" then "loan-from" (L: borrowed from another set)
+	loanQty       int
 	scanner       bool
 	scanBuf       string
 	bagScanner    bool // B: scanning/typing a bag code, instead of a part (see bagScanKey)
 	bagScanBuf    string
 	flash         string
 	guided        bool // W: one line at a time with a "GO TO: <location>" banner, instead of the full table — see guidedBody
+	// sortBy is "" (the check's own loaded order) until R is pressed, then
+	// cycles lego.SortPartID -> SortColor -> SortQty -> SortPartID -- see
+	// the 'r'/'R' case in HandleKey.
+	sortBy string
 }
 
 // startCheck opens the check for a set (resuming a saved draft).
@@ -81,6 +86,12 @@ func startCheck(app *App, setNum, kind string) {
 	by := "local"
 	if app.session != nil {
 		by = app.session.Username
+	}
+	if app.session != nil && !app.isAdmin() { // a checker's first check of a set needs the verified paper check; admins and the local console are exempt
+		if err := app.legoDB.OnboardingGate(setNum, kind, by); err != nil {
+			app.setMsg(err.Error(), true)
+			return
+		}
 	}
 	c, err := app.legoDB.NewCheck(app.ctx(), app.rebrick, setNum, kind, by)
 	if err != nil {
@@ -159,6 +170,7 @@ func (s *setCheckScreen) capturing() bool { return true } // every letter is a c
 func (s *setCheckScreen) OnEnter(app *App) {
 	s.sel, s.top, s.filter, s.filtering, s.prompt, s.input, s.scanner, s.scanBuf, s.flash, s.guided = 0, 0, "", false, "", "", false, "", "", false
 	s.bagScanner, s.bagScanBuf = false, ""
+	s.sortBy = ""
 }
 func (s *setCheckScreen) FKeys() [][2]string {
 	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
@@ -210,7 +222,7 @@ func (s *setCheckScreen) rows(app *App) int {
 // prompt is open — shared by the table and guided bodies so the question
 // looks identical in either view.
 func (s *setCheckScreen) promptFoot(t ui.Theme) string {
-	return t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares", "damaged": "How many are damaged"}[s.prompt], s.input)) +
+	return t.Accent.Render(fmt.Sprintf("%s: %s_", map[string]string{"missing": "How many are missing", "extra": "How many extra", "have": "How many do you have", "take": "How many to take from spares", "damaged": "How many are damaged", "loan-qty": "How many were borrowed from another set", "loan-from": "Borrowed from which set (number)"}[s.prompt], s.input)) +
 		t.Muted.Render("   Enter ok · Esc cancel")
 }
 
@@ -317,8 +329,8 @@ func (s *setCheckScreen) Body(app *App) string {
 	case s.bagScanner:
 		foot = t.Accent.Render("SCAN BAG — scan or type the bag's own code + Enter: "+s.bagScanBuf+"_") + t.Muted.Render("   B/Esc leaves")
 	default:
-		foot = t.Muted.Render("H have all · M missing · E extra · D damaged · 0-9 count · A all have · T take spare") + "\n" +
-			t.Muted.Render("U undo · / filter · Z scanner · S save · F finish · Esc leave · O optional · W guided walk · P barcode sheet"+
+		foot = t.Muted.Render("H have all · M missing · E extra · D damaged · 0-9 count · A all have · T take spare · L borrowed") + "\n" +
+			t.Muted.Render("U undo · / filter · R sort · Z scanner · S save · F finish · Esc leave · O optional · W guided walk · P barcode sheet"+
 				map[bool]string{true: " · B scan bag", false: ""}[st.bagGatingOn])
 	}
 	if s.flash != "" {
@@ -502,6 +514,8 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		s.sel = min(len(vis)-1, s.sel+1)
 	case (r == 'm' || r == 'M') && cur >= 0:
 		s.prompt, s.input = "missing", ""
+	case (r == 'l' || r == 'L') && cur >= 0:
+		s.prompt, s.input = "loan-qty", strconv.Itoa(max(1, st.check.Lines[cur].Missing()))
 	case (r == 'e' || r == 'E') && cur >= 0:
 		s.prompt, s.input = "extra", ""
 	case (r == 'd' || r == 'D') && cur >= 0:
@@ -540,6 +554,21 @@ func (s *setCheckScreen) HandleKey(app *App, msg tea.KeyMsg) {
 		s.bagScanner, s.bagScanBuf = true, ""
 	case r == 'w' || r == 'W':
 		s.guided = !s.guided
+	case r == 'r' || r == 'R':
+		order := []string{lego.SortPartID, lego.SortColor, lego.SortQty}
+		next := order[0]
+		for i, o := range order {
+			if o == s.sortBy {
+				next = order[(i+1)%len(order)]
+				break
+			}
+		}
+		s.sortBy = next
+		lego.SortBy(st.check.Lines, s.sortBy,
+			func(l lego.CheckLine) string { return l.PartNum },
+			func(l lego.CheckLine) string { return l.ColorName },
+			func(l lego.CheckLine) int { return l.Need })
+		app.setMsg("Sorted by "+s.sortBy+".", false)
 	case r == 'p' || r == 'P':
 		printPartsSheet(app, st)
 	case r == 's' || r == 'S':
@@ -614,6 +643,12 @@ func (s *setCheckScreen) promptKey(app *App, msg tea.KeyMsg, cur int) {
 		return
 	case tea.KeyRunes:
 		for _, r := range msg.Runes {
+			if s.prompt == "loan-from" { // a set number: digits, letters and a dash
+				if (r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '-') && len(s.input) < 12 {
+					s.input += string(r)
+				}
+				continue
+			}
 			if r >= '0' && r <= '9' && len(s.input) < 6 {
 				s.input += string(r)
 			}
@@ -623,11 +658,36 @@ func (s *setCheckScreen) promptKey(app *App, msg tea.KeyMsg, cur int) {
 	default:
 		return
 	}
+	if s.prompt == "loan-from" {
+		from := strings.TrimSpace(s.input)
+		s.prompt, s.input = "", ""
+		if from == "" || cur < 0 {
+			return
+		}
+		if !strings.Contains(from, "-") {
+			from += "-1" // a bare set number means the first release, as everywhere else
+		}
+		l := st.check.Lines[cur]
+		qty := max(1, s.loanQty)
+		if _, err := app.legoDB.AddBorrowedForCheck(st.check, lego.BorrowedPart{NeedPartNum: l.PartNum, ColorID: l.ColorID, ColorName: l.ColorName,
+			Qty: qty, FromSetNum: from, CreatedBy: app.userName()}); err != nil {
+			app.setMsg(err.Error(), true)
+			return
+		}
+		st.set(cur, func(l *lego.CheckLine) { l.Have = min(l.Have, max(0, l.Need-l.Borrowed)) }) // what was borrowed was short: it was not there to count
+		app.audit.Log(app.userName(), "", "BORROWED_PART_ADD", "SUCCESS", fmt.Sprintf("set=%s part=%s from=%s qty=%d via tui", st.check.SetNum, l.PartNum, from, qty))
+		app.setMsg(fmt.Sprintf("Recorded %d x %s borrowed from %s — it counts as present, not missing.", qty, l.PartNum, from), false)
+		return
+	}
 	n := 1
 	if s.input != "" {
 		n, _ = strconv.Atoi(s.input)
 	}
 	p := s.prompt
+	if p == "loan-qty" {
+		s.loanQty, s.prompt, s.input = max(1, n), "loan-from", ""
+		return
+	}
 	s.prompt = ""
 	if cur < 0 {
 		return
@@ -935,6 +995,9 @@ func finishCheck(app *App) {
 	}
 	if extra > 0 {
 		msg += fmt.Sprintf(" %d extra part(s) added to your loose parts.", extra)
+	}
+	if f, _ := app.legoDB.FlowFor(c.SetNum, user); f != nil && f.Status == lego.FlowVerified {
+		msg += " Next: submit your onboarding (dashboard Onboarding page, or wms-go onboarding submit " + c.SetNum + ") to open the blog."
 	}
 	if app.pdbw == nil || !app.pdbw.API().Enabled() {
 		msg += " (Part-DB not updated: no API token — `wms lego sync-parts` later.)"

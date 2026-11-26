@@ -91,3 +91,36 @@ func TestMissingPartsExportXLSX(t *testing.T) {
 		t.Error("without a public URL the screen should say how to get links")
 	}
 }
+
+// G (sorting sheet) and L (sets CSV) are also the global "jump to the menu" and "lock" shortcuts:
+// on the export screen they must pick the format, not leave the screen.
+func TestExportFormatLettersBeatGlobalShortcuts(t *testing.T) {
+	app := detailApp(t)
+	openDetail(t, app, "75192-1")
+	press(app, "x")
+	press(app, "g")
+	if app.cur != scrExport || app.exportRes == nil {
+		t.Fatalf("G should save the sorting sheet; on %q, result %v, message %q", app.cur, app.exportRes, app.message)
+	}
+	if !strings.HasSuffix(app.exportRes.Path, ".html") {
+		t.Errorf("sorting sheet saved as %q", app.exportRes.Path)
+	}
+
+	app = detailApp(t)
+	startExport(app, &exportJob{What: "sets", Kind: "sets", Formats: []string{"sets-csv"}, Build: ownedExportJob().Build})
+	press(app, "l")
+	if app.cur != scrExport || app.exportRes == nil {
+		t.Fatalf("L should save the sets CSV, not lock; on %q, result %v, message %q", app.cur, app.exportRes, app.message)
+	}
+}
+
+// The letters that are not formats still work as shortcuts on the export screen.
+func TestExportScreenKeepsOtherShortcuts(t *testing.T) {
+	app := detailApp(t)
+	openDetail(t, app, "75192-1")
+	press(app, "x")
+	press(app, "q")
+	if app.cur == scrExport {
+		t.Fatalf("Q should still go back, on %q", app.cur)
+	}
+}

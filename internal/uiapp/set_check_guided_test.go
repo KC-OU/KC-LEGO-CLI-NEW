@@ -8,8 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
 )
 
 // TestGuidedWalkTogglesAndShowsGoToBanner covers the sentry-wms-inspired "W"
@@ -102,5 +104,75 @@ func TestPrintPartsSheetSavesAPDFExport(t *testing.T) {
 	}
 	if !strings.Contains(app.message, "Parts barcode sheet") {
 		t.Errorf("message = %q, want it to confirm the sheet was made", app.message)
+	}
+}
+
+// TestBorrowedKeyCountsThePartAsPresentNotMissing covers L: part of a line's shortfall was borrowed from
+// another set, so the check shows it as borrowed rather than missing, and finishing needs the record.
+func TestBorrowedKeyCountsThePartAsPresentNotMissing(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	for _, q := range []string{
+		`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1')`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10)`,
+	} {
+		if _, err := app.legoDB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckIntake)
+
+	enter := func() { app.Update(tea.KeyMsg{Type: tea.KeyEnter}) }
+	typeKeys(app, "m3")
+	enter() // 3 missing
+	if m := app.checking.check.Lines[0].Missing(); m != 3 {
+		t.Fatalf("missing = %d, want 3", m)
+	}
+	typeKeys(app, "l")
+	enter() // 3 borrowed (the prompt pre-fills the shortfall)
+	typeKeys(app, "10696")
+	enter()
+	l := app.checking.check.Lines[0]
+	if l.Borrowed != 3 || l.BorrowedFrom != "10696-1" || l.Missing() != 0 {
+		t.Fatalf("line = %+v (missing %d), want 3 borrowed from 10696-1 and none missing", l, l.Missing())
+	}
+	b, _ := app.legoDB.BorrowedForSet("75192-1")
+	if len(b) != 1 || b[0].Qty != 3 || b[0].FromSetNum != "10696-1" {
+		t.Fatalf("borrowed list = %+v, want one record of 3 from 10696-1", b)
+	}
+}
+
+// TestOnboardingGateBlocksACheckerUntilTheirPaperCheckIsVerified: a checker (not an admin) cannot start a first
+// check of a set until an admin has verified their paper check; verifying it opens the door.
+func TestOnboardingGateBlocksACheckerUntilTheirPaperCheckIsVerified(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	for _, q := range []string{
+		`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1')`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1,'3001',4,10)`,
+	} {
+		if _, err := app.legoDB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.session = &auth.Session{Source: "wms", Username: "4821", Role: "Checker", Permissions: &wmsdb.Permissions{CanWrite: true, Menus: []string{"*"}}}
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	app.cur, app.stack = scrLegoHub, nil
+	startCheck(app, "75192-1", lego.CheckIntake)
+	if app.checking != nil || !strings.Contains(app.message, "onboarding first") {
+		t.Fatalf("the check started without a verified paper check (message %q)", app.message)
+	}
+	f, _ := app.legoDB.StartFlow("75192-1", "4821")
+	_ = app.legoDB.SubmitPaper(f.ID, "4821", "upload", "x.pdf", "")
+	if _, err := app.legoDB.VerifyFlow(f.ID, "admin", true, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	startCheck(app, "75192-1", lego.CheckIntake)
+	if app.checking == nil {
+		t.Fatalf("the check should start once the paper check is verified (message %q)", app.message)
 	}
 }

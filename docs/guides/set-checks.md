@@ -227,4 +227,56 @@ the CLI/TUI export as before.
 ```bash
 wms-go lego check 75192 --missing 3001:red:2,3023:1:1 --extra 3710:black:3   # colour = name or Rebrickable id
 wms-go lego check 75192 --stocktake --by alex
+wms-go lego check 75192 --borrowed 3001:red:2:10696-1                        # 2 red 3001 came from set 10696-1
 ```
+
+## Borrowed parts
+
+When a set is short a part and you take it from another set to finish building it, record that **straight after
+the check** (it is a priority). The part counts as present, not missing, on the set you are building, and the set
+you took it from shows it as *lent* until the replacement is back.
+
+- **TUI:** press **L** on the line, then the quantity and the set it came from.
+- **CLI:** `wms-go lego borrow 75192 --part 3001 --colour red --qty 2 --from 10696`, or `--borrowed` on `lego check`
+  as above. `wms-go lego borrow 75192 --list` shows what was borrowed for a set.
+- **Dashboard:** open the set's check (`/checks/<set>`), press **B** on the line, pick the set it came from.
+- **Sorting sheet:** the printed sheet has a Borrowed section at the bottom with blank rows and a tick box
+  reminding you to enter it in the system straight away. A check cannot be finished while a line says "borrowed"
+  without a record on the Borrowed list.
+
+The Borrowed page tracks each part through *to order*, *ordered* and *replaced*. Marking one *replaced* clears the
+*lent* mark on the donor set.
+
+## Sorting sheet sign-off
+
+The header has **Sorted by (ID)** and **Checked by (ID)** boxes (ID numbers only, never names). Your own ID is pre-filled when
+you download the sheet from the dashboard. Each line has a tick/cross/? box, **miss** and **extra** counts, a **bag** button
+(tap: 1 big, 2 small) and a **date**. **Save filled sheet** downloads a copy with everything saved in it. **Clear marks** asks
+for a second tap (it no longer uses a pop-up, which phones and file viewers block).
+
+## Onboarding: the paper check comes first
+
+A checker's first check of a set starts with a **paper check** that an admin verifies. Until then the check cannot be
+started anywhere (dashboard, phone app, terminal or `wms-go lego check`). Admins are not gated, and a recount of an
+already-checked set is not either.
+
+1. **Paper check.** Open the set's **Onboarding** page on the dashboard. If you have done the paper check, upload it:
+   the file made by **Save filled sheet** on the sorting sheet, or a scan, photo or PDF (25 MB at most). If not,
+   download the sorting sheet there, fill it in on a PC or print it, then upload it. The sheet takes ID numbers only.
+2. **Verify.** An admin (or anyone with the `sets.verify` permission) opens **Paper checks**, looks at the upload and
+   either verifies it or sends it back with a note and optional tags. You get a message in your **Inbox** either way.
+   A saved digital sheet is compared with your dashboard check automatically.
+3. **Check, then submit.** Once verified, do the check in the terminal, on the command line or on the phone. When it is
+   finished, press **Submit** on the Onboarding page and answer *Complete and Generate Blog Template* (finishes the
+   onboarding, opens the blog draft and downloads the starting Markdown) or *No, recheck*. From the command line:
+   `wms-go onboarding submit <set>`. The admin then compares the two checks and messages you about any difference.
+
+Admin commands: `wms-go onboarding list`, `onboarding verify <id> --ok` or `--changes --note "..."`, and
+`onboarding waive <set|*>` to let anyone check a set (or every set) without the paper check. Guest upload links drop
+into the same queue under the ID typed on the form.
+
+## The Inbox
+
+The dashboard has an **Inbox** (the bell with an unread count in the sidebar). Admins can message anyone; you can reply to
+a message you were sent. Messages tell you about your paper check, blog review outcomes and anything an admin sends. The
+terminal still shows each message once as a pop-up.

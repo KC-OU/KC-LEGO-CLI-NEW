@@ -7,6 +7,8 @@ package dashboardapi
 
 import (
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
@@ -50,13 +52,37 @@ type systemHealthView struct {
 	BrickOwlConfigured  bool   `json:"brickowl_configured"`
 	PartDBConfigured    bool   `json:"partdb_configured"`
 	Currency            string `json:"currency,omitempty"`
+	// Version/Commit/BuildDate are this running binary's own build info
+	// (see Server.SetVersion) -- "is live actually running what I think
+	// it's running" used to mean SSHing in and comparing
+	// ActiveEnterTimestamp by hand, which is exactly how a stale-live-Go-
+	// backend bug (images/sort silently not working) went unnoticed for
+	// days. DevAhead is a best-effort "dev has unshipped commits" flag
+	// (see devHeadCommit) -- "" DevHead means git/the repo wasn't
+	// reachable, not that dev is clean.
+	Version   string `json:"version,omitempty"`
+	Commit    string `json:"commit,omitempty"`
+	BuildDate string `json:"build_date,omitempty"`
+	DevHead   string `json:"dev_head,omitempty"`
+	DevAhead  bool   `json:"dev_ahead,omitempty"`
+}
+
+// devHeadCommit is dev's current HEAD short hash, best-effort -- "" if git
+// or the repo checkout isn't available (e.g. a differently laid-out
+// deployment), never an error surfaced to the caller.
+func devHeadCommit() string {
+	out, err := exec.Command("git", "-C", config.Get(config.RepoPath), "rev-parse", "--short", "dev").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // handleSystemHealth is GET /dashboard/admin/system-health -- a small
 // at-a-glance panel, reusing the exact numbers `wms bricklink status`
 // already computes rather than inventing new instrumentation.
 func (s *Server) handleSystemHealth(w http.ResponseWriter, r *http.Request) {
-	v := systemHealthView{PartDBConfigured: s.pdb != nil}
+	v := systemHealthView{PartDBConfigured: s.pdb != nil, Version: s.version, Commit: s.commit, BuildDate: s.buildDate}
 	if s.bl != nil {
 		v.BrickLinkConfigured = s.bl.Enabled()
 		v.Currency = s.bl.Currency
@@ -68,6 +94,9 @@ func (s *Server) handleSystemHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.bo != nil {
 		v.BrickOwlConfigured = s.bo.Enabled()
+	}
+	if v.DevHead = devHeadCommit(); v.DevHead != "" && v.Commit != "" {
+		v.DevAhead = v.DevHead != v.Commit
 	}
 	writeJSON(w, http.StatusOK, v)
 }

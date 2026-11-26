@@ -9,11 +9,37 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/clerkbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
 )
+
+// dashboardTwoFA reports whether username's telnet/TUI sign-in should be
+// gated by their own Clerk-enrolled TOTP instead of (or because there is
+// no) a local internal/twofa secret -- see internal/clerkbridge.VerifyTOTP's
+// own comment for why this is safe to bridge: one authenticator entry, set
+// up once via the dashboard's self-serve MFA enrollment, works for both
+// channels. Every failure mode here -- not configured, not linked, lookup
+// error, no TOTP enrolled in Clerk -- returns ("", false): "fall back to
+// whatever the local 2FA state already says", never a reason to deny or
+// skip a login outright on its own.
+func dashboardTwoFA(username string) (clerkUserID string, enabled bool) {
+	if !clerkbridge.Configured() {
+		return "", false
+	}
+	linked, err := dashboardlink.New("").Has(username)
+	if err != nil || !linked {
+		return "", false
+	}
+	info, err := clerkbridge.FindUser(username)
+	if err != nil || info == nil || !info.TOTPEnabled {
+		return "", false
+	}
+	return info.ID, true
+}
 
 func loginFields(app *App) []ui.Field {
 	userLabel := "Username / User ID"
@@ -204,7 +230,13 @@ func continueSignOn(app *App, session *auth.Session) {
 	} else if why != "" {
 		app.audit.Log(session.Username, session.Role, "LOGIN_2FA_EXEMPT", "DENIED", why+"; asking for 2FA")
 	}
-	if twofa.IsEnabled(session.Username, session.Source) {
+	localTwoFA := twofa.IsEnabled(session.Username, session.Source)
+	clerkUserID := ""
+	clerkTwoFA := false
+	if !localTwoFA {
+		clerkUserID, clerkTwoFA = dashboardTwoFA(session.Username)
+	}
+	if localTwoFA || clerkTwoFA {
 		if ago, ok := twofa.WithinGrace(session.Username, session.Source, app.graceOrigin, app.graceWindow()); ok {
 			mins, window := int(ago.Round(time.Minute)/time.Minute), int(app.graceWindow()/time.Minute)
 			app.audit.Log(session.Username, session.Role, "LOGIN_2FA_GRACE", "SUCCESS",
@@ -218,6 +250,7 @@ func continueSignOn(app *App, session *auth.Session) {
 			app.setMsg(note, false)
 			return
 		}
+		app.clerkTwoFAUserID = clerkUserID // "" selects the local path in doTwoFACodeSubmit
 		app.goTo(scrTwoFACode)
 		return
 	}
@@ -255,7 +288,24 @@ func twoFACodeFields(app *App) []ui.Field {
 // notices before they run out.
 func doTwoFACodeSubmit(app *App, values []string) {
 	code := values[0]
-	usedBackup, err := twofa.Verify(app.session.Username, app.session.Source, code)
+	var usedBackup bool
+	var err error
+	if app.clerkTwoFAUserID != "" {
+		var matched bool
+		matched, err = clerkbridge.VerifyTOTP(app.clerkTwoFAUserID, code)
+		if err != nil {
+			// The request itself failed (Clerk unreachable, config gap, or
+			// TOTP was disabled in Clerk between the earlier check and now)
+			// -- NOT a wrong code, so it must never feed the lockout counter.
+			app.audit.Log(app.session.Username, app.session.Role, "LOGIN_2FA_BRIDGE_ERROR", "DENIED", err.Error())
+			app.setMsg("Could not verify your code against the dashboard account right now. Try again shortly.", true)
+			app.screens[scrTwoFACode].OnEnter(app)
+			return
+		}
+		err = twofa.VerifyExternal(app.session.Username, app.session.Source, matched)
+	} else {
+		usedBackup, err = twofa.Verify(app.session.Username, app.session.Source, code)
+	}
 	if err != nil {
 		var locked *twofa.LockedError
 		msg, action := "Invalid authenticator code.", "LOGIN_2FA_FAILED"
@@ -276,6 +326,7 @@ func doTwoFACodeSubmit(app *App, values []string) {
 	// A real code was just accepted: start this origin's grace window. A
 	// failure to record it only costs a future prompt, so it never blocks login.
 	_ = twofa.MarkVerified(username, source, app.graceOrigin, app.graceWindow())
+	app.clerkTwoFAUserID = ""
 	proceedPastAuth(app, app.session)
 	// goTo() above clears the message line for the destination screen, so
 	// the backup-code warning is set after navigating, not before.

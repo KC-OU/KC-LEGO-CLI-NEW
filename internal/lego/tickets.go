@@ -22,6 +22,7 @@ const (
 	TicketClaimed   = "claimed"
 	TicketDone      = "done"
 	TicketAbandoned = "abandoned"
+	TicketCancelled = "cancelled" // removed by an admin: queued or claimed by mistake, or left sitting too long
 )
 
 type Ticket struct {
@@ -61,6 +62,9 @@ func (d *DB) AssignTicket(kind, target, label, assignedTo, priority, note, creat
 	id, err := res.LastInsertId()
 	if err != nil {
 		return nil, err
+	}
+	if kind == TicketCheck { // a private blog draft for this set, best effort -- see blog.go
+		_ = d.EnsureDraftForSet(target, label, createdBy)
 	}
 	return &Ticket{ID: id, Kind: kind, Target: target, Label: label, AssignedTo: assignedTo, Status: TicketQueued,
 		Priority: priority, Note: note, Token: token, CreatedBy: createdBy, CreatedAt: now}, nil
@@ -317,4 +321,73 @@ func (d *DB) AbandonTicket(id int64, by string) error {
 		return errors.New("no claimed ticket to abandon")
 	}
 	return nil
+}
+
+// CancelTicket removes a queued or claimed ticket from the queue -- an admin's call for
+// work added by mistake or left too long. The row is kept (status "cancelled", with who
+// and why appended to its note) rather than deleted, like this project's other work
+// records, and every open-queue / board / accuracy query already ignores that status.
+// It never touches the underlying check or order, or anyone's accuracy.
+func (d *DB) CancelTicket(id int64, by, reason string) (*Ticket, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, errors.New("a reason is required")
+	}
+	rows, err := d.Query(`SELECT id, kind, target, label, assigned_to, status, priority, note, token, created_by, created_at, claimed_at, done_at
+		FROM job_tickets WHERE id = ? AND status IN (?, ?)`, id, TicketQueued, TicketClaimed)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := scanTickets(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(ts) == 0 {
+		return nil, errors.New("that ticket is not in the queue (already finished or removed)")
+	}
+	note := strings.TrimSpace(ts[0].Note + " [removed by " + by + ": " + reason + "]")
+	if _, err := d.Exec(`UPDATE job_tickets SET status = ?, note = ?, done_at = ? WHERE id = ? AND status IN (?, ?)`,
+		TicketCancelled, note, time.Now().Format(timeLayout), id, TicketQueued, TicketClaimed); err != nil {
+		return nil, err
+	}
+	return &ts[0], nil
+}
+
+// StaleQueuedTickets is every ticket still waiting in the queue (nobody has claimed it)
+// that was created more than olderThan ago, oldest first. Claimed work is left alone:
+// someone is on it.
+func (d *DB) StaleQueuedTickets(olderThan time.Duration) ([]Ticket, error) {
+	rows, err := d.Query(`SELECT id, kind, target, label, assigned_to, status, priority, note, token, created_by, created_at, claimed_at, done_at
+		FROM job_tickets WHERE status = ? ORDER BY id`, TicketQueued)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := scanTickets(rows)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := time.Now().Add(-olderThan)
+	var out []Ticket
+	for _, t := range ts {
+		if t.CreatedAt.Before(cutoff) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// CancelStaleQueuedTickets cancels every StaleQueuedTickets match and returns the ones it removed.
+func (d *DB) CancelStaleQueuedTickets(olderThan time.Duration, by string) ([]Ticket, error) {
+	stale, err := d.StaleQueuedTickets(olderThan)
+	if err != nil {
+		return nil, err
+	}
+	var done []Ticket
+	for _, t := range stale {
+		if _, err := d.CancelTicket(t.ID, by, "left in the queue too long"); err != nil {
+			return done, err
+		}
+		done = append(done, t)
+	}
+	return done, nil
 }

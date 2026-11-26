@@ -5,9 +5,12 @@ package main
 
 import (
 	"os"
+	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
 
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/termguard" // must be imported: its init runs before bubbletea's
 )
 
@@ -27,14 +30,21 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAccessCmd())
 	root.AddCommand(newMOTDCmd())
 	root.AddCommand(newPublishCmd())
+	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newReceiveCmd())
 	root.AddCommand(newBackupCmd())
 	root.AddCommand(newSyncCmd())
 	root.AddCommand(newGatewayCmd())
 	root.AddCommand(newLegoCmd())
 	root.AddCommand(newAuditCmd())
+	root.AddCommand(newOnboardingCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newNotifyCmd())
+	root.AddCommand(newSalesCmd())
+	root.AddCommand(newAcquireCmd())
+	root.AddCommand(newPublicStockCmd())
+	root.AddCommand(newPublicBlogCmd())
+	root.AddCommand(newBlogCmd())
 	root.AddCommand(newBricklinkCmd())
 	root.AddCommand(newPluginCmd())
 	root.AddCommand(newVersionCmd())
@@ -62,7 +72,33 @@ func execute(root *cobra.Command, args []string) error {
 	return root.Execute()
 }
 
+// initSentry reports a panic in this goroutine (a plain CLI invocation
+// crashing, or the gateway server's own synchronous startup) to Sentry
+// before the process exits -- empty DSN (the default, see
+// config.SentryDSN) makes sentry.Init a documented no-op, so this is safe
+// to call unconditionally rather than gating it on being configured.
+// NOTE: this only covers the main goroutine. `wms gateway serve` is a
+// long-running HTTP server whose per-request handlers run in their own
+// goroutines, which this recover() cannot reach -- panics there need
+// per-handler sentryhttp middleware, not added here (narrower, separate
+// task if request-handler panics turn out to matter).
+func initSentry() func() {
+	_ = sentry.Init(sentry.ClientOptions{Dsn: config.Get(config.SentryDSN)})
+	return func() { sentry.Flush(2 * time.Second) }
+}
+
 func main() {
+	defer initSentry()()
+	defer func() {
+		// Re-panics after reporting -- flushing and exiting non-zero on an
+		// unrecovered panic is already Go's own default behavior; this
+		// only adds the report, not a change to that behavior.
+		if r := recover(); r != nil {
+			sentry.CurrentHub().Recover(r)
+			panic(r)
+		}
+	}()
+
 	termguard.Restore()
 	root := newRootCmd()
 	root.SilenceErrors = true // reportError prints it, plain or as JSON

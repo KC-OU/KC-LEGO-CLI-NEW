@@ -118,3 +118,36 @@ func TestQueryRoutesRequireTheSharedToken(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryPartsByThemeListsEveryPartInItsSets(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+	for _, q := range []string{
+		`INSERT INTO cat_themes (id, name, parent_id) VALUES (1, 'Star Wars', 0)`,
+		`INSERT INTO cat_parts (part_num, name, part_cat_id) VALUES ('3001', 'Brick 2 x 4', 0), ('3002', 'Brick 2 x 3', 0)`,
+		`INSERT INTO cat_sets (set_num, name, year, theme_id, num_parts, img_url) VALUES ('75192-1','Millennium Falcon',2017,1,7541,'')`,
+		`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75192-1')`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1, '3001', 4, 2)`,
+		`INSERT INTO fts_parts(fts_parts) VALUES('rebuild')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/dashboard/queries/parts?q=star+wars", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Parts []struct{ Num string } `json:"parts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Parts) != 1 || body.Parts[0].Num != "3001" {
+		t.Errorf("a theme lists the parts its sets use (3001 yes, unused 3002 no): %+v", body.Parts)
+	}
+}

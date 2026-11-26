@@ -235,7 +235,7 @@ func (d *DB) ReceiveLine(lineID int64, qty int) (completedSet string, err error)
 	}
 	if checkID > 0 {
 		var before int
-		_ = tx.QueryRow(`SELECT COALESCE(SUM(MAX(need - have, 0)), 0) FROM set_check_lines WHERE check_id = ?`, checkID).Scan(&before)
+		_ = tx.QueryRow(`SELECT COALESCE(SUM(MAX(need - have - borrowed_qty - lent_qty, 0)), 0) FROM set_check_lines WHERE check_id = ?`, checkID).Scan(&before)
 		if _, err := tx.Exec(`UPDATE set_check_lines SET have = MIN(need, have + ?) WHERE check_id = ? AND part_num = ? AND color_id = ?`, qty, checkID, l.PartNum, l.ColorID); err != nil {
 			return "", err
 		}

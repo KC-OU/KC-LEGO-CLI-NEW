@@ -31,9 +31,12 @@ type DiscordBot struct {
 
 const defaultDiscordAPI = "https://discord.com/api/v10"
 
+// discordAPIBase is overridden only by tests.
+var discordAPIBase = defaultDiscordAPI
+
 // DiscordBotFromConfig reads WMS_DISCORD_BOT_TOKEN / WMS_DISCORD_BOT_USER_ID.
 func DiscordBotFromConfig() *DiscordBot {
-	return &DiscordBot{Token: config.Get(config.DiscordBotToken), UserID: config.Get(config.DiscordBotUserID), BaseURL: defaultDiscordAPI}
+	return &DiscordBot{Token: config.Get(config.DiscordBotToken), UserID: config.Get(config.DiscordBotUserID), BaseURL: discordAPIBase}
 }
 
 func (b *DiscordBot) Enabled() bool { return b != nil && b.Token != "" && b.UserID != "" }

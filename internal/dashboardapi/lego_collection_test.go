@@ -61,6 +61,75 @@ func TestUpsertPartSetsTheTotalQuantity(t *testing.T) {
 	}
 }
 
+func TestSetElementIDSetsThenClearsAnOverride(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	set := postJSON(t, srv.URL, "/dashboard/lego/element-id", `{"part_num":"3023","color_id":4,"element_id":"6066134","by":"checker"}`)
+	defer set.Body.Close()
+	if set.StatusCode != http.StatusOK {
+		t.Fatalf("set status = %d", set.StatusCode)
+	}
+	if got := db.ElementFor("3023", 4); got != "6066134" {
+		t.Fatalf("ElementFor = %q, want 6066134", got)
+	}
+
+	clear := postJSON(t, srv.URL, "/dashboard/lego/element-id", `{"part_num":"3023","color_id":4,"element_id":"","by":"checker"}`)
+	defer clear.Body.Close()
+	if clear.StatusCode != http.StatusOK {
+		t.Fatalf("clear status = %d", clear.StatusCode)
+	}
+	if got := db.ElementFor("3023", 4); got != "" {
+		t.Fatalf("ElementFor after clear = %q, want \"\"", got)
+	}
+}
+
+func TestSetElementIDRejectsNonDigits(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+	resp := postJSON(t, srv.URL, "/dashboard/lego/element-id", `{"part_num":"3023","color_id":4,"element_id":"not-a-number","by":"checker"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestSetImageOverrideSetsThenClearsAndWinsOverTheElementPhoto(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+
+	set := postJSON(t, srv.URL, "/dashboard/lego/image-override", `{"part_num":"3023","color_id":4,"image_url":"https://example.com/my-photo.jpg","by":"checker"}`)
+	defer set.Body.Close()
+	if set.StatusCode != http.StatusOK {
+		t.Fatalf("set status = %d", set.StatusCode)
+	}
+	if got := db.ImageOverrideFor("3023", 4); got != "https://example.com/my-photo.jpg" {
+		t.Fatalf("ImageOverrideFor = %q", got)
+	}
+	if urls := db.PartImageURLs("3023", 4); len(urls) != 1 || urls[0] != "https://example.com/my-photo.jpg" {
+		t.Fatalf("PartImageURLs = %v, want just the override (short-circuiting the catalog/LDraw fallback chain)", urls)
+	}
+
+	clear := postJSON(t, srv.URL, "/dashboard/lego/image-override", `{"part_num":"3023","color_id":4,"image_url":"","by":"checker"}`)
+	defer clear.Body.Close()
+	if clear.StatusCode != http.StatusOK {
+		t.Fatalf("clear status = %d", clear.StatusCode)
+	}
+	if got := db.ImageOverrideFor("3023", 4); got != "" {
+		t.Fatalf("ImageOverrideFor after clear = %q, want \"\"", got)
+	}
+}
+
+func TestSetImageOverrideRequiresPartNumAndBy(t *testing.T) {
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+	resp := postJSON(t, srv.URL, "/dashboard/lego/image-override", `{"image_url":"https://example.com/x.jpg"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestMissingAndExtraReportsRunOverAnEmptyCollection(t *testing.T) {
 	_, srv := testServer(t, "secret")
 	defer srv.Close()

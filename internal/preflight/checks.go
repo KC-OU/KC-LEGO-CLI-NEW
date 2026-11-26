@@ -70,7 +70,7 @@ func Standard() []Check {
 		_ = out
 		return Pass("tidy")
 	})
-	add("Code", "tests (with -race unless --quick) and no test touches a live path", both, false, checkTests)
+	add("Code", "tests (no -race -- see checkTests' own doc comment; no test touches a live path)", both, false, checkTests)
 	add("Code", "known vulnerabilities (govulncheck)", both, true, func(ctx context.Context, e *Env) Result {
 		name, err := e.tool(ctx, "govulncheck", "golang.org/x/vuln/cmd/govulncheck")
 		if err != nil {
@@ -219,15 +219,23 @@ func checkClean(ctx context.Context, e *Env) Result {
 
 func checkTests(ctx context.Context, e *Env) Result {
 	// No -count=1: Go's test cache makes an unchanged package free, and the trap
-	// paths are fixed (see cmd/wms/preflight.go) so they don't defeat the cache. The
-	// race detector runs for a deploy; a publish leaves it to CI, which runs -race
-	// on every push.
+	// paths are fixed (see cmd/wms/preflight.go) so they don't defeat the cache.
+	//
+	// -race is deliberately OFF here for both targets now, not just Publish --
+	// internal/uiapp alone (286 tests, none independent: its shared test-setup
+	// helper isolates every test via a long chain of t.Setenv calls, which is
+	// fundamentally incompatible with t.Parallel, so splitting it up safely
+	// would need a real refactor of that isolation mechanism, not attempted
+	// here) made the -race run on this 4-core box take ~400s on its own,
+	// dominating a Deploy preflight. CI runs -race on every push to main (see
+	// .github/workflows/ci.yml) -- but note Deploy promotes dev -> main
+	// *locally* (scripts/promote-dev.sh never touches GitHub), so that CI
+	// coverage only actually re-checks a deployed commit once `wms publish`
+	// pushes it, which can trail well behind the deploy itself. Still faster
+	// to iterate without -race here and trust CI to catch a real race on
+	// publish than to keep paying ~400s on every deploy.
 	args := []string{"test", "./..."}
 	label := "passed"
-	if !e.Quick && e.Target != TargetPublish {
-		args = append(args, "-race")
-		label = "passed with -race"
-	}
 	env := []string{}
 	if e.Trap != "" {
 		_ = os.MkdirAll(e.Trap, 0o700)

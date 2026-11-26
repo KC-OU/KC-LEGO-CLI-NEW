@@ -3,6 +3,7 @@
 `wms-go gateway serve` (the `wms-gateway` systemd unit) serves the interface to barcode scanners, old terminals and browsers:
 
 - **Telnet** on the ports in `LISTEN_PORTS` (default 2323 and 23). It negotiates the window size, so the interface fills your window.
+- **Handheld telnet** on `HANDHELD_PORTS` (default 2326) for Windows CE/Mobile scanners such as the Symbol MC9090. Lines and bullets are sent as plain ASCII (those clients show UTF-8 as `â` garbage) and the window starts at 40x16 unless the client reports its own size.
 - **Web terminal** (ttyd behind a small proxy) on `GATEWAY_PORT` (default 7681), with tap-to-select for tablets.
 
 --8<-- "docs/assets/screens/signon.html"

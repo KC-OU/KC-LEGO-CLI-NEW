@@ -97,3 +97,68 @@ func (s *Server) handleUpsertPart(w http.ResponseWriter, r *http.Request) {
 	s.logAudit(req.By, "DASHBOARD_PART_UPSERTED", "SUCCESS", req.PartNum)
 	writeJSON(w, http.StatusOK, map[string]string{"part_num": req.PartNum})
 }
+
+type setElementIDRequest struct {
+	PartNum   string `json:"part_num"`
+	ColorID   int    `json:"color_id"`
+	ElementID string `json:"element_id"` // "" clears an override, falling back to the catalog's own value if any
+	By        string `json:"by"`
+}
+
+// handleSetElementID is the web dashboard's first access to what `wms lego
+// element-id` and the TUI's scrSetElementID screen already do -- a
+// checker/admin's own correction for a part+colour's element id (see
+// lego.DB.SetElementID), surfaced in the UI via the ElementID field
+// enrichElementIDs now adds to every InvItem. Permission (sets.check, same
+// as the TUI) is enforced by the Rust gateway before this is ever called,
+// same as every other POST under /dashboard/lego/.
+func (s *Server) handleSetElementID(w http.ResponseWriter, r *http.Request) {
+	var req setElementIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.PartNum, req.By = strings.TrimSpace(req.PartNum), strings.TrimSpace(req.By)
+	if req.PartNum == "" || req.By == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "part_num and by are required"})
+		return
+	}
+	if err := s.legoDB.SetElementID(req.PartNum, req.ColorID, req.ElementID, req.By); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_ELEMENT_ID_SET", "SUCCESS", req.PartNum)
+	writeJSON(w, http.StatusOK, map[string]string{"part_num": req.PartNum, "element_id": s.legoDB.ElementFor(req.PartNum, req.ColorID)})
+}
+
+type setImageOverrideRequest struct {
+	PartNum  string `json:"part_num"`
+	ColorID  int    `json:"color_id"`
+	ImageURL string `json:"image_url"` // "" clears an override, falling back to the catalog-derived picture if any
+	By       string `json:"by"`
+}
+
+// handleSetImageOverride is the web dashboard's direct fix for a missing or
+// wrong part photo (see lego.DB.SetPartImageOverride) -- independent of
+// SetElementID: fixing the element id only helps when the *correct* element
+// id actually has a usable photo, so this covers both failure modes.
+// Permission (sets.check) is enforced by the Rust gateway before this is
+// ever called, same as handleSetElementID.
+func (s *Server) handleSetImageOverride(w http.ResponseWriter, r *http.Request) {
+	var req setImageOverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
+		return
+	}
+	req.PartNum, req.By = strings.TrimSpace(req.PartNum), strings.TrimSpace(req.By)
+	if req.PartNum == "" || req.By == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "part_num and by are required"})
+		return
+	}
+	if err := s.legoDB.SetPartImageOverride(req.PartNum, req.ColorID, req.ImageURL, req.By); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_IMAGE_OVERRIDE_SET", "SUCCESS", req.PartNum)
+	writeJSON(w, http.StatusOK, map[string]string{"part_num": req.PartNum, "image_url": s.legoDB.ImageOverrideFor(req.PartNum, req.ColorID)})
+}

@@ -7,7 +7,11 @@
 // fields that screen also mixes in.
 package dashboardapi
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+)
 
 type catalogSetLookupResponse struct {
 	Set             interface{} `json:"set"`
@@ -27,6 +31,12 @@ func (s *Server) handleCatalogSetLookup(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "set not found", "notes": notes})
 		return
 	}
+	// ?sort=part_id|color|qty -- a no-op for anything else, so an absent or
+	// unrecognized value just keeps the catalog's own default order.
+	lego.SortBy(inv.Items, r.URL.Query().Get("sort"),
+		func(it lego.InvItem) string { return it.PartNum },
+		func(it lego.InvItem) string { return it.ColorName },
+		func(it lego.InvItem) int { return it.Qty })
 	writeJSON(w, http.StatusOK, catalogSetLookupResponse{
 		Set:             lk.Set,
 		Source:          lk.Source,

@@ -37,7 +37,7 @@ var Areas = []struct {
 	{"partdb", "Part-DB parts", []string{"view", "edit", "delete"}},
 	{"stock", "Stock", []string{"view", "check", "adjust"}},
 	{"ops", "Warehouse ops", []string{"view", "asn", "edit"}},
-	{"sets", "Set checks", []string{"check", "stocktake"}},
+	{"sets", "Set checks, blog", []string{"check", "stocktake", "blog", "publish", "verify"}},
 	{"orders", "Parts orders", []string{"view", "manage"}},
 	{"labels", "Labels", []string{"print"}},
 	{"exports", "Exports", []string{"create", "download"}},
@@ -51,7 +51,7 @@ var Areas = []struct {
 }
 
 // Actions is every action name used by any area, in grid-column order.
-var Actions = []string{"view", "search", "check", "stocktake", "create", "edit", "asn", "adjust", "price", "export", "download", "print", "delete", "run", "manage"}
+var Actions = []string{"view", "search", "check", "stocktake", "create", "edit", "asn", "adjust", "price", "export", "download", "print", "delete", "run", "manage", "blog", "publish", "verify"}
 
 // All lists every permission.
 func All() []string {
@@ -693,3 +693,24 @@ func (p *Policy) LinkMinutes() int { return pick(nil, p.Settings.LinkMinutes, 15
 
 // Int is a helper for building the *int fields.
 func Int(n int) *int { return &n }
+
+// WithPerm names the accounts that hold a permission, admins included.
+func (p *Policy) WithPerm(perm string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for key, u := range p.Users {
+		source, name, ok := strings.Cut(key, ":")
+		if !ok || u == nil || seen[name] {
+			continue
+		}
+		if slices.Contains(u.Groups, "admin") || p.Effective(source, name).Can(perm) {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Verifiers names the accounts that verify a checker's paper check: admins, and anyone granted sets.verify.
+func (p *Policy) Verifiers() []string { return p.WithPerm("sets.verify") }

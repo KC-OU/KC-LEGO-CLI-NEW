@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/clerkbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 )
 
@@ -26,9 +26,14 @@ type createAccountRequest struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	Email    string `json:"email"`
-	By       string `json:"by"`
-	// Dashboard, when true, also provisions a matching kc-parts-auth-node
-	// login with this same freshly generated password -- the "yes/no" the
+	// Phone is optional (E.164, e.g. "+447..."). When given alongside
+	// Dashboard, clerkbridge registers it as a verified second factor so
+	// sign-in doesn't get stuck if "Require multi-factor authentication"
+	// is on in Clerk.
+	Phone string `json:"phone"`
+	By    string `json:"by"`
+	// Dashboard, when true, also provisions a matching Clerk login with
+	// this same freshly generated password -- the "yes/no" the
 	// account-creation form offers, per internal/access's own
 	// ChannelDashboard-adjacent Dashboard flag.
 	Dashboard bool `json:"dashboard"`
@@ -64,7 +69,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed request"})
 		return
 	}
-	req.Username, req.Role, req.Email, req.By = strings.TrimSpace(req.Username), strings.TrimSpace(req.Role), strings.TrimSpace(req.Email), strings.TrimSpace(req.By)
+	req.Username, req.Role, req.Email, req.Phone, req.By = strings.TrimSpace(req.Username), strings.TrimSpace(req.Role), strings.TrimSpace(req.Email), strings.TrimSpace(req.Phone), strings.TrimSpace(req.By)
 	if req.Username == "" || req.By == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and by are required"})
 		return
@@ -90,10 +95,10 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	note := ""
 	if req.Dashboard {
 		switch {
-		case !authbridge.Configured():
+		case !clerkbridge.Configured():
 			note = "dashboard login provisioning is not configured on this server"
 		default:
-			result, err := authbridge.Provision(req.Username, req.Email, password)
+			result, err := clerkbridge.Provision(req.Username, req.Email, req.Phone, password)
 			switch {
 			case err != nil:
 				note = "dashboard provisioning failed: " + err.Error()
@@ -102,6 +107,8 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 			default:
 				if err := s.dashLinks.Set(req.Username, true); err != nil {
 					note = "dashboard login was created, but recording the link failed: " + err.Error()
+				} else if req.Phone != "" && !result.MFAPhoneSet {
+					note = "dashboard login created, but the second-factor phone number was not accepted: " + result.Reason
 				}
 			}
 		}
@@ -118,12 +125,23 @@ type resetAccountResponse struct {
 	Username           string `json:"username"`
 	TemporaryPassword  string `json:"temporary_password"`
 	MustChangePassword bool   `json:"must_change_password"`
+	// ProvisionNote is set only when this account also has a linked
+	// dashboard/Clerk login (see internal/dashboardlink) and keeping its
+	// Clerk password in sync with this reset failed -- the ModernWMS/
+	// Part-DB reset above always still succeeds either way; this never
+	// fails the whole request, same as handleCreateAccount's note.
+	ProvisionNote string `json:"provision_note,omitempty"`
 }
 
 // handleResetAccount resets to a freshly generated temp password, the same
 // as `wms users reset` -- numeric PIN if the username is itself numeric
 // (the signal a numeric-login account was provisioned that way; see
-// newUsersResetCmd's own identical comment on this).
+// newUsersResetCmd's own identical comment on this). When the account also
+// has a linked dashboard/Clerk login, the SAME new password is pushed to
+// Clerk too (see internal/clerkbridge.SyncPassword) -- without this, a
+// dashboard-linked account's two passwords would drift apart on the very
+// first reset after linking, since Provision only ever sets Clerk's
+// password once, at link time.
 func (s *Server) handleResetAccount(w http.ResponseWriter, r *http.Request) {
 	if s.usersSvc == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "account management is not available in this environment"})
@@ -149,7 +167,32 @@ func (s *Server) handleResetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logAudit(req.By, "DASHBOARD_PASSWORD_RESET", "SUCCESS", req.Username)
-	writeJSON(w, http.StatusOK, resetAccountResponse{Username: req.Username, TemporaryPassword: password, MustChangePassword: true})
+	note := s.syncDashboardPassword(req.Username, password)
+	writeJSON(w, http.StatusOK, resetAccountResponse{Username: req.Username, TemporaryPassword: password, MustChangePassword: true, ProvisionNote: note})
+}
+
+// syncDashboardPassword pushes password to Clerk when username has a linked
+// dashboard login, and returns a note describing anything that went wrong
+// (empty on success or when there's nothing to sync) -- shared by every
+// reset path (dashboard API and CLI) so the behavior can't drift between
+// them. Never returns an error itself: a sync failure is reported, not
+// fatal, matching every other best-effort note in this package.
+func (s *Server) syncDashboardPassword(username, password string) string {
+	linked, err := s.dashLinks.Has(username)
+	if err != nil || !linked {
+		return ""
+	}
+	if !clerkbridge.Configured() {
+		return "dashboard login exists but could not be kept in sync: provisioning is not configured on this server"
+	}
+	result, err := clerkbridge.SyncPassword(username, password)
+	if err != nil {
+		return "the ModernWMS/Part-DB password was reset, but the linked dashboard password was NOT -- they are now out of sync: " + err.Error()
+	}
+	if !result.Provisioned {
+		return "dashboard login record exists locally, but no matching Clerk account was found -- the two may already be out of sync: " + result.Reason
+	}
+	return ""
 }
 
 type deleteAccountRequest struct {

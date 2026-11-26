@@ -8,12 +8,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // StockSheetLine is one line of a printable stock-check sheet: what you'd expect to
 // have, with a blank box to write what you actually count.
 type StockSheetLine struct {
 	PartNum, PartName, Category, ColorName string
+	Element, Bag                           string // LEGO element id ("" if unknown) and the bag kind the part goes in
+	ColorID                                int
 	Expected                               int
 	Optional                               bool // still listed to count against, but not in Total — see DB.IsOptional
 }
@@ -62,7 +65,7 @@ func (d *DB) StockSheet(ctx context.Context, rb *Client, setNum string) (title s
 			meta.ProofFiled, meta.ProofRef = true, filepath.Base(last.FilePath)
 		}
 		for _, l := range c.Lines {
-			lines = append(lines, StockSheetLine{PartNum: l.PartNum, PartName: l.PartName, Category: l.Category, ColorName: l.ColorName, Expected: l.Need, Optional: l.Optional})
+			lines = append(lines, StockSheetLine{PartNum: l.PartNum, PartName: l.PartName, Category: l.Category, ColorName: l.ColorName, ColorID: l.ColorID, Expected: l.Need, Optional: l.Optional})
 			minifig := isMinifigCategory(l.Category)
 			if l.Extra > 0 {
 				meta.ExtraLines = append(meta.ExtraLines, StockSheetLine{PartNum: l.PartNum, PartName: l.PartName, Category: l.Category, ColorName: l.ColorName, Expected: l.Extra})
@@ -82,6 +85,7 @@ func (d *DB) StockSheet(ctx context.Context, rb *Client, setNum string) (title s
 				meta.PartsGot += got
 			}
 		}
+		d.fillBags(lines)
 		return title, lines, meta, nil
 	}
 	inv := d.LookupSetInventory(ctx, rb, setNum)
@@ -108,7 +112,7 @@ func (d *DB) StockSheet(ctx context.Context, rb *Client, setNum string) (title s
 		}
 		optional, _ := d.IsOptional(it.PartNum, cat)
 		seen[k] = len(lines)
-		lines = append(lines, StockSheetLine{PartNum: it.PartNum, PartName: it.PartName, Category: cat, ColorName: it.ColorName, Expected: it.Qty, Optional: optional})
+		lines = append(lines, StockSheetLine{PartNum: it.PartNum, PartName: it.PartName, Category: cat, ColorName: it.ColorName, ColorID: it.ColorID, Expected: it.Qty, Optional: optional})
 	}
 	sort.SliceStable(lines, func(i, j int) bool {
 		if lines[i].ColorName != lines[j].ColorName {
@@ -116,15 +120,46 @@ func (d *DB) StockSheet(ctx context.Context, rb *Client, setNum string) (title s
 		}
 		return lines[i].PartNum < lines[j].PartNum
 	})
+	d.fillBags(lines)
 	return title, lines, meta, nil
 }
 
-var stockSheetTmpl = template.Must(template.New("stocksheet").Parse(`<!doctype html>
+// fillBags adds each line's element id and bag, then orders the sheet bag by bag
+// (colour, part within a bag) so the check follows the bags.
+func (d *DB) fillBags(lines []StockSheetLine) {
+	names := map[string]string{}
+	if kinds, err := d.BagKinds(); err == nil {
+		for _, k := range kinds {
+			names[k.Key] = k.Name
+		}
+	}
+	for i := range lines {
+		l := &lines[i]
+		l.Element = d.ElementFor(l.PartNum, l.ColorID)
+		key, _ := d.PartBagSize(l.PartNum)
+		if l.Bag = names[key]; l.Bag == "" {
+			l.Bag = key
+		}
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		a, b := lines[i], lines[j]
+		if a.Bag != b.Bag {
+			return a.Bag < b.Bag
+		}
+		if a.ColorName != b.ColorName {
+			return a.ColorName < b.ColorName
+		}
+		return a.PartNum < b.PartNum
+	})
+}
+
+var stockSheetTmpl = template.Must(template.New("stocksheet").Funcs(template.FuncMap{"inc": func(i int) int { return i + 1 }, "logo": func() template.URL { return logoSrc }}).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Stock check — {{.Title}}</title>
 <style>
  body{font:13px/1.35 system-ui,sans-serif;margin:1.2rem;color:#111}
  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #222;padding-bottom:.6rem;margin-bottom:1rem}
  h1{margin:0;font-size:20px} .meta{color:#555;font-size:12px}
+ .brand{display:flex;align-items:center;gap:.7rem} .brand img{width:44px;height:44px;object-fit:contain}
  h2.section{font-size:12px;letter-spacing:.04em;text-transform:uppercase;background:#1d2a44;color:#fff;margin:1.1rem 0 .4rem;padding:.3rem .5rem}
  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem 1.4rem;margin-bottom:.8rem}
  .grid.cond{grid-template-columns:repeat(4,1fr)}
@@ -140,11 +175,18 @@ var stockSheetTmpl = template.Must(template.New("stocksheet").Parse(`<!doctype h
  th{background:#eee} td.n,th.n{text-align:right;width:5em}
  td.box{width:2.4rem} .opt{color:#888;font-weight:normal}
  tr{page-break-inside:avoid}
+ .pick{font:12px/1.25 "Courier New",ui-monospace,monospace;margin-bottom:.6rem}
+ .pick .top{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.1rem 1rem;margin-bottom:.4rem}
+ .pick .ctr{text-align:center;font-weight:bold}
+ table.pl{font:12px/1.2 "Courier New",ui-monospace,monospace;border-top:1px solid #000;border-bottom:1px solid #000}
+ table.pl th{background:none;border-bottom:2px double #000;text-transform:uppercase;font-size:11px}
+ table.pl td{border-bottom:1px dotted #999;padding:.22rem .4rem}
+ table.pl tr:nth-child(even) td{background:#f4f4f4}
  .sign{margin-top:1rem;font-size:11px;color:#555}
  .foot{margin-top:1.5rem;font-size:11px;color:#888;text-align:center}
  @media print{body{margin:0}}
 </style></head><body>
-<div class="head"><h1>{{.Meta.SetNum}} — {{.Title}}</h1><div class="meta">{{.Lines}} line(s), {{.Total}} piece(s) expected</div></div>
+<div class="head"><div class="brand"><img alt="KC-Parts" src="{{logo}}"><h1>{{.Meta.SetNum}} — {{.Title}}</h1></div><div class="meta">{{.Count}} line(s), {{.Total}} piece(s) expected</div></div>
 
 <div class="grid">
  <div class="field"><label>Theme</label><div class="v">{{.Meta.Theme}}</div></div>
@@ -182,9 +224,13 @@ var stockSheetTmpl = template.Must(template.New("stocksheet").Parse(`<!doctype h
 {{end}}</table>{{end}}
 
 <h2 class="section">Parts check</h2>
-<div class="who">Checked by <span class="field"></span> &nbsp; Date <span class="field"></span></div>
-<table><tr><th class="box">✓</th><th>Part</th><th>Colour</th><th>Name</th><th class="n">Expected</th><th class="n">Counted</th></tr>
-{{range .Lines}}<tr><td class="box"><span></span></td><td>{{.PartNum}}</td><td>{{.ColorName}}</td><td>{{.PartName}}{{if .Optional}} <span class="opt">(optional)</span>{{end}}</td><td class="n">{{.Expected}}</td><td class="n"></td></tr>
+<div class="pick">
+ <div class="top"><div>{{.Now}}</div><div class="ctr">KC-PARTS</div><div>Lines: {{.Count}}</div>
+  <div>Status: {{if .Meta.HasCounts}}Checked{{else}}Pending{{end}}</div><div class="ctr">Set Check Details</div><div>Total pieces: {{.Total}}</div>
+  <div>Checker: ____________</div><div>Set: {{.Meta.SetNum}}</div><div>Storage: {{.Meta.Storage}}</div></div>
+</div>
+<table class="pl"><tr><th>Seq</th><th>Bag</th><th>Design ID</th><th>Element ID</th><th>Colour</th><th>Description</th><th class="n">Pick Qty</th><th class="n">Org Qty</th><th class="n">Adj Qty</th><th class="box">OK</th></tr>
+{{range $i, $l := .Lines}}<tr><td>{{inc $i}}</td><td>{{$l.Bag}}</td><td>{{$l.PartNum}}</td><td>{{if $l.Element}}{{$l.Element}}{{else}}—{{end}}</td><td>{{$l.ColorName}}</td><td>{{$l.PartName}}{{if $l.Category}} <span class="opt">— {{$l.Category}}</span>{{end}}{{if $l.Optional}} <span class="opt">(optional)</span>{{end}}</td><td class="n">{{$l.Expected}}</td><td class="n">{{$l.Expected}}</td><td class="n"></td><td class="box"><span></span></td></tr>
 {{end}}</table>
 
 <h2 class="section">Sign off</h2>
@@ -209,9 +255,11 @@ func StockSheetHTML(title string, lines []StockSheetLine, meta StockSheetMeta) (
 	err := stockSheetTmpl.Execute(&b, struct {
 		Title       string
 		Lines       []StockSheetLine
+		Count       int
+		Now         string
 		Total       int
 		Meta        StockSheetMeta
 		CondOptions []string
-	}{title, lines, total, meta, []string{"Sealed", "Opened — complete", "Opened — partial check", "Completely checked"}})
+	}{title, lines, len(lines), time.Now().Format("02-Jan-2006 15:04:05"), total, meta, []string{"Sealed", "Opened — complete", "Opened — partial check", "Completely checked"}})
 	return b.Bytes(), err
 }

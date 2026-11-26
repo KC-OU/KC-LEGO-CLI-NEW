@@ -195,6 +195,35 @@ func (d *DB) SetElementID(partNum string, colorID int, elementID, by string) err
 	return err
 }
 
+// ImageOverrideFor is a checker/admin's own direct image URL for part+colour
+// ("" when none) -- see SetPartImageOverride. Checked ahead of the catalog-
+// derived picture (DB.PartImageURLs) for a photo that's missing entirely or
+// simply wrong for that element id.
+func (d *DB) ImageOverrideFor(partNum string, colorID int) string {
+	var url string
+	_ = d.QueryRow(`SELECT image_url FROM part_image_overrides WHERE part_num = ? AND color_id = ?`, partNum, colorID).Scan(&url)
+	return url
+}
+
+// SetPartImageOverride records a checker or admin's own direct image URL for
+// partNum in colorID -- for a photo Rebrickable has no picture for at all,
+// or one whose element id photo is simply wrong for that part+colour (fixing
+// the element id itself, see SetElementID, only helps the second case, and
+// only if the correct element id has a usable photo). Survives a catalog
+// refresh, same as part_element_overrides. Blank clears the override,
+// falling back to whatever PartImageURLs would otherwise show.
+func (d *DB) SetPartImageOverride(partNum string, colorID int, url, by string) error {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		_, err := d.Exec(`DELETE FROM part_image_overrides WHERE part_num = ? AND color_id = ?`, partNum, colorID)
+		return err
+	}
+	_, err := d.Exec(`INSERT INTO part_image_overrides (part_num, color_id, image_url, created_by, created_at) VALUES (?,?,?,?,?)
+		ON CONFLICT(part_num, color_id) DO UPDATE SET image_url = excluded.image_url, created_by = excluded.created_by, created_at = excluded.created_at`,
+		partNum, colorID, url, by, time.Now().UTC().Format(timeLayout))
+	return err
+}
+
 // ShopLinks are where to buy a line.
 func (d *DB) ShopLinks(l ShoppingLine) [][2]string {
 	no, col := d.blKey(l.CheckLine)

@@ -81,6 +81,13 @@ type entry struct {
 	Failures    int       `json:"failures,omitempty"`     // consecutive wrong codes
 	Locks       int       `json:"locks,omitempty"`        // consecutive lockouts, for the doubling
 	LockedUntil time.Time `json:"locked_until,omitempty"` // zero = not locked
+	// Bridged is set by VerifyExternal the first time a dashboard-linked
+	// account's code is checked against Clerk's own TOTP instead of a local
+	// Secret (see internal/clerkbridge.VerifyTOTP). Such an account has no
+	// local Secret/Enabled at all, but WithinGrace/MarkVerified must still
+	// treat it as "2FA is really active here" — this flag is that signal,
+	// alongside Enabled, in both of those checks.
+	Bridged bool `json:"bridged,omitempty"`
 }
 
 // storeMu serializes every read-modify-write across all store instances.
@@ -333,6 +340,66 @@ func Verify(username, source, code string) (usedBackupCode bool, err error) {
 	return false, result
 }
 
+// VerifyExternal records the same lockout bookkeeping as Verify, for a code
+// whose correctness was already determined elsewhere — specifically,
+// internal/clerkbridge.VerifyTOTP checking a dashboard-linked account's
+// code against its own Clerk-enrolled TOTP, so one authenticator entry
+// (set up once via the dashboard's self-serve MFA enrollment) works for
+// both the web dashboard and telnet/TUI sign-in, instead of asking a
+// Picker/Checker to enroll two separate secrets.
+//
+// Unlike Verify, this never reads Secret or Enabled — a bridged account has
+// neither — so it works on an account with no local entry at all (one is
+// created on first call). Five wrong results in a row still lock the
+// account for 5 minutes, doubling up to an hour, on the exact same
+// Failures/Locks/LockedUntil fields Verify uses, so a brute-force attempt
+// split across both the local and bridged paths is still caught by one
+// shared counter, and `wms users 2fa unlock` keeps working unchanged.
+func VerifyExternal(username, source string, matched bool) error {
+	s := newStore()
+	unlock, lerr := s.lock()
+	if lerr != nil {
+		return lerr
+	}
+	defer unlock()
+
+	entries, err := s.load()
+	if err != nil {
+		return err
+	}
+	k := key(username, source)
+	e := entries[k]
+	e.Bridged = true
+	t := now()
+	if e.LockedUntil.After(t) {
+		entries[k] = e
+		if err := s.save(entries); err != nil {
+			return err
+		}
+		return &LockedError{Until: e.LockedUntil}
+	}
+
+	if matched {
+		e.Failures, e.Locks, e.LockedUntil = 0, 0, time.Time{}
+		entries[k] = e
+		return s.save(entries)
+	}
+
+	e.Failures++
+	var result error = ErrInvalidCode
+	if e.Failures >= maxFailures {
+		e.Locks++
+		e.LockedUntil = t.Add(lockFor(e.Locks))
+		e.Failures = 0
+		result = &LockedError{Until: e.LockedUntil}
+	}
+	entries[k] = e
+	if err := s.save(entries); err != nil {
+		return err
+	}
+	return result
+}
+
 // Locked reports whether the account is currently locked out, and until when.
 func Locked(username, source string) (until time.Time, locked bool) {
 	s := newStore()
@@ -372,11 +439,12 @@ func Unlock(username, source string) error {
 }
 
 // MarkVerified starts (or restarts) the grace window for origin: a caller
-// that just saw Verify succeed records where it came from ("local", or
-// "telnet:<address>"), so a later sign-in from the same place within window
-// can skip the code prompt. An empty origin (the web terminal, whose client
-// address the TUI can't see) or a non-positive window records nothing, and
-// entries older than window are dropped so the store doesn't grow.
+// that just saw Verify (or VerifyExternal) succeed records where it came
+// from ("local", or "telnet:<address>"), so a later sign-in from the same
+// place within window can skip the code prompt. An empty origin (the web
+// terminal, whose client address the TUI can't see) or a non-positive
+// window records nothing, and entries older than window are dropped so the
+// store doesn't grow.
 func MarkVerified(username, source, origin string, window time.Duration) error {
 	if origin == "" || window <= 0 {
 		return nil
@@ -394,7 +462,7 @@ func MarkVerified(username, source, origin string, window time.Duration) error {
 	}
 	k := key(username, source)
 	e, ok := entries[k]
-	if !ok || !e.Enabled {
+	if !ok || (!e.Enabled && !e.Bridged) {
 		return ErrNotEnrolled
 	}
 	now := time.Now()
@@ -426,7 +494,7 @@ func WithinGrace(username, source, origin string, window time.Duration) (ago tim
 		return 0, false
 	}
 	e, found := entries[key(username, source)]
-	if !found || !e.Enabled {
+	if !found || (!e.Enabled && !e.Bridged) {
 		return 0, false
 	}
 	if e.LockedUntil.After(now()) { // a locked account gets no shortcut

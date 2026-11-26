@@ -223,8 +223,8 @@ func TestDetailIsReachableFromTheHubAndResultsAndSurvivesNoState(t *testing.T) {
 	app.legoSearchTerm = "brick"
 	app.goTo(scrLegoPartResults)
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	if app.cur != scrLegoDetailAsk {
-		t.Errorf("D on part results: %q", app.cur)
+	if app.cur != scrLegoDetail || app.detail == nil || app.detail.Kind != "part" {
+		t.Errorf("D on part results opens the highlighted row's detail: %q", app.cur)
 	}
 	app.detail = nil
 	app.cur = scrLegoHub

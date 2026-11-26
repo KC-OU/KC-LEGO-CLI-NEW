@@ -133,6 +133,9 @@ func (d *DB) ElementImageURLs(partNum string, colorID int) ([]string, error) {
 // client or the TUI's guided walk only needs to try URLs in order, never
 // duplicate this colour-fallback decision themselves.
 func (d *DB) PartImageURLs(partNum string, colorID int) []string {
+	if override := d.ImageOverrideFor(partNum, colorID); override != "" {
+		return []string{override}
+	}
 	urls, _ := d.ElementImageURLs(partNum, colorID)
 	colors, _ := d.CatalogColorsFor(partNum)
 	colorIDs := make([]int, 0, len(colors))

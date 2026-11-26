@@ -20,7 +20,37 @@
 # touches GitHub: `wms publish` stays a separate, deliberate step you run whenever you choose.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Run from a private copy: this script checks other branches out, which swaps its own file while bash is reading it.
+if [ -z "${PROMOTE_SELF:-}" ]; then
+	copy="$(mktemp)"
+	cp "${BASH_SOURCE[0]}" "$copy"
+	PROMOTE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" PROMOTE_SELF=1 exec bash "$copy" "$@"
+fi
+rm -f "$0"
+REPO="$PROMOTE_REPO"
+
+# -y / --yes / --confirm: answer "all" and CONFIRM for you, but only after the promote PIN (see promote-pin.sh).
+# --set-pin: choose that PIN. Without -y nothing changes: you pick and type CONFIRM yourself.
+. "$REPO/scripts/promote-pin.sh"
+AUTO=0
+for arg in "$@"; do
+	case "$arg" in
+	-y | --yes | --confirm) AUTO=1 ;;
+	--set-pin) pin_set; exit $? ;;
+	*) echo "unknown option: $arg  (use -y, --yes, --confirm or --set-pin)" >&2; exit 2 ;;
+	esac
+done
+if [ "$AUTO" = 1 ]; then
+	pin_ask || { echo "no PIN, no -y: run it without -y to confirm by hand." >&2; exit 1; }
+fi
+confirm_prompt() { # sets ans; with -y the PIN already stood in for typing CONFIRM
+	if [ "$AUTO" = 1 ]; then
+		ans=CONFIRM
+		echo "$1(-y: PIN accepted)"
+	else
+		read -r -p "$1" ans
+	fi
+}
 cd "$REPO"
 export GIT_PAGER=cat # non-interactive script: never page, and never fail on a missing pager
 
@@ -35,7 +65,8 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 [ -z "$(git status --porcelain)" ] || die "uncommitted changes on dev — commit or stash them first"
 
 if git merge-base --is-ancestor dev main; then
-	echo "main is already at dev's tip — nothing to promote."
+	echo "main is already at dev's tip — nothing to promote on the Go side."
+	bash "$REPO/scripts/promote-dashboard.sh" "$@"
 	exit 0
 fi
 
@@ -52,7 +83,7 @@ echo "  - type a single number: that commit and everything older ships (a safe p
 echo "  - type 'all': everything listed ships"
 echo "  - type a comma list, e.g. 1,3,6: only those ship, holding the rest back — see the"
 echo "    warning below before using this; it cherry-picks instead of a plain fast-forward"
-read -r -p "Ship which one(s) (1-$n, comma list, or 'all')? " pick
+if [ "$AUTO" = 1 ]; then pick=all; echo "Ship which one(s)? all (-y)"; else read -r -p "Ship which one(s) (1-$n, comma list, or 'all')? " pick; fi
 [ "$pick" = "all" ] && pick=1
 
 picks=()
@@ -97,7 +128,7 @@ if [ "$is_prefix" = true ]; then
 	git checkout -q "$branch"
 
 	say "5/6 confirm"
-	read -r -p "Type CONFIRM to merge up to $(git rev-parse --short "$target") into main and deploy it live: " ans
+	confirm_prompt "Type CONFIRM to merge up to $(git rev-parse --short "$target") into main and deploy it live: "
 	[ "$ans" = "CONFIRM" ] || die "cancelled (typed '$ans', not CONFIRM)"
 
 	git checkout -q main
@@ -151,7 +182,7 @@ else
 	git checkout -q "$branch"
 
 	say "5/6 confirm"
-	read -r -p "Type CONFIRM to ship these $((${#sorted[@]})) commit(s) (cherry-picked) into main and deploy live: " ans
+	confirm_prompt "Type CONFIRM to ship these $((${#sorted[@]})) commit(s) (cherry-picked) into main and deploy live: "
 	[ "$ans" = "CONFIRM" ] || { cleanup_tmp; die "cancelled (typed '$ans', not CONFIRM)"; }
 
 	git checkout -q main
@@ -169,6 +200,8 @@ bash "$REPO/scripts/deploy.sh"
 git checkout -q "$branch"
 trap - EXIT
 rm -f "$bin"
+bash "$REPO/scripts/promote-dashboard.sh" "$@"
+
 echo
 echo "Done. main is now at $(git rev-parse --short main)."
 if ! git merge-base --is-ancestor dev main; then
@@ -178,4 +211,4 @@ if ! git merge-base --is-ancestor dev main; then
 		echo "copy of them will keep showing up in this list until you rebase dev onto main by hand."
 	fi
 fi
-echo "This never touches GitHub — publish when you're ready: wms publish   (or bash scripts/publish.sh)"
+echo "This never touches GitHub — publish when you're ready: wms-go-publish"

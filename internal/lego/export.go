@@ -31,6 +31,10 @@ type ExportRow struct {
 	PartDBID  int
 	BLColor   int // BrickLink colour number, 0 when unknown
 	Image     *Image
+	// Element is the LEGO element id for this part in this colour ("" when unknown) and ColorRGB the
+	// colour's hex value without the "#" -- both only filled by ExportDetail, for the sorting sheet.
+	Element  string
+	ColorRGB string
 	// SetNum is which set the row belongs to, in a multi-set report — the display
 	// title ("75192 Millennium Falcon"), not the bare number. "" outside reports.
 	SetNum string
@@ -87,6 +91,11 @@ type ExportData struct {
 	Facts   [][2]string
 	Picture *Image
 	Build   []BuildResult // "what can I build" candidates
+	// SetNum, CheckerID and Borrowed are for the sorting sheet: the set, the downloader's numeric ID
+	// to pre-fill the sign-off boxes (never a name), and what was borrowed to build the set.
+	SetNum    string
+	CheckerID string
+	Borrowed  []BorrowedPart
 }
 
 // ExportOwned gathers your owned parts and sets.
@@ -379,6 +388,22 @@ func BuildCSV(d *ExportData) []byte {
 }
 
 // Formats are the names Encode accepts.
+// FormatsFor is the export formats offered for a kind of export, in the order shown. The terminal's export
+// screen and the dashboard both use it. Kinds: set, missing, extra, owned, build (nil for anything else).
+func FormatsFor(kind string) []string {
+	switch kind {
+	case "set":
+		return []string{"json", "xlsx", "html", "sorting-html"}
+	case "missing":
+		return []string{"json", "xlsx", "csv", "html", "bricklink-xml", "rebrickable-csv"}
+	case "owned":
+		return []string{"json", "xlsx", "csv", "html", "rebrickable-csv", "bricklink-xml"}
+	case "build", "extra":
+		return []string{"json", "xlsx", "csv", "html"}
+	}
+	return nil
+}
+
 var Formats = []string{"rebrickable-csv", "bricklink-xml", "csv", "sets-csv", "json", "xlsx", "html", "report", "sorting-html"}
 
 // Encode writes d in format and returns the bytes and the file extension to use.

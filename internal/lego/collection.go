@@ -130,6 +130,35 @@ type InvItem struct {
 	Qty         int
 	BrickLinkID string // the part's BrickLink number, "" when Rebrickable lists none
 	BLColor     int    // the colour's BrickLink number, 0 when unknown
+	// ElementID/ImageURL are filled in by enrichElementIDs (see DB.ElementFor,
+	// DB.CatalogSetInventory, DB.LookupSetInventory) -- "" when neither a
+	// checker/admin override nor the catalog has an element id for this
+	// part+colour. ImageURL is the Rebrickable element photo for ElementID
+	// specifically, not the fuller PartImageURLs fallback chain (LDraw
+	// renders, other colours) -- a listing of a whole set's parts is already
+	// one query per line for ElementID, so it reuses that id for the image
+	// rather than doing several more queries per line for a fallback picture.
+	ElementID string
+	ImageURL  string
+}
+
+// enrichElementIDs fills in ElementID (DB.ElementFor) and, when one exists,
+// ImageURL (the Rebrickable element photo for it) on each item in place —
+// shared by CatalogSetInventory and LookupSetInventory's live-Rebrickable
+// branch so a set's parts list carries the same element id/picture
+// regardless of where it was sourced from.
+func (d *DB) enrichElementIDs(items []InvItem) []InvItem {
+	for i := range items {
+		items[i].ElementID = d.ElementFor(items[i].PartNum, items[i].ColorID)
+		if items[i].ElementID != "" {
+			items[i].ImageURL = "https://cdn.rebrickable.com/media/parts/elements/" + items[i].ElementID + ".jpg"
+		}
+		// A photo someone fixed by hand (Fix image) beats the catalog's own.
+		if o := d.ImageOverrideFor(items[i].PartNum, items[i].ColorID); o != "" {
+			items[i].ImageURL = o
+		}
+	}
+	return items
 }
 
 type invRow struct {
@@ -592,7 +621,7 @@ func (d *DB) CatalogSetInventory(setNum string) ([]InvItem, error) {
 		}
 		out = append(out, it)
 	}
-	return out, rows.Err()
+	return d.enrichElementIDs(out), rows.Err()
 }
 
 // SetInventory is a set's parts list and where it came from.
@@ -617,7 +646,7 @@ func (d *DB) LookupSetInventory(ctx context.Context, rb *Client, setNum string) 
 		items, err := rb.GetSetInventory(ctx, setNum)
 		switch {
 		case err == nil && len(items) > 0:
-			res.Items, res.Source = items, "live — Rebrickable"
+			res.Items, res.Source = d.enrichElementIDs(items), "live — Rebrickable"
 			return res
 		case errors.Is(err, ErrNotFound):
 			res.Notes = append(res.Notes, fmt.Sprintf("Rebrickable has no set %q.", strings.TrimSpace(setNum)))

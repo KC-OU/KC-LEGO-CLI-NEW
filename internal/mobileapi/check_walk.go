@@ -3,6 +3,7 @@ package mobileapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -98,7 +99,8 @@ func (s *Server) ticketTiming(kind, username string) (elapsed, estimated int64) 
 // than held in server memory, so two requests (or the TUI, open at the same
 // time) never see stale state. nil, nil when the current ticket isn't a
 // check (an order ticket, or nothing claimed) — see loadSortedOrder.
-func (s *Server) loadSortedCheck(ctx context.Context, username string) (*lego.SetCheck, error) {
+func (s *Server) loadSortedCheck(ctx context.Context, sess lego.MobileSession) (*lego.SetCheck, error) {
+	username := sess.Username
 	t, err := s.legoDB.CurrentTicket(username)
 	if err != nil {
 		return nil, err
@@ -109,6 +111,11 @@ func (s *Server) loadSortedCheck(ctx context.Context, username string) (*lego.Se
 	kind := lego.CheckIntake
 	if s.legoDB.GetSetState(t.Target).Checked() {
 		kind = lego.CheckRecount
+	}
+	if !s.isAdmin(sess) { // a checker's first check of a set needs the verified paper check
+		if err := s.legoDB.OnboardingGate(t.Target, kind, username); err != nil {
+			return nil, err
+		}
 	}
 	c, err := s.legoDB.NewCheck(ctx, s.rebrick, t.Target, kind, username)
 	if err != nil {
@@ -255,9 +262,9 @@ func (s *Server) handleNext(w http.ResponseWriter, r *http.Request, sess lego.Mo
 		pos = 0
 	}
 
-	c, err := s.loadSortedCheck(r.Context(), sess.Username)
+	c, err := s.loadSortedCheck(r.Context(), sess)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, checkErrStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	if c != nil {
@@ -300,9 +307,9 @@ func (s *Server) handleFull(w http.ResponseWriter, r *http.Request, sess lego.Mo
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 		return
 	}
-	c, err := s.loadSortedCheck(r.Context(), sess.Username)
+	c, err := s.loadSortedCheck(r.Context(), sess)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, checkErrStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	if c != nil {
@@ -351,9 +358,9 @@ func (s *Server) handleScanBag(w http.ResponseWriter, r *http.Request, sess lego
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code is required"})
 		return
 	}
-	c, err := s.loadSortedCheck(r.Context(), sess.Username)
+	c, err := s.loadSortedCheck(r.Context(), sess)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, checkErrStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	if c == nil {
@@ -467,9 +474,9 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request, sess lego
 		return
 	}
 
-	c, err := s.loadSortedCheck(r.Context(), sess.Username)
+	c, err := s.loadSortedCheck(r.Context(), sess)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, checkErrStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	if c != nil {
@@ -607,4 +614,13 @@ func (s *Server) confirmOrderLine(w http.ResponseWriter, sess lego.MobileSession
 	view := s.lineViewAtOrder(fresh, req.Position, sess.Username)
 	view.CompletedSet = completedSet
 	writeJSON(w, http.StatusOK, view)
+}
+
+// checkErrStatus is 403 for the onboarding gate (the checker must do the paper check first) and 500 otherwise.
+func checkErrStatus(err error) int {
+	var gate *lego.OnboardingGateError
+	if errors.As(err, &gate) {
+		return http.StatusForbidden
+	}
+	return http.StatusInternalServerError
 }

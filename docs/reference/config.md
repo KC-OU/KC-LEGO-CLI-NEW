@@ -54,6 +54,7 @@ Secrets are better entered in the interface. `config.example.env` in the reposit
 | `CATALOG_AUTO_REFRESH_HOURS` | `0` (off) | the gateway refreshes the offline catalog this often (never more than once a day) |
 | `TWOFA_GRACE_MINUTES` | `30` | `0` = always ask for a code |
 | `LISTEN_PORTS` / `GATEWAY_PORT` | `2323,23` / `7681` | telnet and web gateway |
+| `HANDHELD_PORTS` | `2326` | extra telnet ports for Windows CE scanners (MC9090): ASCII-only output, 40x16 start size; empty turns off |
 | `GATEWAY_LISTEN_HOST` | `127.0.0.1` | address both gateways bind; `0.0.0.0` exposes them on every interface |
 | `WMS_MOBILE_API_PORT` | *(empty, off)* | the mobile pick/check app's API (`internal/mobileapi`: login, 2FA, guided-walk `next`/`confirm`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway, so reach it through a tunnel rather than opening it to the raw internet. Logins share the telnet gateway's own brute-force protection (per-address strike/block on repeated failures), so a locked-out address gets the same refusal on either front door |
 | `WMS_DASHBOARD_API_PORT` | *(empty, off)* | the Rust web dashboard's API (`internal/dashboardapi`) — binds `GATEWAY_LISTEN_HOST` like the rest of the gateway. End-user identity is BetterAuth's job in the Rust service; this is only the service-to-service trust boundary (see `WMS_DASHBOARD_API_TOKEN`) |

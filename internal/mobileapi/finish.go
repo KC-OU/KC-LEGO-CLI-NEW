@@ -61,9 +61,9 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request, sess lego.
 	var req finishRequest
 	_ = json.NewDecoder(r.Body).Decode(&req) // an empty body just means force=false
 
-	c, err := s.loadSortedCheck(r.Context(), sess.Username)
+	c, err := s.loadSortedCheck(r.Context(), sess)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, checkErrStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	if c != nil {

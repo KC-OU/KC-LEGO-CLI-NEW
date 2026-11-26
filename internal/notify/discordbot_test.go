@@ -2,8 +2,12 @@ package notify
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
+
 	"encoding/json"
 	"errors"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -167,5 +171,32 @@ func TestDiscordBotAPIErrorSurfacesStatusAndBody(t *testing.T) {
 	err := b.DM(context.Background(), DMCard{Title: "x"})
 	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "Missing Access") {
 		t.Fatalf("expected an error mentioning 403 and the body, got %v", err)
+	}
+}
+
+func TestDispatchFallsBackToDiscordOnlyForSecurityAndBackup(t *testing.T) {
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			posts++
+		}
+		fmt.Fprint(w, `{"id":"chan1"}`)
+	}))
+	defer srv.Close()
+	t.Setenv(config.SettingsFile, filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv(config.NotifyProviders, filepath.Join(t.TempDir(), "none.yaml"))
+	t.Setenv(config.NotifyURL, "")
+	t.Setenv(config.DiscordBotToken, "tok")
+	t.Setenv(config.DiscordBotUserID, "42")
+	old := discordAPIBase
+	discordAPIBase = srv.URL
+	defer func() { discordAPIBase = old }()
+	Dispatch("low_stock", "t", "b")
+	if posts != 0 {
+		t.Fatalf("low_stock must not DM, got %d posts", posts)
+	}
+	Dispatch("backup", "t", "b")
+	if posts != 1 {
+		t.Fatalf("backup should DM once, got %d", posts)
 	}
 }

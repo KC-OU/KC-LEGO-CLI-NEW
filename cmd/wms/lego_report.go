@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/exports"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui/img"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/uiapp"
 )
 
@@ -24,6 +26,11 @@ import (
 func writeReport(t ui.Theme, db *lego.DB, kind string, data *lego.ExportData, format, outPath string, force bool, discord discordFlags) error {
 	if format == "" {
 		format = "report"
+	}
+	if format == "sorting-html" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		db.PrepareSortingSheet(ctx, data, img.NewFetcher(config.Get(config.ImageDir)))
 	}
 	body, ext, _, err := lego.Encode(format, data)
 	if err != nil {

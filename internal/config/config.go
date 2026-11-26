@@ -22,17 +22,21 @@ const (
 	ModernWMSContainer = "MODERNWMS_CONTAINER"
 	ModernWMSDBPath    = "MODERNWMS_DB_PATH"
 	ModernWMSBackupDir = "MODERNWMS_BACKUP_DIR"
-	PartDBContainer    = "PARTDB_CONTAINER"
-	PartDBDBPath       = "PARTDB_DB_PATH"
-	AuditLogFile       = "AUDIT_LOG_FILE"
-	SyncPort           = "PORT"
-	SyncAdminUser      = "SYNC_ADMIN_USER"
-	SyncAdminPass      = "SYNC_ADMIN_PASS"
-	SyncViewOnlyAuth   = "SYNC_VIEWONLY_AUTH"
-	SyncViewOnlyEmail  = "SYNC_VIEWONLY_EMAIL"
-	CredentialsFile    = "CREDENTIALS_FILE"
-	LinkOverridesFile  = "LINK_OVERRIDES_FILE"
-	TwoFAFile          = "TWOFA_FILE"
+	// RepoPath is this checkout's location -- used only to best-effort
+	// `git rev-parse --short dev` for the dashboard's dev-ahead-of-live
+	// indicator (see dashboardapi.devHeadCommit); never required.
+	RepoPath          = "WMS_REPO_PATH"
+	PartDBContainer   = "PARTDB_CONTAINER"
+	PartDBDBPath      = "PARTDB_DB_PATH"
+	AuditLogFile      = "AUDIT_LOG_FILE"
+	SyncPort          = "PORT"
+	SyncAdminUser     = "SYNC_ADMIN_USER"
+	SyncAdminPass     = "SYNC_ADMIN_PASS"
+	SyncViewOnlyAuth  = "SYNC_VIEWONLY_AUTH"
+	SyncViewOnlyEmail = "SYNC_VIEWONLY_EMAIL"
+	CredentialsFile   = "CREDENTIALS_FILE"
+	LinkOverridesFile = "LINK_OVERRIDES_FILE"
+	TwoFAFile         = "TWOFA_FILE"
 	// LoginLockFile is the persisted login-attempt lockout store (see
 	// internal/loginlock) — a fresh telnet/web process per connection means
 	// an in-memory counter alone resets on every reconnect, so this survives
@@ -42,9 +46,12 @@ const (
 	// ModernWMS/Part-DB containers (see docs/guides/solo-mode.md) — login
 	// checks internal/access's own PasswordHash instead of either backend, and
 	// a missing Part-DB file at startup no longer aborts the process.
-	SoloMode          = "WMS_SOLO_MODE"
-	TUITheme          = "MODERNWMS_TUI_THEME"
-	ListenPorts       = "LISTEN_PORTS"
+	SoloMode    = "WMS_SOLO_MODE"
+	TUITheme    = "MODERNWMS_TUI_THEME"
+	ListenPorts = "LISTEN_PORTS"
+	// HandheldPorts are extra telnet ports for Windows CE/Mobile scanners (Symbol MC9090 etc.):
+	// ASCII-only output and a 40x16 starting window. Empty turns them off.
+	HandheldPorts     = "HANDHELD_PORTS"
 	GatewayPort       = "GATEWAY_PORT"
 	GatewayListenHost = "GATEWAY_LISTEN_HOST"
 	TTYDPort          = "TTYD_PORT"
@@ -61,15 +68,39 @@ const (
 	// MobileAPIPort/BotAPIPort.
 	DashboardAPIPort  = "WMS_DASHBOARD_API_PORT"
 	DashboardAPIToken = "WMS_DASHBOARD_API_TOKEN"
-	// AuthServiceURL/DashboardProvisionToken back internal/authbridge's
-	// call to kc-parts-auth-node's POST /internal/provision-dashboard-user
-	// -- how a Go-side account that opts into the "dashboard" access
-	// channel (access.User.Dashboard) gets a matching BetterAuth login.
-	// Same "off until both are set" convention as DashboardAPIPort/Token
-	// above; set the same token value as DASHBOARD_PROVISION_TOKEN in
-	// kc-parts-auth-node's own env.
-	AuthServiceURL          = "WMS_AUTH_SERVICE_URL"
-	DashboardProvisionToken = "WMS_DASHBOARD_PROVISION_TOKEN"
+	// DashboardGraceFile/DashboardGraceMinutes back internal/dashboardgrace,
+	// the dashboard's own 2FA grace window (password re-checked every time,
+	// the second factor skipped within the window) — a record here is never
+	// a Clerk credential, only a hashed, short-lived lookup token proving a
+	// real Clerk login completed recently for a given Clerk user id.
+	DashboardGraceFile    = "DASHBOARD_GRACE_FILE"
+	DashboardGraceMinutes = "DASHBOARD_GRACE_MINUTES"
+	// TeedyBaseURL/TeedyUsername/TeedyPassword back internal/teedy's
+	// client -- a service account on the Teedy document-management
+	// instance (deployed separately, docs.kcparts.xyz) used to verify a
+	// set-check onboarding upload landed, and to proxy a guest upload
+	// through for someone with no Teedy account of their own. Same
+	// "off until all three are set" convention as the dashboard-provision
+	// trio above.
+	TeedyBaseURL  = "TEEDY_BASE_URL"
+	TeedyUsername = "TEEDY_USERNAME"
+	TeedyPassword = "TEEDY_PASSWORD"
+	// ClerkSecretKey authenticates internal/clerkbridge's calls to Clerk's
+	// Backend API (api.clerk.com) -- replaces the old call into
+	// kc-parts-auth-node's POST /internal/provision-dashboard-user as that
+	// service is retired in favor of Clerk. Get this from the Clerk
+	// Dashboard (your app -> API Keys -> Secret Key); it is prefixed
+	// sk_test_ in development, sk_live_ in production. "" (the default)
+	// means Clerk-backed dashboard provisioning is off, same convention
+	// as the trio above.
+	ClerkSecretKey = "WMS_CLERK_SECRET_KEY"
+	// SentryDSN enables crash/panic reporting (see cmd/wms/main.go) when
+	// set; "" (the default) leaves it off, same convention as the above.
+	SentryDSN = "WMS_SENTRY_DSN"
+	// OnboardingGuestLinkSecret signs the time-limited guest-upload link
+	// (see internal/dashboardapi/guest_upload.go) -- generate with
+	// openssl rand -base64 32, same as every other HMAC secret here.
+	OnboardingGuestLinkSecret = "ONBOARDING_GUEST_LINK_SECRET"
 	// DashboardLinksFile backs internal/dashboardlink -- see that
 	// package's own comment for why this is deliberately not part of
 	// internal/access's own policy file. "" (the default) means "next to
@@ -104,7 +135,17 @@ const (
 	// TranslationsDir holds the dashboard's per-locale JSON string files
 	// (see internal/dashboardapi/i18n.go). "" (the default) means "next to
 	// lego.db itself", same convention as LegoAttachmentsDir above.
-	TranslationsDir   = "WMS_TRANSLATIONS_DIR"
+	TranslationsDir = "WMS_TRANSLATIONS_DIR"
+	// DownloadsFile holds the dashboard's named-download slots (display
+	// name -> a Teedy document link an admin pasted in) -- see
+	// internal/dashboardapi/downloads.go. "" (the default) means "next to
+	// lego.db itself", same convention as LegoAttachmentsDir above.
+	DownloadsFile = "DOWNLOADS_FILE"
+	// OnboardingFile holds the set-check onboarding checklist items and
+	// submission records -- see internal/dashboardapi/onboarding.go. ""
+	// (the default) means "next to lego.db itself", same convention as
+	// LegoAttachmentsDir above.
+	OnboardingFile    = "ONBOARDING_FILE"
 	RebrickableAPIKey = "REBRICKABLE_API_KEY"
 	// KanbanBacklogQtyThreshold is the per-line quantity at or above which the
 	// kanban board flags a line "moved to the back" of its job (see
@@ -120,6 +161,9 @@ const (
 	RetirementSheetURL         = "LEGO_RETIREMENT_SHEET_URL"
 	RetirementAutoRefreshHours = "RETIREMENT_AUTO_REFRESH_HOURS"
 	NotifyURL                  = "NOTIFY_URL"
+	BricksetAPIKey             = "BRICKSET_API_KEY"
+	NvidiaNIMKey               = "NVIDIA_NIM_API_KEY"
+	NvidiaNIMModels            = "NVIDIA_NIM_MODELS"
 	NotifyFormat               = "NOTIFY_FORMAT"
 	ImageDir                   = "WMS_IMAGE_DIR"
 	TUIImages                  = "MODERNWMS_TUI_IMAGES"
@@ -144,6 +188,7 @@ const (
 	BricklinkRegion            = "BRICKLINK_REGION"
 	BricklinkCondition         = "BRICKLINK_CONDITION"
 	BricklinkDailyBudget       = "BRICKLINK_DAILY_BUDGET"
+	JevAPIKey                  = "JEV_API_KEY"
 	DiscordBotToken            = "WMS_DISCORD_BOT_TOKEN"
 	DiscordBotUserID           = "WMS_DISCORD_BOT_USER_ID"
 	DiscordPublicKey           = "WMS_DISCORD_PUBLIC_KEY"
@@ -175,6 +220,17 @@ const (
 	// Sent at TeamSummaryHour the same as the daily one; a day with nothing
 	// configured here just never fires the weekly message, same pattern.
 	WeeklyTeamSummaryWeekday = "WMS_WEEKLY_TEAM_SUMMARY_WEEKDAY"
+	// Kanbn* configures internal/kanbnsync's one-way mirror of the WMS kanban
+	// board (internal/lego.DB.KanbanBoardAll) into a self-hosted Kan.bn board
+	// -- Kan.bn is a display layer only, never consulted as the source of
+	// truth. All empty (the default) turns syncing off until every one of
+	// KanbnAPIKey/KanbnBoardID/KanbnList{Backlog,Active,Done} is set.
+	KanbnAPIKey      = "KANBN_API_KEY"
+	KanbnBaseURL     = "KANBN_BASE_URL"
+	KanbnBoardID     = "KANBN_BOARD_ID"
+	KanbnListBacklog = "KANBN_LIST_BACKLOG"
+	KanbnListActive  = "KANBN_LIST_ACTIVE"
+	KanbnListDone    = "KANBN_LIST_DONE"
 )
 
 func Defaults() map[string]string {
@@ -182,12 +238,14 @@ func Defaults() map[string]string {
 		ModernWMSContainer:        "modernwms",
 		ModernWMSDBPath:           "/app/wms.db",
 		ModernWMSBackupDir:        "/root/backups/modernwms",
+		RepoPath:                  "/root/modernwms-partdb-go",
 		PartDBContainer:           "partdb",
 		PartDBDBPath:              "/root/docker-server/partdb/db/app.db",
 		AuditLogFile:              "/root/tui_audit.log",
 		SyncPort:                  "8082",
 		SyncAdminUser:             "admin",
 		ListenPorts:               "2323,23",
+		HandheldPorts:             "2326",
 		GatewayPort:               "7681",
 		GatewayListenHost:         "127.0.0.1", // loopback: reach it through the HTTPS tunnel; 0.0.0.0 exposes raw telnet
 		TTYDPort:                  "7682",
@@ -196,21 +254,37 @@ func Defaults() map[string]string {
 		MobileAPIPort:             "", // empty: the mobile pick/check app's API (internal/mobileapi) is off until set — binds GatewayListenHost like the rest of the gateway, reach it through a tunnel the same way, not opened to the raw internet directly
 		DashboardAPIPort:          "", // empty: the Rust web dashboard's API (internal/dashboardapi) is off until set — binds GatewayListenHost like the rest of the gateway
 		DashboardAPIToken:         "", // empty: no shared secret set yet — set this and the same value in the Rust service's config before turning DashboardAPIPort on
-		AuthServiceURL:            "", // empty: dashboard-login provisioning is off until set, e.g. "http://127.0.0.1:3001"
-		DashboardProvisionToken:   "", // empty: no shared secret set yet — set this and the same value as DASHBOARD_PROVISION_TOKEN in kc-parts-auth-node's env
+		TeedyBaseURL:              "", // empty: onboarding upload verification/guest uploads are off until all three TEEDY_* vars are set, e.g. "http://127.0.0.1:8200"
+		TeedyUsername:             "",
+		TeedyPassword:             "",
+		ClerkSecretKey:            "", // empty: Clerk-backed dashboard provisioning is off until set
+		KanbnAPIKey:               "", // empty: Kan.bn sync is off until this and every KanbnList* below are set
+		KanbnBaseURL:              "https://kanban.kcparts.xyz/api/v1",
+		KanbnBoardID:              "",
+		KanbnListBacklog:          "",
+		KanbnListActive:           "",
+		KanbnListDone:             "",
+		SentryDSN:                 "", // empty: crash reporting is off until set
+		OnboardingGuestLinkSecret: "", // empty: guest upload links are off until set
 		DashboardLinksFile:        "", // empty: next to lego.db itself, same convention as LegoAttachmentsDir
 		WebSoloDirectPort:         "", // empty: off; set to put /solo's terminal on its own port with no base path, for a reverse proxy/tunnel that can't rewrite paths to reach it at its own root
 		CredentialsFile:           "/root/docker-server/partdb-sync/config/credentials.json",
 		LinkOverridesFile:         "/root/docker-server/partdb-sync/config/link_overrides.json",
 		TwoFAFile:                 "/root/docker-server/wms/2fa.json",
 		LoginLockFile:             "/root/docker-server/wms/login_lock.json",
+		DashboardGraceFile:        "/root/docker-server/wms/dashboard_grace.json",
 		SoloMode:                  "", // "1" on a personal, ModernWMS/Part-DB-free copy — see docs/guides/solo-mode.md
 		PartDBURL:                 "", // your Part-DB address, e.g. https://partdb.example.com/ (links are omitted when empty)
 		ModernWMSURL:              "", // your ModernWMS address
 		StirlingPDFURL:            "", // your Stirling-PDF instance's editor address, e.g. https://pdf.example.com/editor (hint omitted when empty)
 		LegoDBPath:                "/root/docker-server/wms/lego.db",
 		SettingsFile:              "/root/docker-server/wms/settings.json",
+		// NIM lists many models that answer 404 for a given key. The reasoning models (mistral-large-4, nemotron) spend their
+		// whole token budget thinking and return nothing, and gemma-4 times out; diffusiongemma answers in 0.5-7 s but now
+		// and then stalls, so it is simply tried up to three times.
+		NvidiaNIMModels:           "google/diffusiongemma-26b-a4b-it,google/diffusiongemma-26b-a4b-it,google/diffusiongemma-26b-a4b-it",
 		TwoFAGraceMinutes:         "30",
+		DashboardGraceMinutes:     "10", // the dashboard's own 2FA grace window -- "5 to 10 minutes", the user's own stated range
 		PartDBAPIURL:              "http://127.0.0.1:8081",
 		IdleLockMinutes:           "15",
 		KanbanBacklogQtyThreshold: "50",
@@ -239,6 +313,7 @@ func Defaults() map[string]string {
 		BricklinkRegion:            "europe",
 		BricklinkCondition:         "U",
 		BricklinkDailyBudget:       "4500",
+		JevAPIKey:                  "", // from console.typesafe.ai/settings/keys
 		DiscordBotToken:            "", // from Discord's Developer Portal (discord.com/developers/applications): create an app, add a Bot, copy its token
 		DiscordBotUserID:           "", // the recipient's Discord user ID (Discord: enable Developer Mode, right-click your name, Copy User ID)
 		DiscordPublicKey:           "", // empty: the /discord/interactions route (internal/botapi) is off until set — the app's Public Key, General Information in the Developer Portal

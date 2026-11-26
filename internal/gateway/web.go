@@ -76,7 +76,16 @@ const testBasePath = "/test"
 var webSessionLockdown = []string{
 	";", "set-option", "-t", webSessionName, "prefix", "None",
 	";", "set-option", "-t", webSessionName, "mouse", "off",
+	";", "pipe-pane", "-o", "-t", webSessionName, webRecordShell,
 }
+
+// webRecordShell appends everything the shared web terminal displays to a
+// per-day file (mode 0600 in a 0700 directory) -- an audit trail of what was
+// on screen, for after-the-fact review. Output only: tmux sees what the
+// terminal shows, so typed passwords (never echoed) are not captured.
+// -o means re-attaching never toggles recording off. Retention is the
+// host's job (systemd-tmpfiles age on the directory), not this process's.
+const webRecordShell = "umask 077; mkdir -p /var/log/wms-terminal; cat >> /var/log/wms-terminal/web-$(date +%F).log"
 
 func webCommand(wmsBinaryPath string) []string {
 	if _, err := exec.LookPath("tmux"); err != nil {

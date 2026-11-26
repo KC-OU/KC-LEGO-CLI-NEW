@@ -447,3 +447,65 @@ func TestSaveLeavesNoTempFilesAndKeepsMode0600(t *testing.T) {
 		t.Errorf("temp files left behind: %v", left)
 	}
 }
+
+// VerifyExternal backs the telnet/TUI side of the Clerk TOTP bridge (see
+// internal/clerkbridge.VerifyTOTP and internal/uiapp's dashboardTwoFA): the
+// code itself was already checked against Clerk, not a local Secret, so
+// these tests cover only the bookkeeping VerifyExternal is responsible for.
+
+func TestVerifyExternalSucceedsAndClearsFailures(t *testing.T) {
+	withTempStore(t)
+	// No local entry exists at all for a purely dashboard-linked account --
+	// VerifyExternal must still work against a brand new key.
+	if err := VerifyExternal("newbie", "modernwms", false); err == nil {
+		t.Fatal("expected ErrInvalidCode for a non-match")
+	}
+	if err := VerifyExternal("newbie", "modernwms", true); err != nil {
+		t.Fatalf("unexpected error on a match: %v", err)
+	}
+	if _, locked := Locked("newbie", "modernwms"); locked {
+		t.Fatal("a later success must clear any earlier failure")
+	}
+}
+
+func TestVerifyExternalLocksAfterFiveMisses(t *testing.T) {
+	withTempStore(t)
+	for i := 0; i < maxFailures; i++ {
+		_ = VerifyExternal("flaky", "modernwms", false)
+	}
+	if _, locked := Locked("flaky", "modernwms"); !locked {
+		t.Fatal("five misses via the bridge must lock the account, same as Verify")
+	}
+	if err := VerifyExternal("flaky", "modernwms", true); err == nil {
+		t.Fatal("a locked account must refuse even a reported match")
+	}
+}
+
+func TestVerifyExternalGrantsGraceWithNoLocalSecret(t *testing.T) {
+	withTempStore(t)
+	const w = 30 * time.Minute
+	if err := VerifyExternal("bridged", "modernwms", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkVerified("bridged", "modernwms", "telnet:10.0.0.5", w); err != nil {
+		t.Fatalf("MarkVerified must work for a bridged account with no local Secret: %v", err)
+	}
+	if _, ok := WithinGrace("bridged", "modernwms", "telnet:10.0.0.5", w); !ok {
+		t.Fatal("a bridged account must get the same grace window as a locally-enrolled one")
+	}
+}
+
+func TestVerifyExternalSharesLockoutWithLocalVerify(t *testing.T) {
+	// A shared counter: some wrong guesses via the local path, some via the
+	// bridge, must still add up to one lockout -- not two independent
+	// four-guess allowances.
+	enrolledUser(t, "mixed")
+	_, _ = Verify("mixed", "modernwms", "000000")
+	_, _ = Verify("mixed", "modernwms", "000000")
+	_ = VerifyExternal("mixed", "modernwms", false)
+	_ = VerifyExternal("mixed", "modernwms", false)
+	_, _ = Verify("mixed", "modernwms", "000000")
+	if _, locked := Locked("mixed", "modernwms"); !locked {
+		t.Fatal("five misses split across both paths must still lock the account")
+	}
+}

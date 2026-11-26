@@ -20,7 +20,7 @@ import (
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/clerkbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/twofa"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
@@ -282,10 +282,14 @@ func (s *Server) handleAccessUserSetChannels(w http.ResponseWriter, r *http.Requ
 type setDashboardRequest struct {
 	accessUserBaseRequest
 	On bool `json:"on"`
-	// Email is optional -- kc-parts-auth-node synthesizes a placeholder
-	// when it's "", the same precedent already used for a Discord sign-in
-	// with no public email.
+	// Email is optional -- clerkbridge synthesizes a placeholder when
+	// it's "", the same precedent already used for a Discord sign-in with
+	// no public email.
 	Email string `json:"email"`
+	// Phone is optional (E.164, e.g. "+447..."). When given, clerkbridge
+	// registers it as a verified second factor so sign-in doesn't get
+	// stuck if "Require multi-factor authentication" is on in Clerk.
+	Phone string `json:"phone"`
 }
 
 type setDashboardResponse struct {
@@ -303,13 +307,13 @@ type setDashboardResponse struct {
 }
 
 // handleAccessUserSetDashboard is POST /dashboard/admin/access/user/dashboard
-// -- the yes/no toggle that auto-provisions a matching kc-parts-auth-node
-// login (see internal/authbridge) the moment it's turned on. Recorded in
+// -- the yes/no toggle that auto-provisions a matching Clerk login (see
+// internal/clerkbridge) the moment it's turned on. Recorded in
 // internal/dashboardlink, NOT internal/access.Policy -- see that
 // package's own comment for why (in short: it must never flip an
 // otherwise-untouched account from "ungoverned, full legacy telnet
 // access" to "governed, zero permissions" as a side effect). Turning it
-// off only unlinks it there; it never deprovisions the BetterAuth side.
+// off only unlinks it there; it never deprovisions the Clerk side.
 func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Request) {
 	var req setDashboardRequest
 	if err := decodeAccessReq(r, &req); err != nil {
@@ -318,6 +322,7 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 	}
 	req.accessUserBaseRequest = req.trimmed()
 	req.Email = strings.TrimSpace(req.Email)
+	req.Phone = strings.TrimSpace(req.Phone)
 	if err := req.valid(); err != nil {
 		writeAccessErr(w, http.StatusBadRequest, err)
 		return
@@ -337,7 +342,7 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 		writeAccessErr(w, http.StatusServiceUnavailable, fmt.Errorf("account management is not available in this environment"))
 		return
 	}
-	if !authbridge.Configured() {
+	if !clerkbridge.Configured() {
 		writeAccessErr(w, http.StatusServiceUnavailable, fmt.Errorf("dashboard login provisioning is not configured on this server"))
 		return
 	}
@@ -353,7 +358,7 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 		writeAccessErr(w, http.StatusBadRequest, err)
 		return
 	}
-	result, err := authbridge.Provision(req.Username, req.Email, password)
+	result, err := clerkbridge.Provision(req.Username, req.Email, req.Phone, password)
 	if err != nil {
 		writeAccessErr(w, http.StatusBadGateway, fmt.Errorf("account password was reset, but dashboard provisioning failed: %w", err))
 		return
@@ -365,6 +370,8 @@ func (s *Server) handleAccessUserSetDashboard(w http.ResponseWriter, r *http.Req
 	note := ""
 	if !result.Provisioned {
 		note = result.Reason
+	} else if req.Phone != "" && !result.MFAPhoneSet {
+		note = "dashboard login created, but the second-factor phone number was not accepted: " + result.Reason
 	}
 	s.logAudit(req.By, "DASHBOARD_ACCESS_USER_DASHBOARD_SET", "SUCCESS", req.Username+" dashboard=on")
 	writeJSON(w, http.StatusOK, setDashboardResponse{Saved: true, TemporaryPassword: password, MustChangePassword: true, ProvisionNote: note})

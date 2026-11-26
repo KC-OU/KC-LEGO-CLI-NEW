@@ -138,3 +138,92 @@ func TestLockOnF10AndF19(t *testing.T) {
 		t.Errorf("legend should advertise F10=Lock and no F19: %q", legend)
 	}
 }
+
+// A theme names a group of sets: searching it lists them all (not just name matches), a
+// cursor picks one, and A / Enter add it or open its picture page without typing a number.
+func TestThemeSearchListsAllSetsAndCursorAddsOrOpensDetail(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	for _, q := range []string{
+		`INSERT INTO cat_sets (set_num, name, year, theme_id, num_parts, img_url) VALUES ('75257-1', 'Rise of Skywalker Speeder', 2019, 158, 1329, '')`,
+		`INSERT INTO cat_inventories (id, version, set_num) VALUES (1, 1, '75257-1')`,
+		`INSERT INTO cat_inventory_parts (inventory_id, part_num, color_id, quantity) VALUES (1, '3001', 4, 2)`,
+		`INSERT INTO fts_sets(fts_sets) VALUES('rebuild')`,
+	} {
+		if _, err := app.legoDB.Exec(q); err != nil {
+			t.Fatalf("%v: %s", err, q)
+		}
+	}
+	out := searchSets(app, "star wars")
+	for _, want := range []string{"75192-1", "75257-1", "2 result(s)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("theme search should list every set in it, missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "> 75192-1") && !strings.Contains(out, "> 75257-1") {
+		t.Errorf("a cursor marks the highlighted row:\n%s", out)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyDown})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if app.cur != scrLegoSetConfirm || app.legoSetDraft.Name != "Millennium Falcon" {
+		t.Fatalf("A adds the highlighted set: cur=%q draft=%+v", app.cur, app.legoSetDraft)
+	}
+	app.cur, app.stack = scrLegoHub, nil
+	searchSets(app, "star wars")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if app.cur != scrLegoDetail || app.detail == nil || app.detail.Kind != "set" || app.detail.Num != "75257-1" {
+		t.Errorf("Enter opens the highlighted (first) set's detail page: cur=%q detail=%+v", app.cur, app.detail)
+	}
+
+	app.cur, app.stack = scrLegoHub, nil
+	app.legoSearchTerm = "star wars"
+	app.goTo(scrLegoPartResults)
+	if out := plain(app.View()); !strings.Contains(out, "3001") || !strings.Contains(out, "1 result(s)") {
+		t.Errorf("theme search lists the parts used by its sets:\n%s", out)
+	}
+}
+
+// A comma list of set numbers shows exactly those sets, in the order typed.
+func TestBulkSetListShowsOnlyTheTypedSets(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	if _, err := app.legoDB.Exec(`INSERT INTO cat_sets (set_num, name, year, theme_id, num_parts, img_url) VALUES ('75257-1', 'Speeder', 2019, 158, 1329, '')`); err != nil {
+		t.Fatal(err)
+	}
+	out := searchSets(app, "75257, 75192-1,99999")
+	if !strings.Contains(out, "2 result(s)") || strings.Index(out, "75257-1") > strings.Index(out, "75192-1") || strings.Contains(out, "99999-1 ") {
+		t.Errorf("bulk list should show the two found sets in typed order:\n%s", out)
+	}
+	if !strings.Contains(app.message, "Not found: 99999") {
+		t.Errorf("a number the catalog lacks is reported: %q", app.message)
+	}
+}
+
+func TestSetResultsSortByYearAndSetNumberWithY_N(t *testing.T) {
+	app, _ := flowApp(t)
+	app.rebrick = &lego.Client{}
+	seedOfflineCatalog(t, app)
+	if _, err := app.legoDB.Exec(`INSERT INTO cat_sets (set_num, name, year, theme_id, num_parts, img_url) VALUES ('3866-1', 'Old One', 2008, 158, 10, '')`); err != nil {
+		t.Fatal(err)
+	}
+	searchSets(app, "3866, 75192")
+	press := func(r rune) string {
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		return plain(app.View())
+	}
+	before := func(out, a, b string) bool { return strings.Index(out, a) < strings.Index(out, b) }
+	if out := press('y'); !before(out, "75192-1", "3866-1") { // newest first
+		t.Errorf("Y sorts newest first:\n%s", out)
+	}
+	if out := press('y'); !before(out, "3866-1", "75192-1") { // pressing again flips it
+		t.Errorf("Y again sorts oldest first:\n%s", out)
+	}
+	if out := press('n'); !before(out, "3866-1", "75192-1") {
+		t.Errorf("N sorts by set number, 3866 before 75192:\n%s", out)
+	}
+	if out := press('n'); !before(out, "75192-1", "3866-1") {
+		t.Errorf("N again reverses:\n%s", out)
+	}
+}

@@ -13,9 +13,27 @@ import (
 func Dispatch(event, title, body string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	for _, send := range routes(event) {
+	sends := routes(event)
+	for _, send := range sends {
 		recordDelivery(send(ctx, Message{Title: title, Body: body, Tag: tagFor(event)}))
 	}
+	if len(sends) == 0 {
+		recordDelivery(discordFallback(ctx, event, title, body))
+	}
+}
+
+// discordFallback DMs the Discord bot owner for the two events that must never
+// vanish silently (security, backup) when no channel is routed for them. Other
+// events stay quiet without a channel: a bot DM per low-stock alert is noise.
+func discordFallback(ctx context.Context, event, title, body string) error {
+	if event != "security" && event != "backup" {
+		return nil
+	}
+	bot := DiscordBotFromConfig()
+	if !bot.Enabled() {
+		return nil
+	}
+	return bot.DM(ctx, DMCard{Title: title, Description: body})
 }
 
 func recordDelivery(err error) {

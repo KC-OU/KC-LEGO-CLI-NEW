@@ -114,7 +114,22 @@ func newNotifyCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(test, channels, route)
+	send := &cobra.Command{
+		Use: "send <event> <title> [body]", Short: "Send an alert for an event (used by scripts, e.g. the nightly backup)", Args: cobra.RangeArgs(2, 3),
+		Example: "  wms notify send backup \"Backup FAILED\" \"see journalctl -u wms-backup\"",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !slices.Contains(notify.Events, args[0]) {
+				return usageError("event must be one of %s", strings.Join(notify.Events, ", "))
+			}
+			body := ""
+			if len(args) == 3 {
+				body = args[2]
+			}
+			notify.Dispatch(args[0], args[1], body)
+			return nil
+		},
+	}
+	cmd.AddCommand(test, channels, route, send)
 	return cmd
 }
 

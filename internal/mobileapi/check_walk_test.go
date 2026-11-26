@@ -39,6 +39,10 @@ func checkWalkEnv(t *testing.T) (*Server, *lego.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// these tests walk a check as a plain worker: the paper-check onboarding has its own test below
+	if err := db.WaiveOnboarding("*", "test", true); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, q := range []string{
 		`INSERT INTO cat_categories (id, name) VALUES (11, 'Bricks')`,
@@ -383,5 +387,25 @@ func TestConfirmRejectsAnUnknownAction(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestWalkIsRefusedUntilThePaperCheckIsVerified(t *testing.T) {
+	s, db := checkWalkEnv(t)
+	if err := db.WaiveOnboarding("*", "test", false); err != nil { // lift the suite-wide waiver
+		t.Fatal(err)
+	}
+	srv := newCheckWalkTestServer(s)
+	defer srv.Close()
+	token := issueToken(t, db)
+
+	if status, _ := getLine(t, srv, token, 0); status != http.StatusForbidden {
+		t.Fatalf("a worker without a verified paper check got status %d, want 403", status)
+	}
+	if err := db.WaiveOnboarding("75192-1", "admin", true); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := getLine(t, srv, token, 0); status != http.StatusOK {
+		t.Fatalf("with the set waived the walk should start, got %d", status)
 	}
 }

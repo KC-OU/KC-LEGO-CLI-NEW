@@ -95,17 +95,25 @@ type App struct {
 	requireTwoFA  bool   // true for gateway-spawned sessions (telnet/web) — see WMS_GATEWAY_SESSION in cmd/wms/tui.go
 	touchMode     bool   // true only for the ttyd/web gateway path — see WMS_TOUCH_MODE in cmd/wms/tui.go
 	graceOrigin   string // where this session came from ("local", "telnet:<addr>"); empty = unknown (web), which never gets a 2FA grace window
-	lockedOut     bool   // the sign-on attempts ran out; the gateway counts such a session against the client's address
-	transport     string // "telnet" when the session arrived over plaintext telnet (see SetTransport)
-	remoteAddr    string
-	lastInput     time.Time
-	paletteOpen   bool // the Ctrl-K / F2 command palette is showing (see palette.go)
-	paletteInput  string
-	paletteSel    int
-	helpOpen      bool             // the F1 / ? key cheat sheet is showing (see help.go)
-	popups        []alertMsg       // queued on-screen popups (e.g. a set coming up short) — see alert.go
-	tourPage      int              // which first-run tour page is showing (see tour.go)
-	now           func() time.Time // the clock for idle checks; tests replace it
+	// clerkTwoFAUserID is set by continueSignOn, between the password check
+	// and the code prompt, when this account's 2FA is being bridged to its
+	// own Clerk-enrolled TOTP (see internal/clerkbridge.VerifyTOTP) instead
+	// of a local internal/twofa secret -- "" means doTwoFACodeSubmit should
+	// use the local path as before. Cleared the moment a code is accepted,
+	// so a later re-login re-derives it fresh rather than reusing a stale
+	// decision from a previous sign-in.
+	clerkTwoFAUserID string
+	lockedOut        bool   // the sign-on attempts ran out; the gateway counts such a session against the client's address
+	transport        string // "telnet" when the session arrived over plaintext telnet (see SetTransport)
+	remoteAddr       string
+	lastInput        time.Time
+	paletteOpen      bool // the Ctrl-K / F2 command palette is showing (see palette.go)
+	paletteInput     string
+	paletteSel       int
+	helpOpen         bool             // the F1 / ? key cheat sheet is showing (see help.go)
+	popups           []alertMsg       // queued on-screen popups (e.g. a set coming up short) — see alert.go
+	tourPage         int              // which first-run tour page is showing (see tour.go)
+	now              func() time.Time // the clock for idle checks; tests replace it
 
 	screens map[string]screenModel
 	stack   []string
@@ -130,6 +138,7 @@ type App struct {
 	legoSearchTerm    string
 	legoSetDetailRows [][]string
 	bagFindRows       [][]string
+	legoFoundSort     string     // Search Sets order: "", year, year_asc, num, num_desc (keys Y and N)
 	legoFound         []foundSet // last set-search results, for the add-to-collection step
 	legoSetDraft      *setDraft  // set being added/updated, between the number prompt and the confirm screen
 	partFlow          *partFlow  // the part being added/updated, between the number prompt and the save
@@ -167,6 +176,7 @@ type App struct {
 	message2         *messageDraft    // an admin's in-progress "send a message" flow (see messages.go) — a2 avoids colliding with the existing status-line `message`
 	abandonAdmin     string           // the admin username who signed off the abandon in progress (see tickets_screens.go)
 	forceOff         *forceOffDraft   // an admin's in-progress "force off a job" flow (see tickets_screens.go)
+	removeWork       *removeWorkDraft // an admin's in-progress "remove work from the queue" flow (see tickets_screens.go)
 	kick             *kickDraft       // an admin's in-progress "kick a live session" flow (see sessions_screen.go)
 	toasts           []pendingMessage // messages queued for the full-screen scrMessagesFull (see messages.go), distinct from the alert popups
 	sessionID        string           // this process's own id in live_sessions (see sessions.go)
@@ -561,6 +571,10 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) bool {
 	// typeable one key at a time (telnet sends each key as it is pressed). Q then Enter on the first
 	// field, and Esc anywhere, still leave the form; see formScreen.HandleKey.
 	if scr != nil && scr.ActiveForm() != nil {
+		return false
+	}
+	// A screen can own letters that would otherwise be shortcuts (the export screen's G and L).
+	if c, ok := scr.(interface{ claimsKey(*App, rune) bool }); ok && c.claimsKey(a, msg.Runes[0]) {
 		return false
 	}
 	switch msg.Runes[0] {

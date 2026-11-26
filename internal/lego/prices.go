@@ -63,6 +63,10 @@ func (d *DB) putPrice(p PriceRow) error {
 	_, err := d.Exec(`INSERT INTO prices (item_type, item_no, bl_color, cond, avg, currency, missing, fetched_at) VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(item_type, item_no, bl_color, cond) DO UPDATE SET avg = excluded.avg, currency = excluded.currency, missing = excluded.missing, fetched_at = excluded.fetched_at`,
 		p.ItemType, p.ItemNo, p.BLColor, p.Cond, p.Avg, p.Currency, b2i(p.Missing), time.Now().UTC().Format(timeLayout))
+	if err == nil && !p.Missing && p.Avg > 0 { // one history point per day, for PriceMovers
+		_, err = d.Exec(`INSERT OR REPLACE INTO price_history (item_type, item_no, bl_color, cond, day, avg) VALUES (?,?,?,?,?,?)`,
+			p.ItemType, p.ItemNo, p.BLColor, p.Cond, today(), p.Avg)
+	}
 	return err
 }
 
@@ -121,6 +125,32 @@ func (d *DB) RefreshPrices(ctx context.Context, f PriceFetcher, cond string, lim
 	if err != nil {
 		return 0, 0, err
 	}
+	return d.refreshTargets(ctx, f, targets, cond, limit)
+}
+
+// RefreshSetPrices is RefreshPrices for the parts of one catalog set (owned or
+// not) -- what the part-out calculator needs before its total means anything.
+func (d *DB) RefreshSetPrices(ctx context.Context, f PriceFetcher, setNum, cond string, limit int) (fetched, unknown int, err error) {
+	items, err := d.CatalogSetInventory(setNum)
+	if err != nil {
+		return 0, 0, err
+	}
+	var targets []priceKey
+	for _, it := range items {
+		bl := it.BLColor
+		if bl == 0 && it.ColorID >= 0 {
+			if id, ok := d.BLColorFor(it.ColorID); ok {
+				bl = id
+			}
+		}
+		targets = append(targets, priceKey{"PART", it.PartNum, bl, it.Qty, it.PartNum})
+	}
+	// biggest-quantity lines first: they move the total most per BrickLink call
+	sort.SliceStable(targets, func(i, j int) bool { return targets[i].qty > targets[j].qty })
+	return d.refreshTargets(ctx, f, targets, cond, limit)
+}
+
+func (d *DB) refreshTargets(ctx context.Context, f PriceFetcher, targets []priceKey, cond string, limit int) (fetched, unknown int, err error) {
 	type due struct {
 		k   priceKey
 		age time.Time
@@ -299,6 +329,18 @@ type WatchHit struct {
 	Watch
 	Price    float64
 	Currency string
+	// Plausible is Jev's opinion on whether this move looks like a genuine
+	// market change rather than a data glitch or one-off fluke listing --
+	// nil when no PlausibilityChecker was passed to CheckWatches, or when
+	// the call itself failed (never blocks the alert either way).
+	Plausible *float64
+}
+
+// PlausibilityChecker asks a yes/no question about a price move and returns
+// Jev's confidence (0-1) that the answer is yes. See internal/jev.
+type PlausibilityChecker interface {
+	Enabled() bool
+	Plausible(ctx context.Context, question string) (float64, error)
 }
 
 // alertCooldown stops the same watch alerting again for a week unless the price falls further.
@@ -308,7 +350,7 @@ const alertCooldown = 7 * 24 * time.Hour
 // applies), records the price, and returns the ones at or under their limit that
 // have not already alerted recently. A price lower than the one it last alerted
 // at alerts again at once. Any fetch error stops the check with hits so far kept.
-func (d *DB) CheckWatches(ctx context.Context, f PriceFetcher) ([]WatchHit, error) {
+func (d *DB) CheckWatches(ctx context.Context, f PriceFetcher, j PlausibilityChecker) ([]WatchHit, error) {
 	ws, err := d.ListWatches()
 	if err != nil {
 		return nil, err
@@ -340,7 +382,19 @@ func (d *DB) CheckWatches(ctx context.Context, f PriceFetcher) ([]WatchHit, erro
 			continue
 		}
 		_, _ = d.Exec(`UPDATE watchlist SET last_alert = ?, alert_price = ? WHERE id = ?`, now, avg, w.ID)
-		hits = append(hits, WatchHit{Watch: w, Price: avg, Currency: cur})
+		hit := WatchHit{Watch: w, Price: avg, Currency: cur}
+		if j != nil && j.Enabled() {
+			item := w.ItemNo
+			if w.ColorName != "" {
+				item += " " + w.ColorName
+			}
+			q := fmt.Sprintf("A LEGO %s price watch for %s moved from about %.4f to %.4f %s. Does this look like a genuine market price change, as opposed to a data error or a one-off fluke listing?",
+				strings.ToLower(w.ItemType), item, w.LastPrice, avg, cur)
+			if p, err := j.Plausible(ctx, q); err == nil {
+				hit.Plausible = &p
+			}
+		}
+		hits = append(hits, hit)
 	}
 	return hits, nil
 }

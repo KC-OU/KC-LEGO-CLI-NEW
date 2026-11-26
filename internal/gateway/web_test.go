@@ -93,6 +93,7 @@ func TestWebCommandWrapsInAPersistentSessionWithTmux(t *testing.T) {
 		"tmux", "new-session", "-A", "-s", webSessionName, "/usr/local/bin/wms-go", "tui",
 		";", "set-option", "-t", webSessionName, "prefix", "None",
 		";", "set-option", "-t", webSessionName, "mouse", "off",
+		";", "pipe-pane", "-o", "-t", webSessionName, webRecordShell,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("webCommand with tmux = %v, want %v", got, want)

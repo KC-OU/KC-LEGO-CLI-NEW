@@ -235,15 +235,14 @@ func TestATestThatWritesToADefaultPathIsCaught(t *testing.T) {
 		t.Errorf("%+v", r)
 	}
 	e = env(t, &fakeRunner{})
-	if r := checkTests(context.Background(), e); r.Status != OK || !strings.Contains(r.Detail, "-race") {
+	if r := checkTests(context.Background(), e); r.Status != OK || strings.Contains(r.Detail, "-race") {
 		t.Errorf("%+v", r)
 	}
-	e.Quick = true
 	f := &fakeRunner{}
 	e.Run = f
 	checkTests(context.Background(), e)
 	if strings.Contains(strings.Join(f.calls, ";"), "-race") {
-		t.Errorf("--quick leaves the race detector out: %v", f.calls)
+		t.Errorf("-race is never run any more (see checkTests' own doc comment), --quick or not: %v", f.calls)
 	}
 }
 
@@ -396,5 +395,16 @@ func TestParallelRunKeepsTheChecksOrder(t *testing.T) {
 	}
 	if events != 24 {
 		t.Errorf("every check reports start and done: %d events", events)
+	}
+}
+
+func TestLoadSecretsIgnoresPublicListenAddress(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(p, []byte(`{"GATEWAY_LISTEN_HOST":"127.0.0.1","TEEDY_BASE_URL":"http://127.0.0.1:8200","NVIDIA_NIM_MODELS":"google/some-model-it","KEY":"abcdefgh12345678"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSecrets(p, "", "")
+	if len(got) != 1 || got[0].Origin != "settings.json:KEY" {
+		t.Errorf("only the real secret should be kept: %+v", got)
 	}
 }

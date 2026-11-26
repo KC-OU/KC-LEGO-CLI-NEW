@@ -20,6 +20,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/gateway"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/kanbnsync"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/metrics"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/mobileapi"
@@ -48,6 +49,12 @@ func newGatewayServeCmd() *cobra.Command {
 			ports, err := parsePorts(config.Get(config.ListenPorts))
 			if err != nil {
 				return err
+			}
+			var handheldPorts []int
+			if v := strings.TrimSpace(config.Get(config.HandheldPorts)); v != "" {
+				if handheldPorts, err = parsePorts(v); err != nil {
+					return err
+				}
 			}
 			gatewayPort, err := strconv.Atoi(config.Get(config.GatewayPort))
 			if err != nil {
@@ -104,7 +111,7 @@ func newGatewayServeCmd() *cobra.Command {
 			g, gctx := errgroup.WithContext(ctx)
 			host := config.Get(config.GatewayListenHost)
 			g.Go(func() error {
-				return gateway.RunTelnetServer(gctx, host, ports, wmsBinaryPath, testBinaryPath, testEnv, reconnectSeconds)
+				return gateway.RunTelnetServer(gctx, host, ports, handheldPorts, wmsBinaryPath, testBinaryPath, testEnv, reconnectSeconds)
 			})
 
 			// botSrv is shared between the loopback-only /bot/action webhook
@@ -196,8 +203,15 @@ func newGatewayServeCmd() *cobra.Command {
 				}
 				legoDB.SetActor("dashboardapi")
 				defer legoDB.Close()
-				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken), lego.NewClientFor(legoDB), pdb, wmsdb.NewClient(), bricklink.FromConfig(legoDB), brickowl.FromConfig())
+				blClient := bricklink.FromConfig(legoDB)
+				dashboardSrv := dashboardapi.NewServer(legoDB, users.New(wmsdb.NewClient(), pdb), audit.New(), config.Get(config.DashboardAPIToken), lego.NewClientFor(legoDB), pdb, wmsdb.NewClient(), blClient, brickowl.FromConfig())
+				g.Go(func() error { return roundBLoop(gctx, legoDB, blClient) })
+				dashboardSrv.SetVersion(version, commit, date)
+				dashboardSrv.SetMobile(mobileapi.NewServer(wmsdb.NewClient(), pdb, legoDB, audit.New()))
 				g.Go(func() error { return dashboardapi.Serve(gctx, host+":"+dashboardAPIPort, dashboardSrv) })
+				// A no-op until every KANBN_* setting is present -- see
+				// internal/kanbnsync's package doc for why this is one-way only.
+				g.Go(func() error { return kanbnsync.Run(gctx, legoDB.KanbanBoardAll) })
 			}
 			return g.Wait()
 		},

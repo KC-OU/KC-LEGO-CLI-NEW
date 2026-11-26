@@ -70,3 +70,17 @@ exactly which commits (`git log main..dev`) are about to ship. `main` only ever 
 it has diverged, the script stops rather than create a surprise merge. It then calls `scripts/deploy.sh` (backup,
 binary swap, restart `wms-gateway.service`, automatic rollback if the service doesn't come back), and leaves you
 back on `dev`. It never touches GitHub — `wms publish` stays a separate, deliberate step, run whenever you choose.
+
+After the Go deploy (or straight away, when `main` is already at `dev`'s tip) the promote runs
+`scripts/promote-dashboard.sh`: it lists the dashboard's commits that are not live yet, runs the dashboard's tests,
+and after a second `CONFIRM` builds the release binary and restarts `kc-parts-dashboard`. The previous binary is
+copied to `/root/backups` and put back if the new dashboard does not answer. The commit that is live is recorded in
+`/var/lib/kc-parts-dashboard/deployed-commit`.
+
+### Skipping the typed CONFIRM: `-y` and a PIN
+
+`bash scripts/promote-dev.sh -y` (also `--yes` / `--confirm`) ships everything on `dev` and answers both CONFIRM prompts
+for you, but only after you type the promote PIN, like `sudo`. Set the PIN once with
+`bash scripts/promote-dev.sh --set-pin` (at least 6 characters, stored as a salted hash in
+`~/.config/wms-go/promote.pin`, mode 600). Three wrong tries end the run. Without `-y` nothing changes. The preflight and
+the dashboard tests still have to pass first: the PIN only replaces the typing.

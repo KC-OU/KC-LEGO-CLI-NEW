@@ -3,6 +3,8 @@ package uiapp
 import (
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -25,6 +27,10 @@ const (
 	scrScanClaim    = "scan_claim"
 	scrQuitJob      = "quit_job"
 	scrAbandonAuth  = "abandon_auth"
+
+	scrRemoveWorkPick   = "remove_work_pick"
+	scrRemoveWorkReason = "remove_work_reason"
+	scrClearOldWork     = "clear_old_work"
 
 	scrForceOffPick    = "force_off_pick"
 	scrForceOffMessage = "force_off_message"
@@ -244,6 +250,8 @@ func assignPickScreen() screenModel {
 				{Key: "2", Label: "Assign an order to pick", Go: func(app *App) { startAssign(app, lego.TicketOrder) }},
 				{Key: "3", Label: "Open queue (who's on what)", Go: func(app *App) { app.goTo(scrJobQueue) }},
 				{Key: "4", Label: "Force off a job", Go: func(app *App) { app.goTo(scrForceOffPick) }},
+				{Key: "5", Label: "Remove work from the queue (added by mistake)", Go: func(app *App) { app.goTo(scrRemoveWorkPick) }},
+				{Key: "6", Label: "Clear out old queued work", Go: func(app *App) { app.goTo(scrClearOldWork) }},
 				{Key: "0", Label: "Return", Go: func(app *App) { app.onBack() }},
 			}
 		},
@@ -701,6 +709,148 @@ func scanClaimScreen() screenModel {
 			}
 			app.stack = nil
 			openTicket(app, t)
+		},
+	}
+}
+
+// ---- Admin: remove work from the queue ----
+//
+// For work added by mistake or left sitting too long. Nothing is deleted: the ticket is
+// marked cancelled with who removed it and why (see lego.DB.CancelTicket), the underlying
+// check/order and everyone's accuracy are untouched, and the reason is audit-logged.
+
+type removeWorkDraft struct {
+	ticketID int64
+	label    string
+}
+
+func removeWorkRows(app *App) ([]string, [][]string, []string) {
+	ts, err := app.legoDB.AllOpenTickets()
+	if err != nil {
+		app.setMsg(err.Error(), true)
+	}
+	var rows [][]string
+	var keys []string
+	for _, t := range ts {
+		who := t.AssignedTo
+		if who == "" {
+			who = "(open queue)"
+		}
+		rows = append(rows, []string{t.Kind, t.Label, who, t.Status, ticketAge(t.CreatedAt)})
+		keys = append(keys, strconv.FormatInt(t.ID, 10))
+	}
+	return []string{"Kind", "Target", "Assigned To", "Status", "Waiting"}, rows, keys
+}
+
+// ticketAge is "3d 4h" / "5h" -- how long a ticket has been in the queue.
+func ticketAge(created time.Time) string {
+	h := int(time.Since(created).Hours())
+	if h >= 24 {
+		return fmt.Sprintf("%dd %dh", h/24, h%24)
+	}
+	return fmt.Sprintf("%dh", h)
+}
+
+func removeWorkPickScreen() screenModel {
+	return &selectList{
+		panelID:   "RMWKPK",
+		title:     "Remove Work From the Queue",
+		hint:      "Enter picks the job to remove — you'll be asked for a reason",
+		emptyHint: "The queue is empty.",
+		rows:      removeWorkRows,
+		keys: func(app *App, key string, msg tea.KeyMsg) {
+			if msg.Type != tea.KeyEnter || key == "" {
+				return
+			}
+			id, _ := strconv.ParseInt(key, 10, 64)
+			ts, _ := app.legoDB.AllOpenTickets()
+			for _, t := range ts {
+				if t.ID == id {
+					app.removeWork = &removeWorkDraft{ticketID: t.ID, label: t.Label}
+					app.goTo(scrRemoveWorkReason)
+					return
+				}
+			}
+		},
+	}
+}
+
+func removeWorkReasonScreen() screenModel {
+	return &formScreen{
+		panelID: "RMWKRS",
+		title:   "Remove work — why?",
+		build: func(app *App) []ui.Field {
+			label := ""
+			if app.removeWork != nil {
+				label = app.removeWork.label
+			}
+			return []ui.Field{{Label: "Removing " + label, Protected: true}, {Label: "Reason"}}
+		},
+		submit: func(app *App, v []string) {
+			rw := app.removeWork
+			if rw == nil {
+				app.onBack()
+				return
+			}
+			if !app.checkAdmin("SETTINGS_ACCESS") {
+				app.removeWork = nil
+				return
+			}
+			if _, err := app.legoDB.CancelTicket(rw.ticketID, app.userName(), v[1]); err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			app.audit.Log(app.userName(), "", "TICKET_REMOVED", "SUCCESS", rw.label+": "+strings.TrimSpace(v[1]))
+			app.removeWork = nil
+			app.onBack()
+			app.setMsg("Removed "+rw.label+" from the queue.", false)
+		},
+	}
+}
+
+// clearOldWorkScreen sweeps out unclaimed work older than N days. Claimed work is never
+// touched (someone is on it). The card shows what each cut-off would remove before
+// anything is typed, and the sweep needs the word REMOVE as a second field.
+func clearOldWorkScreen() screenModel {
+	return &formScreen{
+		panelID: "CLROLD",
+		title:   "Clear out old queued work",
+		preamble: func(app *App) string {
+			var b strings.Builder
+			b.WriteString("Unclaimed work waiting longer than:\n")
+			for _, days := range []int{3, 7, 14, 30} {
+				ts, _ := app.legoDB.StaleQueuedTickets(time.Duration(days) * 24 * time.Hour)
+				fmt.Fprintf(&b, "  %2d days: %d job(s)\n", days, len(ts))
+			}
+			b.WriteString("Claimed work is never removed here.")
+			return b.String()
+		},
+		build: func(app *App) []ui.Field {
+			return []ui.Field{{Label: "Remove work waiting longer than (days)", Value: "7", Fresh: true}, {Label: "Type REMOVE to confirm"}}
+		},
+		submit: func(app *App, v []string) {
+			days, err := strconv.Atoi(strings.TrimSpace(v[0]))
+			if err != nil || days < 1 {
+				app.setMsg("Enter a number of days, 1 or more.", true)
+				return
+			}
+			if strings.TrimSpace(v[1]) != "REMOVE" {
+				app.setMsg("Type REMOVE (capitals) to confirm.", true)
+				return
+			}
+			if !app.checkAdmin("SETTINGS_ACCESS") {
+				return
+			}
+			done, err := app.legoDB.CancelStaleQueuedTickets(time.Duration(days)*24*time.Hour, app.userName())
+			for _, t := range done {
+				app.audit.Log(app.userName(), "", "TICKET_REMOVED", "SUCCESS", t.Label+": left in the queue too long")
+			}
+			if err != nil {
+				app.setMsg(err.Error(), true)
+				return
+			}
+			app.onBack()
+			app.setMsg(fmt.Sprintf("Removed %d job(s) that had waited more than %d days.", len(done), days), false)
 		},
 	}
 }

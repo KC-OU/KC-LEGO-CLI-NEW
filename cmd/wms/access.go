@@ -17,7 +17,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/access"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/audit"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
-	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/authbridge"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/clerkbridge"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/config"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
@@ -408,13 +408,17 @@ func newAccessUserCmd() *cobra.Command {
 			return edit(args[0], "channels="+args[1], func(u *access.User) error { u.Channels = list; return nil })
 		},
 	}
+	var dashboardPhone string
 	dashboard := &cobra.Command{
 		Use: "dashboard <user> <on|off>", Short: "Also sign into the web dashboard with this account (yes/no)", Args: cobra.ExactArgs(2),
-		Example: "  wms access user dashboard 12345 on\n  wms access user dashboard 12345 off",
+		Example: "  wms access user dashboard 12345 on\n  wms access user dashboard 12345 on --phone +447700900123\n  wms access user dashboard 12345 off",
 		Long: "Turning this on resets the account's password to a fresh temp password/PIN (same as `wms users reset`) and hands that same\n" +
-			"credential to kc-parts-auth-node, provisioning a matching web-dashboard login. This is a one-time hand-off, not a live\n" +
+			"credential to Clerk, provisioning a matching web-dashboard login. This is a one-time hand-off, not a live\n" +
 			"bridge: a later password change on either side does not propagate to the other. Turning it off only clears this flag --\n" +
-			"it never deletes the dashboard login itself.",
+			"it never deletes the dashboard login itself.\n\n" +
+			"--phone registers a verified phone number as the account's second factor at the same time, so sign-in doesn't get\n" +
+			"stuck if the Clerk instance has \"Require multi-factor authentication\" turned on (TOTP apps can only be enrolled by\n" +
+			"the user themselves once they can sign in -- a phone number is the only second factor Clerk's API can set up ahead of time).",
 		ValidArgsFunction: cobra.FixedCompletions([]string{"on", "off"}, cobra.ShellCompDirectiveNoFileComp),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			username, on := args[0], args[1]
@@ -428,8 +432,8 @@ func newAccessUserCmd() *cobra.Command {
 				say(ui.Status(ui.New(), true, username+": dashboard=off"))
 				return nil
 			}
-			if !authbridge.Configured() {
-				return fmt.Errorf("dashboard login provisioning is not configured on this machine (set WMS_AUTH_SERVICE_URL and WMS_DASHBOARD_PROVISION_TOKEN)")
+			if !clerkbridge.Configured() {
+				return fmt.Errorf("dashboard login provisioning is not configured on this machine (set WMS_CLERK_SECRET_KEY)")
 			}
 			svc, err := openUsersService()
 			if err != nil {
@@ -442,7 +446,7 @@ func newAccessUserCmd() *cobra.Command {
 			if err := svc.ResetUnified(context.Background(), username, password, true); err != nil {
 				return err
 			}
-			result, err := authbridge.Provision(username, "", password)
+			result, err := clerkbridge.Provision(username, "", dashboardPhone, password)
 			if err != nil {
 				return fmt.Errorf("password reset, but dashboard provisioning failed: %w", err)
 			}
@@ -454,10 +458,13 @@ func newAccessUserCmd() *cobra.Command {
 			say(ui.Warn(ui.New(), "This password must be changed at next login."))
 			if !result.Provisioned {
 				say(ui.Warn(ui.New(), "Dashboard login: "+result.Reason+" -- the password above is for telnet/TUI only."))
+			} else if dashboardPhone != "" && !result.MFAPhoneSet {
+				say(ui.Warn(ui.New(), "Dashboard login created, but the second-factor phone number was not accepted: "+result.Reason))
 			}
-			return emit(map[string]any{"username": username, "temporary_password": password, "must_change_password": true, "dashboard_provisioned": result.Provisioned})
+			return emit(map[string]any{"username": username, "temporary_password": password, "must_change_password": true, "dashboard_provisioned": result.Provisioned, "mfa_phone_set": result.MFAPhoneSet})
 		},
 	}
+	dashboard.Flags().StringVar(&dashboardPhone, "phone", "", "E.164 phone number (e.g. +447700900123) to register as this account's second factor")
 	expires := &cobra.Command{
 		Use: "expires <user> <YYYY-MM-DD|none>", Short: "The day the user's access ends", Args: cobra.ExactArgs(2),
 		Example: "  wms access user expires temp-contractor 2026-12-01\n  wms access user expires alex none",

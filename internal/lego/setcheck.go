@@ -44,14 +44,23 @@ type CheckLine struct {
 	// Purely a display/sort-order hint, like Damaged — the line stays part of
 	// the same check, nothing is pulled out of it.
 	Deprioritized bool
+	// Note is a checker's free text on the line. Borrowed is how many of the shortfall were taken from
+	// another set (BorrowedFrom names it) to finish this one: they count as present, not missing. Lent is
+	// the other direction: how many of this set's own parts are out on loan to another set and not yet
+	// replaced, so a recount does not report them as a surprise shortfall. See borrowed.go.
+	Note         string
+	Borrowed     int
+	BorrowedFrom string
+	Lent         int
 }
 
-// Missing is how many of the line the set is short — always 0 for an optional line.
+// Missing is how many of the line the set is short — always 0 for an optional line. Parts borrowed from
+// another set are not missing (the set is complete), and parts lent out are accounted for until replaced.
 func (l CheckLine) Missing() int {
 	if l.Optional {
 		return 0
 	}
-	return max(0, l.Need-l.Have)
+	return max(0, l.Need-l.Have-l.Borrowed-l.Lent)
 }
 
 type SetCheck struct {
@@ -88,7 +97,7 @@ func (c *SetCheck) Totals() (pieces, have, missing, extra, missingLines int) {
 			continue
 		}
 		pieces += l.Need
-		have += min(l.Have, l.Need)
+		have += min(l.Have+l.Borrowed, l.Need)
 		missing += l.Missing()
 		if l.Missing() > 0 {
 			missingLines++
@@ -110,7 +119,9 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 			for i := range c.Lines {
 				c.Lines[i].Extra = 0
 				c.Lines[i].Damaged = 0 // a recount re-verifies condition too, not just quantity
+				c.Lines[i].Lent = 0
 			}
+			d.refreshLent(setNum, c.Lines)
 			return c, nil
 		}
 	}
@@ -148,6 +159,7 @@ func (d *DB) NewCheck(ctx context.Context, rb *Client, setNum, kind, by string) 
 			ColorName: it.ColorName, BLID: it.BrickLinkID, BLColor: it.BLColor, Need: n, Have: n, Optional: optional, SmallBag: bagSize == BagSmall})
 	}
 	sortLinesByColorThenCategory(c.Lines)
+	d.refreshLent(setNum, c.Lines)
 	return c, nil
 }
 
@@ -202,15 +214,15 @@ func (d *DB) GetCheck(id int64) (*SetCheck, error) {
 	c.FinishedAt, _ = time.Parse(timeLayout, finished)
 	c.PaperCheckedAt, _ = time.Parse(timeLayout, paperChecked)
 	c.Disputed = disputed != 0
-	rows, err := d.Query(`SELECT part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized
-		FROM set_check_lines WHERE check_id = ?`, id)
+	rows, err := d.Query(`SELECT part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized,
+		note, borrowed_qty, borrowed_from, lent_qty FROM set_check_lines WHERE check_id = ?`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var l CheckLine
-		if err := rows.Scan(&l.PartNum, &l.PartName, &l.Category, &l.ColorID, &l.ColorName, &l.BLID, &l.BLColor, &l.Need, &l.Have, &l.Extra, &l.Damaged, &l.Deprioritized); err != nil {
+		if err := rows.Scan(&l.PartNum, &l.PartName, &l.Category, &l.ColorID, &l.ColorName, &l.BLID, &l.BLColor, &l.Need, &l.Have, &l.Extra, &l.Damaged, &l.Deprioritized, &l.Note, &l.Borrowed, &l.BorrowedFrom, &l.Lent); err != nil {
 			return nil, err
 		}
 		l.Optional, _ = d.IsOptional(l.PartNum, l.Category) // recomputed fresh, in case it changed since this line was saved
@@ -370,8 +382,8 @@ func saveCheck(tx *sql.Tx, c *SetCheck) error {
 	threshold := kanbanQtyThreshold()
 	for _, l := range c.Lines {
 		deprioritized := l.Missing() >= threshold
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO set_check_lines (check_id, part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, l.PartNum, l.PartName, l.Category, l.ColorID, l.ColorName, l.BLID, l.BLColor, l.Need, l.Have, l.Extra, l.Damaged, deprioritized); err != nil {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO set_check_lines (check_id, part_num, part_name, category, color_id, color_name, bl_id, bl_color, need, have, extra, damaged, deprioritized, note, borrowed_qty, borrowed_from, lent_qty)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, l.PartNum, l.PartName, l.Category, l.ColorID, l.ColorName, l.BLID, l.BLColor, l.Need, l.Have, l.Extra, l.Damaged, deprioritized, l.Note, l.Borrowed, l.BorrowedFrom, l.Lent); err != nil {
 			return fmt.Errorf("saving line %s: %w", l.PartNum, err)
 		}
 	}
@@ -388,6 +400,9 @@ func (d *DB) FinishCheck(c *SetCheck) (extras []OwnedPart, err error) {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if bad := unrecordedBorrowed(tx, c); len(bad) > 0 {
+		return nil, fmt.Errorf("borrowed parts are marked but not recorded on the Borrowed list: %s — record them first", strings.Join(bad, ", "))
+	}
 	c.Status, c.FinishedAt = StatusDone, time.Now()
 	if err := saveCheck(tx, c); err != nil {
 		return nil, err
@@ -611,7 +626,7 @@ func (d *DB) TakeSpare(toSet, partNum string, colorID, qty int) (*OwnedPart, err
 // refreshMissing recomputes a set's missing count from its last check.
 func refreshMissing(tx *sql.Tx, setNum string, checkID int64) error {
 	var missing int
-	if err := tx.QueryRow(`SELECT COALESCE(SUM(MAX(need - have, 0)), 0) FROM set_check_lines WHERE check_id = ?`, checkID).Scan(&missing); err != nil {
+	if err := tx.QueryRow(`SELECT COALESCE(SUM(MAX(need - have - borrowed_qty - lent_qty, 0)), 0) FROM set_check_lines WHERE check_id = ?`, checkID).Scan(&missing); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`UPDATE set_state SET missing_qty = ? WHERE set_num = ?`, missing, setNum)

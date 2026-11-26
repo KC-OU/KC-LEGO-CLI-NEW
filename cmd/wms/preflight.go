@@ -62,7 +62,8 @@ func newPreflightCmd() *cobra.Command {
 			"  deploy    the code, the live machine, the new binary on scratch data, the ship scripts\n" +
 			"  publish   the code, secrets and personal data in what would be published, a clean build, the docs, GitHub\n" +
 			"  all       both (the default)\n\n" +
-			"--quick skips the slow checks (race detector, staticcheck, govulncheck, gosec, docs); a quick GO is not enough\n" +
+			"--quick skips the slow checks (staticcheck, govulncheck, gosec, docs); the test run itself never uses -race\n" +
+			"any more (see internal/preflight/checks.go's checkTests), --quick or not; a quick GO is not enough\n" +
 			"for the ship scripts. --require does not run anything: it only checks that a fresh full GO is on file.",
 		Example:   "  wms preflight deploy\n  wms preflight all --quick\n  wms preflight --require publish",
 		Args:      cobra.MaximumNArgs(1),

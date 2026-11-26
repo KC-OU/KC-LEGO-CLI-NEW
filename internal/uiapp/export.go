@@ -74,6 +74,20 @@ func (s *exportScreen) PanelID() string  { return "EXPORT" }
 func (s *exportScreen) Title() string    { return "Export" }
 func (s *exportScreen) OnEnter(app *App) {}
 
+// claimsKey keeps the format letters for the screen while a format is being picked: G (sorting sheet)
+// and L (sets CSV) are also the global "jump to the menu" and "lock" shortcuts, and must not fire here.
+func (s *exportScreen) claimsKey(app *App, r rune) bool {
+	if app.exportJob == nil || app.exportRes != nil || app.discordAsking {
+		return false
+	}
+	for _, f := range app.exportJob.Formats {
+		if strings.EqualFold(formatKeys[f][0], string(r)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *exportScreen) FKeys() [][2]string {
 	return [][2]string{{"F3", "Exit"}, {"F12", "Cancel"}}
 }
@@ -197,6 +211,10 @@ func runExport(app *App, job *exportJob, format string) {
 			app.setMsg("Export failed: "+err.Error(), true)
 			return
 		}
+		if format == "sorting-html" {
+			data.CheckerID = lego.WorkerID(app.userName())
+			app.legoDB.PrepareSortingSheet(app.ctx(), data, app.images)
+		}
 		body, ext, warns, err = lego.Encode(format, data)
 		if err != nil {
 			app.setMsg("Export failed: "+err.Error(), true)
@@ -242,7 +260,7 @@ func withPictures(app *App, d *lego.ExportData) *lego.ExportData {
 
 func missingExportJob(v *missingView) *exportJob {
 	return &exportJob{What: "missing parts for " + v.SetNum, Kind: "missing", Num: v.SetNum,
-		Formats: []string{"json", "xlsx", "csv", "html", "bricklink-xml", "rebrickable-csv"},
+		Formats: lego.FormatsFor("missing"),
 		Build: func(app *App) (*lego.ExportData, error) {
 			d := app.legoDB.ExportMissing(v.SetNum, v.Report)
 			r := v.Report
@@ -255,7 +273,7 @@ func missingExportJob(v *missingView) *exportJob {
 
 func ownedExportJob() *exportJob {
 	return &exportJob{What: "your owned parts and sets", Kind: "owned",
-		Formats: []string{"json", "xlsx", "csv", "html", "rebrickable-csv", "bricklink-xml"},
+		Formats: lego.FormatsFor("owned"),
 		Build: func(app *App) (*lego.ExportData, error) {
 			d, err := app.legoDB.ExportOwned()
 			if err != nil {
@@ -267,7 +285,7 @@ func ownedExportJob() *exportJob {
 
 func buildExportJob() *exportJob {
 	return &exportJob{What: "what you can build", Kind: "build",
-		Formats: []string{"json", "xlsx", "csv", "html"},
+		Formats: lego.FormatsFor("build"),
 		Build: func(app *App) (*lego.ExportData, error) {
 			res, err := app.legoDB.CanBuild(lego.BuildOptions{MinPercent: 50})
 			if err != nil {
@@ -281,7 +299,7 @@ func detailExportJob(req *detailReq, page *detailPage) *exportJob {
 	what := req.Kind + " " + req.Num
 	formats := []string{"json", "xlsx", "html"}
 	if req.Kind == "set" {
-		formats = append(formats, "sorting-html")
+		formats = lego.FormatsFor("set")
 	}
 	return &exportJob{What: what + " (with picture)", Kind: req.Kind, Num: req.Num,
 		Formats: formats,

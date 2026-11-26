@@ -43,7 +43,8 @@ const (
 )
 
 // Check is one thing to verify. Targets lists which of "deploy" and "publish" it matters for; Slow
-// checks (the race tests, the docs build) are left out of a --quick run.
+// checks (staticcheck, govulncheck, gosec, the docs build) are left out of a --quick run. The test
+// run itself (checkTests) is never slow-gated this way any more -- it no longer runs -race at all.
 type Check struct {
 	Group   string
 	Name    string

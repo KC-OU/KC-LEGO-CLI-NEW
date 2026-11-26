@@ -29,6 +29,10 @@ var genericPatterns = []struct {
 	{"hard-coded secret assignment", regexp.MustCompile(`(?i)\b(password|passwd|secret|api[_-]?key|token)\b\s*[:=]\s*["'][A-Za-z0-9+/_=-]{20,}["']`)},
 }
 
+// publicValues are settings that are not secret and appear in code and docs by design
+// (the default listen address, loopback URLs, the NIM model list), so finding them in the tree is not a leak.
+var publicValues = map[string]bool{"127.0.0.1": true, "localhost": true}
+
 // Secret is a value that must not appear anywhere in the tree. Origin says where it came from
 // ("settings.json:REBRICKABLE_API_KEY"); the value itself is never printed.
 type Secret struct {
@@ -53,7 +57,7 @@ func LoadSecrets(settings, twofa, deployValues string) []Secret {
 	seen := map[string]bool{}
 	add := func(origin, v string) {
 		v = strings.TrimSpace(v)
-		if len(v) < 8 || seen[v] {
+		if len(v) < 8 || seen[v] || publicValues[v] || strings.HasPrefix(v, "http://127.0.0.1") || strings.HasPrefix(v, "http://localhost") || strings.HasSuffix(origin, ":NVIDIA_NIM_MODELS") {
 			return
 		}
 		seen[v] = true

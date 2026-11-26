@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -296,3 +297,103 @@ func (d *DB) LookupSet(ctx context.Context, rb *Client, num string) *SetLookup {
 
 // Found says whether the lookup located a set (Notes may still hold problems worth showing).
 func (l *SetLookup) Found() bool { return l.Source != "" }
+
+// themeSearchMin is the shortest term matched against theme names, so "a" or "2" does not match every theme.
+const themeSearchMin = 3
+
+// themeCap bounds a theme listing ("Star Wars" is under a thousand sets; this is only a runaway guard).
+const themeCap = 5000
+
+// themeIDsMatching returns every theme whose full path ("Star Wars - Ultimate
+// Collector Series") contains every word of term, so a parent theme brings its
+// sub-themes with it. Themes number in the hundreds, so this is done in memory.
+func (d *DB) themeIDsMatching(term string) []int {
+	words := strings.Fields(strings.ToLower(term))
+	if len([]rune(strings.TrimSpace(term))) < themeSearchMin {
+		return nil
+	}
+	rows, err := d.Query(`SELECT id FROM cat_themes`)
+	if err != nil {
+		return nil
+	}
+	var ids []int
+	for rows.Next() {
+		var id int
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	var out []int
+	for _, id := range ids {
+		path := strings.ToLower(d.ThemePath(id))
+		ok := path != ""
+		for _, w := range words {
+			ok = ok && strings.Contains(path, w)
+		}
+		if ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func inList(ids []int) (string, []any) {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return "(?" + strings.Repeat(",?", len(ids)-1) + ")", args
+}
+
+// SearchCatalogThemeSets lists every set in the themes matching term, grouped by
+// theme, newest first. Nil when no theme matches.
+func (d *DB) SearchCatalogThemeSets(term string) ([]SetHit, error) {
+	ids := d.themeIDsMatching(term)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	in, args := inList(ids)
+	hits, err := d.setHits(`SELECT `+setCols+` FROM cat_sets s WHERE s.theme_id IN `+in+` LIMIT ?`, append(args, themeCap)...)
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Theme != hits[j].Theme {
+			return hits[i].Theme < hits[j].Theme
+		}
+		if hits[i].Year != hits[j].Year {
+			return hits[i].Year > hits[j].Year
+		}
+		return hits[i].Num < hits[j].Num
+	})
+	return hits, err
+}
+
+// SearchCatalogThemeParts lists every distinct part used by a set in the themes matching term.
+func (d *DB) SearchCatalogThemeParts(term string) ([]PartHit, error) {
+	ids := d.themeIDsMatching(term)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	in, args := inList(ids)
+	rows, err := d.Query(`
+		SELECT p.part_num, p.name, COALESCE(c.name, '')
+		FROM cat_parts p LEFT JOIN cat_categories c ON c.id = p.part_cat_id
+		WHERE p.part_num IN (
+			SELECT ip.part_num FROM cat_inventory_parts ip
+			JOIN cat_inventories i ON i.id = ip.inventory_id
+			JOIN cat_sets s ON s.set_num = i.set_num
+			WHERE s.theme_id IN `+in+`)
+		ORDER BY c.name, p.part_num LIMIT ?`, append(args, themeCap)...)
+	if err != nil {
+		return nil, fmt.Errorf("searching theme parts: %w", err)
+	}
+	defer rows.Close()
+	var out []PartHit
+	for rows.Next() {
+		var h PartHit
+		if err := rows.Scan(&h.Num, &h.Name, &h.Category); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}

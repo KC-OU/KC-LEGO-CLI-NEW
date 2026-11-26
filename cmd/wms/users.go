@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/auth"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/clerkbridge"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/loginlock"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/ui"
@@ -172,6 +174,19 @@ func resetUnifiedPassword(username, password string, isTemp, dryRun bool) error 
 	// A password reset is also how a locked-out account gets another chance --
 	// no separate "clear lockout" command needed.
 	_ = loginlock.ClearFailures(username)
+
+	// Keep a linked dashboard/Clerk login's password identical to this one --
+	// see dashboardapi.syncDashboardPassword's comment for why this can't be
+	// skipped (Provision only ever sets Clerk's password once, at link time).
+	if linked, lerr := dashboardlink.New("").Has(username); lerr == nil && linked {
+		if !clerkbridge.Configured() {
+			say(ui.Warn(t, "This account also has a linked dashboard login, but dashboard provisioning is not configured here -- its password was NOT updated and is now out of sync."))
+		} else if result, serr := clerkbridge.SyncPassword(username, password); serr != nil {
+			say(ui.Warn(t, "This account also has a linked dashboard login, but syncing its password failed: "+serr.Error()))
+		} else if !result.Provisioned {
+			say(ui.Warn(t, "This account is marked as dashboard-linked, but no matching Clerk account was found: "+result.Reason))
+		}
+	}
 
 	say(ui.Status(t, true, fmt.Sprintf("Password updated for %q", username)))
 	res := map[string]any{"username": username, "temporary": isTemp}

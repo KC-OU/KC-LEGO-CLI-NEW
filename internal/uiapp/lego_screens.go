@@ -202,7 +202,7 @@ func legoPartSearchScreen() screenModel {
 		panelID: "LEGPCH",
 		title:   "Search LEGO Parts",
 		build: func(app *App) []ui.Field {
-			return []ui.Field{{Label: "Search term (part name or number)"}}
+			return []ui.Field{{Label: "Part name, number or theme (a theme lists all its parts)"}}
 		},
 		submit: func(app *App, values []string) {
 			app.legoSearchTerm = values[0]
@@ -225,12 +225,21 @@ func legoPartResultsScreen() screenModel {
 			for i, p := range res.Hits {
 				rows[i] = []string{p.Num, p.Name, p.Category}
 			}
-			return rows, fmt.Sprintf("%d result(s) (%s) — D detail, / filter", len(res.Hits), res.Source), nil
+			return rows, fmt.Sprintf("%d result(s) (%s) — Up/Down select, Enter picture+detail, A add, / filter", len(res.Hits), res.Source), nil
 		},
-		extra: func(app *App, msg tea.KeyMsg) {
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && (msg.Runes[0] == 'd' || msg.Runes[0] == 'D') {
-				app.goTo(scrLegoDetailAsk)
+		onRow: func(app *App, row []string, msg tea.KeyMsg) bool {
+			switch {
+			case msg.Type == tea.KeyEnter || isKey(msg, 'd'):
+				app.detail = &detailReq{Kind: "part", Num: row[0], ColorID: -1}
+				app.goTo(scrLegoDetail)
+			case isKey(msg, 'a'):
+				if app.checkWrite("ADD_PART") {
+					startPartFlow(app, row[0])
+				}
+			default:
+				return false
 			}
+			return true
 		},
 	}
 }
@@ -253,14 +262,14 @@ func legoSetFindScreen() screenModel {
 		panelID: "LEGSFD",
 		title:   "Search LEGO Sets",
 		build: func(app *App) []ui.Field {
-			return []ui.Field{{Label: "Search term (set number, name or theme)"}}
+			return []ui.Field{{Label: "Set no., name, theme, or list: 3866,40622,75344"}}
 		},
 		submit: func(app *App, values []string) {
 			if strings.TrimSpace(values[0]) == "" {
 				app.setMsg("Enter a set number, name or theme to search for.", true)
 				return
 			}
-			app.legoSearchTerm = values[0]
+			app.legoSearchTerm, app.legoFoundSort = values[0], ""
 			app.goTo(scrLegoSetFound)
 		},
 	}
@@ -276,6 +285,7 @@ func legoSetFoundScreen() screenModel {
 			if len(res.Notes) > 0 {
 				app.setMsg(strings.Join(res.Notes, " "), true)
 			}
+			lego.SortSetHits(res.Hits, app.legoFoundSort)
 			found := make([]foundSet, len(res.Hits))
 			for i, h := range res.Hits {
 				found[i] = foundSet{SetNum: h.Num, Name: h.Name, Theme: h.Theme, Year: h.Year, Pieces: h.Pieces}
@@ -302,16 +312,38 @@ func legoSetFoundScreen() screenModel {
 				}
 				rows[i] = []string{f.SetNum, f.Name, theme, year, pieces, owned}
 			}
-			return rows, fmt.Sprintf("%d result(s) (%s) — A add, D detail, / filter", len(found), source), nil
+			sorted := map[string]string{"year": "newest first", "year_asc": "oldest first", "num": "set no. up", "num_desc": "set no. down"}[app.legoFoundSort]
+			if sorted != "" {
+				sorted = ", sorted " + sorted
+			}
+			return rows, fmt.Sprintf("%d result(s) (%s%s) — Enter detail, A add, Y sort year, N sort set no., / filter", len(found), source, sorted), nil
 		},
-		extra: func(app *App, msg tea.KeyMsg) {
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && (msg.Runes[0] == 'd' || msg.Runes[0] == 'D') {
-				app.goTo(scrLegoDetailAsk)
-				return
+		onRow: func(app *App, row []string, msg tea.KeyMsg) bool {
+			switch {
+			case msg.Type == tea.KeyEnter || isKey(msg, 'd'):
+				app.detail = &detailReq{Kind: "set", Num: row[0], ColorID: -1}
+				app.goTo(scrLegoDetail)
+			case isKey(msg, 'a'):
+				if app.checkWrite("ADD_LEGO_SET") {
+					startSetDraft(app, row[0])
+				}
+			case isKey(msg, 'y'), isKey(msg, 'n'): // press again to flip the direction
+				first, second := "year", "year_asc"
+				if isKey(msg, 'n') {
+					first, second = "num", "num_desc"
+				}
+				cur := app.legoFoundSort
+				app.legoFoundSort = first
+				if cur == first {
+					app.legoFoundSort = second
+				}
+				if t, ok := app.screens[scrLegoSetFound].(*tableScreen); ok {
+					t.reload(app)
+				}
+			default:
+				return false
 			}
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && (msg.Runes[0] == 'a' || msg.Runes[0] == 'A') && len(app.legoFound) > 0 {
-				app.goTo(scrLegoSetFoundAdd)
-			}
+			return true
 		},
 	}
 }

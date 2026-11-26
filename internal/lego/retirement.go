@@ -87,11 +87,17 @@ func ParseRetirementCSV(r io.Reader) ([]RetirementInfo, error) {
 	if setCol < 0 {
 		return nil, fmt.Errorf(`no "Set #" column found in the first 10 rows`)
 	}
-	nameCol := idx(header, "set name", "name")
-	themeCol := idx(header, "theme")
-	subCol := idx(header, "subtheme")
-	dateCol := idx(header, "retirement date", "retires", "retirement")
-	notesCol := idx(header, "notes:", "notes: (exclusivity, release, etc.)", "notes")
+	var nameCol, themeCol, subCol, dateCol, notesCol int
+	// The sheet repeats a header mid-file for its "changes this month" table, where the
+	// current date is "New Date" rather than "Retirement Date" -- re-read the columns then.
+	readCols := func(h []string) {
+		nameCol = idx(h, "set name", "name")
+		themeCol = idx(h, "theme")
+		subCol = idx(h, "subtheme")
+		dateCol = idx(h, "retirement date", "retires", "retirement", "new date")
+		notesCol = idx(h, "notes:", "notes: (exclusivity, release, etc.)", "notes")
+	}
+	readCols(header)
 
 	get := func(row []string, i int) string {
 		if i < 0 || i >= len(row) {
@@ -114,6 +120,11 @@ func ParseRetirementCSV(r io.Reader) ([]RetirementInfo, error) {
 		}
 		num := get(row, setCol)
 		if num == "" {
+			continue
+		}
+		if c := idx(row, "set #", "set num", "set number", "set"); c >= 0 && strings.EqualFold(get(row, c), strings.TrimSpace(header[setCol])) {
+			setCol = c
+			readCols(row) // a repeated header row, not a set
 			continue
 		}
 		out = append(out, RetirementInfo{

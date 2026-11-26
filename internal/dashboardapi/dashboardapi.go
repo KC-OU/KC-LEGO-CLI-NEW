@@ -27,6 +27,7 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/brickowl"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/dashboardlink"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
+	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/mobileapi"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/partdb"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/users"
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/wmsdb"
@@ -34,6 +35,8 @@ import (
 
 type Server struct {
 	legoDB *lego.DB
+	// mobile serves the phone API routes behind the shared token (see mobile_bridge.go); nil = off.
+	mobile *mobileapi.Server
 	// usersSvc backs the admin "assign to" user list (handleUsers) and the
 	// account-management endpoints -- nil in tests that only exercise
 	// Kanban/Sets/accuracy, same "nil disables" convention as token below.
@@ -79,6 +82,25 @@ type Server struct {
 	// web-dashboard login -- never nil, deliberately NOT part of
 	// internal/access.Policy (see internal/dashboardlink's own comment).
 	dashLinks *dashboardlink.Store
+	// downloads is a plain JSON-file store, never nil -- same pattern as
+	// currencies above (see downloads.go).
+	downloads *downloadsStore
+	// onboarding is a plain JSON-file store, never nil -- same pattern as
+	// currencies above (see onboarding.go).
+	onboarding *onboardingStore
+	// version/commit/buildDate are this running binary's own build info
+	// (cmd/wms's main.version/commit/date, set at link time -- see
+	// SetVersion) -- empty until the caller sets them, surfaced read-only
+	// via handleSystemHealth.
+	version, commit, buildDate string
+}
+
+// SetVersion records this running binary's build info for handleSystemHealth
+// to report -- called once at startup (cmd/wms/gateway.go) with main's own
+// version/commit/date package vars, which dashboardapi can't import directly
+// (cmd depends on internal, not the reverse).
+func (s *Server) SetVersion(version, commit, buildDate string) {
+	s.version, s.commit, s.buildDate = version, commit, buildDate
 }
 
 func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger, token string, rebrick *lego.Client, pdb *partdb.DB, wms *wmsdb.Client, bl *bricklink.Client, bo *brickowl.Client) *Server {
@@ -88,7 +110,7 @@ func NewServer(legoDB *lego.DB, usersSvc *users.Service, auditLog *audit.Logger,
 	}
 	return &Server{
 		legoDB: legoDB, usersSvc: usersSvc, audit: auditLog, token: token, rebrick: rebrick, pdb: pdb, pdbw: pdbw, wms: wms, bl: bl, bo: bo,
-		currencies: newCurrencyStore(""), lang: newLangStore(""), dashLinks: dashboardlink.New(""),
+		currencies: newCurrencyStore(""), lang: newLangStore(""), dashLinks: dashboardlink.New(""), downloads: newDownloadsStore(""), onboarding: newOnboardingStore(""),
 	}
 }
 
@@ -123,7 +145,11 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/proofs/flag", s.withToken(s.handleFlagDispute))
 	mux.HandleFunc("GET /dashboard/queries/parts", s.withToken(s.handleQueryParts))
 	mux.HandleFunc("GET /dashboard/queries/minifigs", s.withToken(s.handleQueryMinifigs))
+	mux.HandleFunc("GET /dashboard/catalog/sets", s.withToken(s.handleCatalogSetSearch))
 	mux.HandleFunc("GET /dashboard/catalog/sets/{setNum}", s.withToken(s.handleCatalogSetLookup))
+	mux.HandleFunc("GET /dashboard/checks/{setNum}", s.withToken(s.handleSetCheck))
+	mux.HandleFunc("POST /dashboard/auth/grace-mint", s.withToken(s.handleGraceMint))
+	mux.HandleFunc("POST /dashboard/auth/grace-login", s.withToken(s.handleGraceLogin))
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))
@@ -147,12 +173,14 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/access/groups/perm", s.withToken(s.handleSetGroupPerm))
 	mux.HandleFunc("POST /dashboard/lego/sets", s.withToken(s.handleUpsertSet))
 	mux.HandleFunc("POST /dashboard/lego/parts", s.withToken(s.handleUpsertPart))
+	mux.HandleFunc("POST /dashboard/lego/element-id", s.withToken(s.handleSetElementID))
 	mux.HandleFunc("GET /dashboard/lego/retiring", s.withToken(s.handleRetiringSoon))
 	mux.HandleFunc("GET /dashboard/reports/missing", s.withToken(s.handleMissingReport))
 	mux.HandleFunc("GET /dashboard/reports/extra", s.withToken(s.handleExtraReport))
 	mux.HandleFunc("GET /dashboard/reports/orders-list", s.withToken(s.handleOrderListReport))
 	mux.HandleFunc("GET /dashboard/reports/history", s.withToken(s.handleCheckHistory))
 	mux.HandleFunc("GET /dashboard/reports/stocktake/{setNum}", s.withToken(s.handleStockSheet))
+	mux.HandleFunc("GET /dashboard/export/{kind}", s.withToken(s.handleExport))
 	mux.HandleFunc("GET /dashboard/orders/spend", s.withToken(s.handleSpendReport))
 	mux.HandleFunc("GET /dashboard/orders", s.withToken(s.handleListOrders))
 	mux.HandleFunc("GET /dashboard/orders/{id}", s.withToken(s.handleGetOrder))
@@ -174,6 +202,10 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/admin/settings", s.withToken(s.handleGetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings", s.withToken(s.handleSetSettings))
 	mux.HandleFunc("POST /dashboard/admin/settings/sync-admin", s.withToken(s.handleSetSyncAdmin))
+	mux.HandleFunc("GET /dashboard/rebrickable/sets", s.withToken(s.handleRebrickableSets))
+	mux.HandleFunc("GET /dashboard/rebrickable/parts", s.withToken(s.handleRebrickableParts))
+	mux.HandleFunc("POST /dashboard/lang", s.withToken(s.handleSetLang))
+	mux.HandleFunc("POST /dashboard/lego/image-override", s.withToken(s.handleSetImageOverride))
 	mux.HandleFunc("GET /dashboard/bricklink/item/{type}/{number}", s.withToken(s.handleBLItem))
 	mux.HandleFunc("GET /dashboard/bricklink/price/{type}/{number}", s.withToken(s.handleBLPrice))
 	mux.HandleFunc("GET /dashboard/bricklink/where-used/{number}", s.withToken(s.handleBLWhereUsed))
@@ -199,7 +231,76 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos", s.withToken(s.handleUploadSetPhoto))
 	mux.HandleFunc("POST /dashboard/sets/{setNum}/photos/{id}/remove", s.withToken(s.handleRemoveSetPhoto))
 	mux.HandleFunc("GET /dashboard/lego/value", s.withToken(s.handleCollectionValue))
+	mux.HandleFunc("GET /dashboard/lego/partout", s.withToken(s.handlePartOut))
+	mux.HandleFunc("POST /dashboard/lego/partout/fetch", s.withToken(s.handlePartOutFetch))
+	mux.HandleFunc("POST /dashboard/sales/sync", s.withToken(s.handleSalesSync))
+	mux.HandleFunc("GET /dashboard/sales", s.withToken(s.handleSalesList))
+	mux.HandleFunc("GET /dashboard/sales/{id}", s.withToken(s.handleSalesPickList))
+	mux.HandleFunc("POST /dashboard/sales/{id}/picked", s.withToken(s.handleSalesPicked))
+	mux.HandleFunc("GET /dashboard/lego/movers", s.withToken(s.handleMovers))
+	mux.HandleFunc("POST /dashboard/store/sync", s.withToken(s.handleStoreSync))
+	mux.HandleFunc("GET /dashboard/store/reprice", s.withToken(s.handleReprice))
+	mux.HandleFunc("GET /dashboard/acquisitions", s.withToken(s.handleAcquisitionsList))
+	mux.HandleFunc("POST /dashboard/acquisitions", s.withToken(s.handleAcquisitionAdd))
+	mux.HandleFunc("POST /dashboard/acquisitions/{id}/advance", s.withToken(s.handleAcquisitionAdvance))
+	mux.HandleFunc("GET /dashboard/borrowed", s.withToken(s.handleBorrowedList))
+	mux.HandleFunc("POST /dashboard/borrowed", s.withToken(s.handleBorrowedAdd))
+	mux.HandleFunc("POST /dashboard/borrowed/{id}/advance", s.withToken(s.handleBorrowedAdvance))
+	mux.HandleFunc("GET /dashboard/retired", s.withToken(s.handleRetired))
+	mux.HandleFunc("POST /dashboard/retired/refresh", s.withToken(s.handleRetiredRefresh))
+	mux.HandleFunc("POST /dashboard/retired/import", s.withToken(s.handleRetiredImport))
+	mux.HandleFunc("GET /dashboard/counts/due", s.withToken(s.handleCountsDue))
+	mux.HandleFunc("POST /dashboard/counts", s.withToken(s.handleCountRecord))
+	mux.HandleFunc("GET /dashboard/quality", s.withToken(s.handleQuality))
+	mux.HandleFunc("GET /dashboard/bins", s.withToken(s.handleBins))
+	mux.HandleFunc("POST /dashboard/ai/search", s.withToken(s.handleAISearch))
+	mux.HandleFunc("POST /dashboard/ai/listing", s.withToken(s.handleAIListing))
 	mux.HandleFunc("GET /dashboard/admin/system-health", s.withToken(s.handleSystemHealth))
+	mux.HandleFunc("GET /dashboard/queue", s.withToken(s.handleQueue))
+	mux.HandleFunc("POST /dashboard/queue/cancel", s.withToken(s.handleQueueCancel))
+	mux.HandleFunc("POST /dashboard/queue/cancel-stale", s.withToken(s.handleQueueCancelStale))
+	mux.HandleFunc("GET /dashboard/blog", s.withToken(s.handleBlogList))
+	mux.HandleFunc("GET /dashboard/blog/{slug}", s.withToken(s.handleBlogGet))
+	mux.HandleFunc("POST /dashboard/blog", s.withToken(s.handleBlogSave))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/state", s.withToken(s.handleBlogState))
+	mux.HandleFunc("GET /dashboard/blog/{slug}/steps", s.withToken(s.handleBlogSteps))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/facts", s.withToken(s.handleBlogFacts))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/pull-check", s.withToken(s.handleBlogPullCheck))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/build", s.withToken(s.handleBlogBuild))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/file", s.withToken(s.handleBlogFile))
+	mux.HandleFunc("POST /dashboard/blog/{slug}/file/remove", s.withToken(s.handleBlogFileRemove))
+	mux.HandleFunc("GET /dashboard/blog/{slug}/file", s.withToken(s.handleBlogFileGet))
+	mux.HandleFunc("GET /dashboard/security/crowdsec", s.withToken(s.handleCrowdsec))
+	mux.HandleFunc("POST /dashboard/security/crowdsec/ban", s.withToken(s.handleCrowdsecAction("ban")))
+	mux.HandleFunc("POST /dashboard/security/crowdsec/unban", s.withToken(s.handleCrowdsecAction("unban")))
+	mux.HandleFunc("GET /dashboard/downloads", s.withToken(s.handleListDownloads))
+	mux.HandleFunc("POST /dashboard/downloads/set", s.withToken(s.handleSetDownload))
+	mux.HandleFunc("POST /dashboard/downloads/remove", s.withToken(s.handleRemoveDownload))
+	mux.HandleFunc("GET /dashboard/onboarding/items", s.withToken(s.handleListOnboardingItems))
+	mux.HandleFunc("POST /dashboard/onboarding/items/set", s.withToken(s.handleSetOnboardingItem))
+	mux.HandleFunc("POST /dashboard/onboarding/items/remove", s.withToken(s.handleRemoveOnboardingItem))
+	mux.HandleFunc("POST /dashboard/onboarding/submit", s.withToken(s.handleSubmitOnboarding))
+	mux.HandleFunc("GET /dashboard/onboarding/submissions", s.withToken(s.handleLookupOnboardingSubmissions))
+	mux.HandleFunc("POST /dashboard/onboarding/submissions/review", s.withToken(s.handleReviewOnboardingSubmission))
+	mux.HandleFunc("GET /dashboard/onboarding/verify-upload", s.withToken(s.handleVerifyOnboardingUpload))
+	mux.HandleFunc("POST /dashboard/onboarding/guest-link", s.withToken(s.handleGenerateGuestUploadLink))
+	mux.HandleFunc("POST /dashboard/onboarding/guest-upload", s.withToken(s.handleGuestUpload))
+	mux.HandleFunc("GET /dashboard/messages", s.withToken(s.handleMessagesList))
+	mux.HandleFunc("GET /dashboard/messages/unread", s.withToken(s.handleMessagesUnread))
+	mux.HandleFunc("POST /dashboard/messages/read", s.withToken(s.handleMessagesRead))
+	mux.HandleFunc("POST /dashboard/messages/send", s.withToken(s.handleMessagesSend))
+	mux.HandleFunc("POST /dashboard/messages/reply", s.withToken(s.handleMessagesReply))
+	mux.HandleFunc("POST /dashboard/onboarding/flow/start", s.withToken(s.handleFlowStart))
+	mux.HandleFunc("GET /dashboard/onboarding/flow", s.withToken(s.handleFlowLookup))
+	mux.HandleFunc("GET /dashboard/onboarding/flows", s.withToken(s.handleFlowList))
+	mux.HandleFunc("GET /dashboard/onboarding/flow/{id}", s.withToken(s.handleFlowDetail))
+	mux.HandleFunc("POST /dashboard/onboarding/flow/{id}/paper", s.withToken(s.handleFlowPaper))
+	mux.HandleFunc("GET /dashboard/onboarding/flow/{id}/paper", s.withToken(s.handleFlowPaperFile))
+	mux.HandleFunc("POST /dashboard/onboarding/flow/{id}/verify", s.withToken(s.handleFlowVerify))
+	mux.HandleFunc("POST /dashboard/onboarding/flow/{id}/discrepancy", s.withToken(s.handleFlowDiscrepancy))
+	mux.HandleFunc("POST /dashboard/onboarding/flow/{id}/complete", s.withToken(s.handleFlowComplete))
+	mux.HandleFunc("GET /dashboard/onboarding/blog-template", s.withToken(s.handleBlogTemplate))
+	mux.HandleFunc("POST /dashboard/onboarding/waive", s.withToken(s.handleOnboardingWaive))
 	mux.HandleFunc("GET /dashboard/currencies", s.withToken(s.handleListCurrencies))
 	mux.HandleFunc("POST /dashboard/currencies/add", s.withToken(s.handleAddCurrency))
 	mux.HandleFunc("POST /dashboard/currencies/remove", s.withToken(s.handleRemoveCurrency))
@@ -210,6 +311,8 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/string", s.withToken(s.handleUpsertLanguageString))
 	mux.HandleFunc("POST /dashboard/admin/languages/{code}/remove", s.withToken(s.handleDeleteLanguage))
 	mux.HandleFunc("GET /dashboard/me/permissions", s.withToken(s.handleMyPermissions))
+	mux.HandleFunc("POST /dashboard/mobile-session", s.withToken(s.handleMobileSession))
+	s.mountMobile(mux)
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
@@ -290,6 +393,11 @@ func (s *Server) handleSetDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// ?sort=part_id|color|qty -- see handleCatalogSetLookup for the same thing.
+	lego.SortBy(inventory, r.URL.Query().Get("sort"),
+		func(it lego.InvItem) string { return it.PartNum },
+		func(it lego.InvItem) string { return it.ColorName },
+		func(it lego.InvItem) int { return it.Qty })
 	// CatalogSet is the one place an admin's image override (SetImageOverride)
 	// is applied -- the same picture the TUI and every other reader see, so
 	// the dashboard shows it here rather than reading cat_sets.img_url itself.

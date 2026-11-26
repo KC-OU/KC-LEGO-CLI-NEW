@@ -42,6 +42,14 @@ type userPref struct {
 	// and real terminal space, so it opts in rather than changing the
 	// screen for everyone.
 	ShowPictures bool `json:"show_pictures,omitempty"`
+	// Lang is this user's language preference, set from the dashboard's
+	// language switcher (see internal/dashboardapi's handleSetLang, which
+	// writes this same "lang" field directly rather than importing this
+	// package) and mirrored back by userLang. Nothing in the TUI/CLI
+	// renders another language yet -- this only carries the preference
+	// itself, a future translation pass' plug-in point (see the dashboard
+	// batch's Phase 16).
+	Lang string `json:"lang,omitempty"`
 }
 
 func hasSeenTour(user string) bool { return loadPrefs()[user].Tour }

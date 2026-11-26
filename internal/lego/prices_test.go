@@ -121,25 +121,65 @@ func TestWatchAlertsOnceThenOnlyWhenThePriceFallsFurther(t *testing.T) {
 	}
 	ctx := context.Background()
 	f := &fakePrices{prices: map[string]float64{"PART/3001/5/U": 0.08, "SET/75192-1/0/U": 350}}
-	if hits, err := d.CheckWatches(ctx, f); err != nil || len(hits) != 0 {
+	if hits, err := d.CheckWatches(ctx, f, nil); err != nil || len(hits) != 0 {
 		t.Fatalf("above the limit: %v %v", hits, err)
 	}
 	f.prices["PART/3001/5/U"] = 0.055
-	hits, _ := d.CheckWatches(ctx, f)
-	if len(hits) != 1 || hits[0].ItemNo != "3001" || hits[0].Price != 0.055 || hits[0].Currency != "GBP" {
+	hits, _ := d.CheckWatches(ctx, f, nil)
+	if len(hits) != 1 || hits[0].ItemNo != "3001" || hits[0].Price != 0.055 || hits[0].Currency != "GBP" || hits[0].Plausible != nil {
 		t.Fatalf("under the limit: %+v", hits)
 	}
 	f.prices["PART/3001/5/U"] = 0.058 // bouncing around the limit: no repeat
-	if hits, _ := d.CheckWatches(ctx, f); len(hits) != 0 {
+	if hits, _ := d.CheckWatches(ctx, f, nil); len(hits) != 0 {
 		t.Errorf("no repeat alert inside the cooldown: %+v", hits)
 	}
 	f.prices["PART/3001/5/U"] = 0.04 // a real further drop alerts again
-	if hits, _ := d.CheckWatches(ctx, f); len(hits) != 1 {
+	if hits, _ := d.CheckWatches(ctx, f, nil); len(hits) != 1 {
 		t.Errorf("a further drop alerts again: %+v", hits)
 	}
 	ws, _ := d.ListWatches()
 	if len(ws) != 2 || ws[1].LastPrice == 0 || ws[1].LastChecked.IsZero() {
 		t.Errorf("watches record what they saw: %+v", ws)
+	}
+}
+
+type fakePlausibility struct {
+	enabled bool
+	prob    float64
+	asked   string
+}
+
+func (f *fakePlausibility) Enabled() bool { return f.enabled }
+func (f *fakePlausibility) Plausible(ctx context.Context, question string) (float64, error) {
+	f.asked = question
+	return f.prob, nil
+}
+
+func TestWatchHitAsksThePlausibilityCheckerWhenOneIsGivenAndEnabled(t *testing.T) {
+	d := valueDB(t)
+	if err := d.AddWatch(Watch{ItemType: "PART", ItemNo: "3001", ColorID: 4, ColorName: "Red", Cond: "U", MaxPrice: 0.06}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	f := &fakePrices{prices: map[string]float64{"PART/3001/5/U": 0.055}}
+
+	j := &fakePlausibility{enabled: false, prob: 0.9}
+	hits, _ := d.CheckWatches(ctx, f, j)
+	if len(hits) != 1 || hits[0].Plausible != nil {
+		t.Fatalf("a disabled checker must not be asked: %+v", hits)
+	}
+	if err := d.AddWatch(Watch{ItemType: "PART", ItemNo: "3001", ColorID: 4, ColorName: "Red", Cond: "U", MaxPrice: 0.06}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.prices["PART/3001/5/U"] = 0.04 // a further drop: alerts again
+	j2 := &fakePlausibility{enabled: true, prob: 0.3}
+	hits2, _ := d.CheckWatches(ctx, f, j2)
+	if len(hits2) != 1 || hits2[0].Plausible == nil || *hits2[0].Plausible != 0.3 {
+		t.Fatalf("an enabled checker's answer must be attached to the hit: %+v", hits2)
+	}
+	if j2.asked == "" {
+		t.Error("the checker should have been asked a question")
 	}
 }
 
