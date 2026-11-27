@@ -179,6 +179,9 @@ func (d *DB) CompleteFlow(id int64, user, answers string) (*OnboardingFlow, erro
 	if v, err := time.Parse(timeLayout, f.VerifiedAt); err == nil && last.FinishedAt.Before(v) {
 		return nil, errors.New("the set's last check is older than the verification: do the check, then submit")
 	}
+	if why := d.BlogBlock(f.SetNum); why != "" {
+		return nil, errors.New("the blog can't be generated: " + why)
+	}
 	if _, err := d.Exec(`UPDATE onboarding_flows SET status = ?, answers = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
 		FlowComplete, answers, flowNow(), flowNow(), id); err != nil {
 		return nil, err

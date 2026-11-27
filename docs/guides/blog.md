@@ -130,3 +130,12 @@ never appears on the public site. Press **Send for review** when everything is g
 Reviewers choose **Approve**, **Request changes** (needs a note) or **Reject** (needs a note). The writer gets the decision in their Inbox and
 sees it live on the last page; after *changes requested* they fix the post and send it again. A post pushed from Obsidian waits as a draft
 until these checks pass, so it cannot skip them.
+
+## A set with missing parts cannot go to the blog
+
+The blog template, **Send for review** and **Approve** are all refused while the set's last finished check still has parts
+missing that no borrowed record covers (or has a line marked borrowed that is not on the Borrowed list, or has no finished
+check at all). Borrowed parts count as present, so borrowing the parts from another set and recording it on the Borrowed list
+(or completing the set and checking again) lifts the block. This applies to admins too. Admins can still waive or verify the
+paper check and do the check itself on the dashboard, the terminal and the command line. The last page lists it as
+*No parts missing*.

@@ -674,11 +674,36 @@ func (s *Server) handleAccessUserRename(w http.ResponseWriter, r *http.Request) 
 		writeAccessErr(w, http.StatusServiceUnavailable, fmt.Errorf("the collection database is not available"))
 		return
 	}
+	// The Clerk login goes first so a refusal (length, characters, already taken) changes nothing; it is put back if a
+	// later step fails, so the dashboard link never ends up pointing at an ID that no longer exists.
+	clerkMoved := false
+	if clerkbridge.Configured() {
+		moved, err := clerkbridge.RenameUser(req.OldID, req.NewID)
+		if err != nil {
+			writeAccessErr(w, http.StatusBadRequest, err)
+			return
+		}
+		clerkMoved = moved
+	}
+	undoClerk := func() {
+		if clerkMoved {
+			_, _ = clerkbridge.RenameUser(req.NewID, req.OldID)
+		}
+	}
 	if err := s.legoDB.RenameUser(req.OldID, req.NewID); err != nil {
+		undoClerk()
 		writeAccessErr(w, http.StatusBadRequest, fmt.Errorf("ticket/accuracy/kanban history was not moved, nothing changed: %w", err))
 		return
 	}
 	var warnings []string
+	if s.usersSvc != nil {
+		if err := s.usersSvc.RenameUnified(r.Context(), req.OldID, req.NewID, "Checker"); err != nil {
+			warnings = append(warnings, "the ModernWMS/Part-DB login was not renamed: "+err.Error())
+		}
+	}
+	if !clerkMoved && clerkbridge.Configured() {
+		warnings = append(warnings, "no Clerk (dashboard) login is linked to "+req.OldID+", so none was changed")
+	}
 	if err := twofa.Rename(req.OldID, req.NewID, source); err != nil {
 		warnings = append(warnings, "2FA enrollment was not moved: "+err.Error())
 	}
@@ -700,6 +725,7 @@ func (s *Server) handleAccessUserRename(w http.ResponseWriter, r *http.Request) 
 		p.Users[nk] = u
 		return nil
 	}); err != nil {
+		undoClerk()
 		writeAccessErr(w, http.StatusBadRequest, err)
 		return
 	}

@@ -381,6 +381,10 @@ func (s *Server) handleBlogTemplate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "set is required"})
 		return
 	}
+	if why := s.legoDB.BlogBlock(set); why != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the blog template can't be generated: " + why})
+		return
+	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ToLower(filepath.Base(set))+`.md"`)
 	_, _ = io.WriteString(w, s.legoDB.BlogTemplate(set))

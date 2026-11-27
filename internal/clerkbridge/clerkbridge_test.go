@@ -522,3 +522,44 @@ func TestVerifyPasswordFailsClosedOnAMalformedBody(t *testing.T) {
 		t.Fatal("expected VerifyPassword to fail closed on a malformed 200 body")
 	}
 }
+
+func TestRenameUserPatchesUsernameAndExternalID(t *testing.T) {
+	var patched map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/users":
+			// Clerk ignores a filter it does not know: return two users, only one is "checker".
+			_, _ = w.Write([]byte(`[{"id":"user_other","username":"someone"},{"id":"user_chk","username":"checker","external_id":""}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/users/user_chk":
+			_ = json.NewDecoder(r.Body).Decode(&patched)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	old := apiBase
+	apiBase = server.URL
+	defer func() { apiBase = old }()
+	t.Setenv(config.ClerkSecretKey, "sk_test_fake")
+
+	ok, err := RenameUser("checker", "7421")
+	if err != nil || !ok {
+		t.Fatalf("RenameUser = %v, %v", ok, err)
+	}
+	if patched["username"] != "7421" || patched["external_id"] != "7421" {
+		t.Fatalf("patch body = %v", patched)
+	}
+}
+
+func TestRenameUserWithNoClerkAccountIsNotAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`[]`)) }))
+	defer server.Close()
+	old := apiBase
+	apiBase = server.URL
+	defer func() { apiBase = old }()
+	t.Setenv(config.ClerkSecretKey, "sk_test_fake")
+	if ok, err := RenameUser("nobody", "7421"); ok || err != nil {
+		t.Fatalf("RenameUser = %v, %v; want false, nil", ok, err)
+	}
+}

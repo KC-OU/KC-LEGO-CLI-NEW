@@ -548,3 +548,116 @@ func provisionSecondFactorPhone(secret, userID, phone string) error {
 	}
 	return fmt.Errorf("rejected (%d)", resp.StatusCode)
 }
+
+// clerkUserRow is the part of a Clerk user object the lookups below read.
+type clerkUserRow struct {
+	ID             string `json:"id"`
+	TOTPEnabled    bool   `json:"totp_enabled"`
+	Username       string `json:"username"`
+	ExternalID     string `json:"external_id"`
+	PublicMetadata struct {
+		Role string `json:"role"`
+	} `json:"public_metadata"`
+}
+
+func listUsers(query string) ([]clerkUserRow, error) {
+	secret := config.Get(config.ClerkSecretKey)
+	if secret == "" {
+		return nil, fmt.Errorf("dashboard login provisioning is not configured (set %s)", config.ClerkSecretKey)
+	}
+	req, err := http.NewRequest(http.MethodGet, apiBase+"/users?"+query+"&limit=500", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("could not reach Clerk: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("looking up the Clerk account failed (%d)", resp.StatusCode)
+	}
+	var out []clerkUserRow
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("malformed response from Clerk: %w", err)
+	}
+	return out, nil
+}
+
+// FindByUsername finds the one Clerk account whose username or external_id is id (case-insensitive). Like
+// FindUserByEmail it never trusts Clerk's own filtering: every candidate is re-checked here, and more than one
+// match is "not found" rather than a guess.
+func FindByUsername(id string) (*UserInfo, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	var match *clerkUserRow
+	for _, q := range []string{"username=" + url.QueryEscape(id), "external_id=" + url.QueryEscape(id)} {
+		rows, err := listUsers(q)
+		if err != nil {
+			return nil, err
+		}
+		for i, u := range rows {
+			if !strings.EqualFold(u.Username, id) && !strings.EqualFold(u.ExternalID, id) {
+				continue
+			}
+			if match != nil && match.ID != u.ID {
+				return nil, nil
+			}
+			match = &rows[i]
+		}
+		if match != nil {
+			break
+		}
+	}
+	if match == nil {
+		return nil, nil
+	}
+	return &UserInfo{ID: match.ID, TOTPEnabled: match.TOTPEnabled, Username: match.Username, Role: match.PublicMetadata.Role}, nil
+}
+
+// FindByIdentifier takes what someone types to sign in: an email address or a user ID/username.
+func FindByIdentifier(ident string) (*UserInfo, error) {
+	if strings.Contains(ident, "@") {
+		return FindUserByEmail(ident)
+	}
+	return FindByUsername(ident)
+}
+
+// RenameUser gives the Clerk account known as oldID (username or external_id) the new username and external_id,
+// so a changed login ID keeps its dashboard link. Returns false, nil when there is no such Clerk account (an
+// account that was never linked is not an error). Clerk may reject the new username (length, characters,
+// already taken); that error is returned as Clerk words it.
+func RenameUser(oldID, newID string) (bool, error) {
+	info, err := FindByUsername(oldID)
+	if err != nil || info == nil {
+		return false, err
+	}
+	body, _ := json.Marshal(map[string]string{"username": newID, "external_id": newID})
+	req, err := http.NewRequest(http.MethodPatch, apiBase+"/users/"+url.PathEscape(info.ID), bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+config.Get(config.ClerkSecretKey))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return false, fmt.Errorf("could not reach Clerk: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return true, nil
+	}
+	var e struct {
+		Errors []struct {
+			LongMessage string `json:"long_message"`
+		} `json:"errors"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	if len(e.Errors) > 0 && e.Errors[0].LongMessage != "" {
+		return false, fmt.Errorf("Clerk refused the new ID: %s", e.Errors[0].LongMessage)
+	}
+	return false, fmt.Errorf("Clerk refused the new ID (%d)", resp.StatusCode)
+}

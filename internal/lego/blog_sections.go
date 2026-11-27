@@ -518,17 +518,10 @@ func (d *DB) ReadyChecks(slug, attachDir string) []ReadyCheck {
 	}
 	last, _ := d.LastCheck(p.SetNum)
 	add("Check finished", last != nil && last.Status == StatusDone, true, "Finish the check of the set first.")
-	unrecorded := false
-	if last != nil {
-		for _, l := range last.Lines {
-			if l.Borrowed > 0 {
-				recorded := 0
-				_ = d.QueryRow(`SELECT COALESCE(SUM(qty),0) FROM borrowed_parts WHERE build_set_num = ? AND need_part_num = ? AND (color_id < 0 OR color_id = ?)`, p.SetNum, l.PartNum, l.ColorID).Scan(&recorded)
-				unrecorded = unrecorded || recorded < l.Borrowed
-			}
-		}
-	}
+	unrecorded := d.unrecordedBorrow(p.SetNum, last)
+	missing, short := missingOf(last)
 	add("Borrowed parts are on the Borrowed list", !unrecorded, true, "A line says borrowed but the Borrowed list does not have it.")
+	add("No parts missing", last != nil && missing == 0, true, fmt.Sprintf("%d part(s) on %d line(s) are still missing. Borrow them from another set and record it on the Borrowed list, or complete the set, then check again.", missing, short))
 	add("Paper check sheet uploaded", len(s.SheetFiles) > 0, true, "Upload your sorting sheet.")
 	add("Build instructions added", len(s.InstrFiles) > 0, true, "Upload the instructions PDF(s) (staff only).")
 	add("Number of bags entered", s.Bags > 0, true, "Say how many bags the set has.")
@@ -558,4 +551,53 @@ func (d *DB) PostReady(slug string) bool {
 		}
 	}
 	return true
+}
+
+// unrecordedBorrow reports a check line that says "borrowed" with no matching record on the Borrowed list.
+func (d *DB) unrecordedBorrow(setNum string, last *SetCheck) bool {
+	if last == nil {
+		return false
+	}
+	for _, l := range last.Lines {
+		if l.Borrowed > 0 {
+			recorded := 0
+			_ = d.QueryRow(`SELECT COALESCE(SUM(qty),0) FROM borrowed_parts WHERE build_set_num = ? AND need_part_num = ? AND (color_id < 0 OR color_id = ?)`, setNum, l.PartNum, l.ColorID).Scan(&recorded)
+			if recorded < l.Borrowed {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// missingOf is how many parts, and on how many lines, the check still lacks once borrowed parts count as present.
+func missingOf(c *SetCheck) (parts, lines int) {
+	if c == nil {
+		return 0, 0
+	}
+	for _, l := range c.Lines {
+		if m := l.Missing(); m > 0 {
+			parts += m
+			lines++
+		}
+	}
+	return parts, lines
+}
+
+// BlogBlock says why a set's blog post, and the onboarding submit that opens it, must not go ahead: the set has no
+// finished check, a borrowed part is not on the Borrowed list, or parts are still missing that no borrowed record
+// covers. It returns "" when the set is complete. Nobody can override it, admins included; admins can still waive the
+// paper check and do or verify the check itself.
+func (d *DB) BlogBlock(setNum string) string {
+	last, _ := d.LastCheck(setNum)
+	if last == nil || last.Status != StatusDone {
+		return "the set has no finished check yet"
+	}
+	if d.unrecordedBorrow(setNum, last) {
+		return "a part is marked borrowed but is not on the Borrowed list: add it there first"
+	}
+	if parts, lines := missingOf(last); parts > 0 {
+		return fmt.Sprintf("%d part(s) on %d line(s) are still missing and none are recorded as borrowed: borrow them from another set and record it, or complete the set, then check again", parts, lines)
+	}
+	return ""
 }

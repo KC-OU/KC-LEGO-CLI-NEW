@@ -152,6 +152,17 @@ func TestOnboardingFlowOverHTTP(t *testing.T) {
 	if !detail.CheckDone || len(detail.Diff) != 0 {
 		t.Fatalf("detail = %+v, want the check done and the paper (2 missing) matching it", detail)
 	}
+	// Two parts are still missing and nothing is borrowed: the blog must not be generated, for anyone.
+	if r := postJSON(t, srv.URL, "/dashboard/onboarding/flow/"+flowID(f.ID)+"/complete", `{"user":"4821","answers":{"counted":"yes"}}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("complete with parts missing = %d, want 400", r.StatusCode)
+	}
+	if r := getWithToken(t, srv.URL, "/dashboard/onboarding/blog-template?set=21027-1"); r.StatusCode != http.StatusConflict {
+		t.Fatalf("blog template with parts missing = %d, want 409", r.StatusCode)
+	}
+	// Recording the two as borrowed from another set makes the set complete, so the blog may go ahead.
+	if _, err := db.AddBorrowedPart(lego.BorrowedPart{BuildSetNum: "21027-1", NeedPartNum: "3001", ColorID: 4, Qty: 2, FromSetNum: "10696-1"}); err != nil {
+		t.Fatal(err)
+	}
 	if r := postJSON(t, srv.URL, "/dashboard/onboarding/flow/"+flowID(f.ID)+"/complete", `{"user":"4821","answers":{"counted":"yes"}}`); r.StatusCode != http.StatusOK {
 		t.Fatalf("complete = %d", r.StatusCode)
 	}

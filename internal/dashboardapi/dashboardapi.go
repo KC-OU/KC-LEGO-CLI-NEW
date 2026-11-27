@@ -150,6 +150,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	mux.HandleFunc("GET /dashboard/checks/{setNum}", s.withToken(s.handleSetCheck))
 	mux.HandleFunc("POST /dashboard/auth/grace-mint", s.withToken(s.handleGraceMint))
 	mux.HandleFunc("POST /dashboard/auth/grace-login", s.withToken(s.handleGraceLogin))
+	mux.HandleFunc("POST /dashboard/auth/switch-login", s.withToken(s.handleSwitchLogin))
 	mux.HandleFunc("GET /dashboard/admin/sessions", s.withToken(s.handleSessions))
 	mux.HandleFunc("POST /dashboard/admin/message", s.withToken(s.handleMessageUser))
 	mux.HandleFunc("POST /dashboard/admin/kick", s.withToken(s.handleKickSession))

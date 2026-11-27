@@ -128,6 +128,14 @@ func (s *Server) handleBlogState(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	note := strings.TrimSpace(req.Note)
 	sec, _ := s.legoDB.Sections(slug)
+	if req.State == lego.PostReview || req.State == lego.PostPublished {
+		if p, _ := s.legoDB.GetPost(slug); p != nil && p.SetNum != "" {
+			if why := s.legoDB.BlogBlock(p.SetNum); why != "" {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "the blog can't go ahead: " + why})
+				return
+			}
+		}
+	}
 	switch req.State {
 	case lego.PostReview:
 		// a post written through the dashboard's steps goes for review only when every blocking check passes

@@ -244,3 +244,19 @@ wms-go access settings --idle-minutes 10 --max-session-hours 8 --grace-minutes 1
 
 Back up or move the policy: `wms-go access export > policy.json`, `wms-go access import policy.json`. The file is
 `/root/docker-server/wms/access.json` (`WMS_ACCESS_FILE`), readable by root only.
+
+## Changing or adding a user ID
+
+An admin can give an account a numeric ID, or change it, from **Access → the user → Change ID** on the dashboard or with
+`wms-go access user rename <old> <new>` (digits only). One step now moves everything: the ticket, accuracy, kanban and
+message history, 2FA enrollment, the policy entry, the ModernWMS/Part-DB login **and the Clerk (dashboard) login**, whose
+username and external ID become the new ID, so the dashboard link keeps working. The Clerk change is made first and put
+back if a later step fails; if Clerk refuses the new ID (too short, taken), nothing changes. The audit log keeps the old ID
+on past entries. A Clerk username is just text, so the numeric ID is the username; Clerk has no separate "ID number" field.
+
+## Switching to an admin without signing out
+
+On the dashboard, **Overview → Switch to admin**: type an admin's ID or email and password and you act as that admin for
+30 minutes, with no authenticator code; **Back to my account** returns you. The terminal's **V** key does the same. Only an
+admin account can be switched to, five wrong passwords lock that ID for a while, and every switch is audited
+(`DASHBOARD_ADMIN_SWITCH`). It needs `DASHBOARD_GRACE_SECRET` set on the dashboard service.

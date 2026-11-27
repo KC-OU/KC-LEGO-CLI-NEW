@@ -13,6 +13,42 @@ import (
 	"github.com/KC-OU/KC-LEGO-CLI-NEW/internal/lego"
 )
 
+// finishSet records a finished intake check of set with one line needing need parts and holding have.
+func finishSet(t *testing.T, db *lego.DB, set string, need, have int) {
+	t.Helper()
+	c := &lego.SetCheck{SetNum: set, Kind: lego.CheckIntake, Status: lego.StatusDraft, CheckedBy: "4821", StartedAt: time.Now(),
+		Lines: []lego.CheckLine{{PartNum: "3001", ColorID: 4, ColorName: "Red", Need: need, Have: have}}}
+	if _, err := db.FinishCheck(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBlogIsDeniedWhileAnyPartIsMissingAndNotBorrowed(t *testing.T) {
+	db, srv := testServer(t, "secret")
+	defer srv.Close()
+	post := func(path, body string) (int, string) {
+		r := postJSON(t, srv.URL, path, body)
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return r.StatusCode, string(b)
+	}
+	if c, b := post("/dashboard/blog", `{"slug":"21027-1","set_num":"21027-1","title":"Berlin","body":"hi","by":"boss"}`); c != 200 {
+		t.Fatalf("save = %d %s", c, b)
+	}
+	finishSet(t, db, "21027-1", 4, 2) // two missing, none borrowed
+	for _, st := range []string{"review", "published"} {
+		if c, b := post("/dashboard/blog/21027-1/state", `{"state":"`+st+`","by":"boss"}`); c != 409 || !strings.Contains(b, "still missing") {
+			t.Fatalf("%s with parts missing (even by an admin) = %d %s, want 409", st, c, b)
+		}
+	}
+	if _, err := db.AddBorrowedPart(lego.BorrowedPart{BuildSetNum: "21027-1", NeedPartNum: "3001", ColorID: 4, Qty: 2, FromSetNum: "10696-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if why := db.BlogBlock("21027-1"); why != "" {
+		t.Fatalf("with both missing parts borrowed and recorded the block should lift, got %q", why)
+	}
+}
+
 func TestBlogSaveReviewApprove(t *testing.T) {
 	db, srv := testServer(t, "tok")
 	do := func(method, path, body string) (int, string) {
@@ -33,6 +69,10 @@ func TestBlogSaveReviewApprove(t *testing.T) {
 	if c, b := do("POST", "/dashboard/blog", `{"slug":"21027-1","set_num":"21027-1","title":"Berlin","body":"hi","by":"kc"}`); c != 200 || !strings.Contains(b, `"state":"draft"`) {
 		t.Fatalf("save = %d %s", c, b)
 	}
+	if c, b := do("POST", "/dashboard/blog/21027-1/state", `{"state":"review","by":"kc"}`); c != 409 || !strings.Contains(b, "no finished check") {
+		t.Fatalf("a post for a set with no finished check = %d %s, want 409", c, b)
+	}
+	finishSet(t, db, "21027-1", 4, 4)
 	if c, _ := do("POST", "/dashboard/blog/21027-1/state", `{"state":"published","by":"kc"}`); c != 400 {
 		t.Fatal("a draft cannot jump straight to published")
 	}
@@ -67,6 +107,7 @@ func TestBlogStepsReadinessReviewNotesAndMessages(t *testing.T) {
 	if err := db.SetBlogWriter("21027-1", "4821"); err != nil {
 		t.Fatal(err)
 	}
+	finishSet(t, db, "21027-1", 4, 4)
 	if c, b := post("/dashboard/blog/21027-1/state", `{"state":"review","by":"4821"}`); c != http.StatusConflict || !strings.Contains(b, "Overview confirmed") {
 		t.Fatalf("sending an unfinished post = %d %s, want 409 naming what is missing", c, b)
 	}

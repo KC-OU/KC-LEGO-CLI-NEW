@@ -663,10 +663,30 @@ func newAccessUserCmd() *cobra.Command {
 				return err
 			}
 			defer db.Close()
+			// Clerk first: a refusal (length, characters, taken) then changes nothing, and it is put back if a later step fails.
+			clerkMoved := false
+			if clerkbridge.Configured() {
+				moved, err := clerkbridge.RenameUser(oldID, newID)
+				if err != nil {
+					return withCode(exitFailure, err)
+				}
+				clerkMoved = moved
+			}
+			undoClerk := func() {
+				if clerkMoved {
+					_, _ = clerkbridge.RenameUser(newID, oldID)
+				}
+			}
 			if err := db.RenameUser(oldID, newID); err != nil {
+				undoClerk()
 				return withCode(exitFailure, fmt.Errorf("ticket/accuracy/kanban history was not moved, nothing changed: %w", err))
 			}
 			t := ui.New()
+			if clerkMoved {
+				say(ui.Status(t, true, "dashboard (Clerk) login moved to "+newID))
+			} else if clerkbridge.Configured() {
+				say(ui.Warn(t, "no Clerk (dashboard) login is linked to "+oldID+", so none was changed"))
+			}
 			if err := twofa.Rename(oldID, newID, source); err != nil {
 				say(ui.Warn(t, "2FA enrollment was not moved: "+err.Error()))
 			}
@@ -689,7 +709,13 @@ func newAccessUserCmd() *cobra.Command {
 				p.Users[nk] = u
 				return nil
 			}); err != nil {
+				undoClerk()
 				return err
+			}
+			if svc, err := openUsersService(); err != nil {
+				say(ui.Warn(t, "the ModernWMS/Part-DB login was not renamed: "+err.Error()))
+			} else if err := svc.RenameUnified(cmd.Context(), oldID, newID, "Checker"); err != nil {
+				say(ui.Warn(t, "the ModernWMS/Part-DB login was not renamed: "+err.Error()))
 			}
 			_ = audit.New().Log(cliUser(), "", "USER_RENAMED", "SUCCESS", fmt.Sprintf("old=%s new=%s source=%s", oldID, newID, source))
 			say(ui.Status(t, true, oldID+" renamed to "+newID))
