@@ -247,6 +247,28 @@ you took it from shows it as *lent* until the replacement is back.
 The Borrowed page tracks each part through *to order*, *ordered* and *replaced*. Marking one *replaced* clears the
 *lent* mark on the donor set.
 
+## How the sorting sheet counts
+
+The tally at the top and on each colour counts **pieces as well as lines**: `✓ 37 ✗ 0 ? 1 · 144/145 pcs · missing 0 extra 0 · 1 to do`.
+
+- A ✓ line counts all of its pieces. A ✗ line counts all but what is missing. A ? or unmarked line counts none.
+- **Missing** comes only from ✗ lines. Marking ✗ fills in 1 missing for you (change it to the real number); typing a number in
+  *miss* marks the line ✗, and typing in *extra* on an unmarked line ticks it. A ? line is not counted as missing: it is still to do.
+- **To do** is the unmarked lines plus the ? lines, so it only reads 0 when nothing is left to settle.
+- Taking a line back to unmarked clears its numbers.
+
+## The count sheet
+
+A second printable layout for the same set: *Dashboard → Sets / Downloads → Count sheet*, `--format count-html`, or **N** on the
+terminal's export screen. It is laid out to be counted: one part per row on a portrait page, and you write how many you
+**got**. Fewer than the need is **missing**, more is **extra** (the sheet works both out), and tapping the need fills in
+"all there". The tiles at the top and each colour bar show **parts needed, got, missing, extra** and lines still to do.
+**Save filled sheet** keeps it in the same form as the sorting sheet, so it can be uploaded as the paper check.
+
+The KC-Parts app has the same sheet as the **Count sheet** screen, saved on the computer as you go.
+
+Both sheets end with the **Borrowed parts** section and, under it, a **Notes** box (saved with the sheet).
+
 ## Sorting sheet sign-off
 
 The header has **Sorted by (ID)** and **Checked by (ID)** boxes (ID numbers only, never names). Your own ID is pre-filled when

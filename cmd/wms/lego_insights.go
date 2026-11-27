@@ -1357,7 +1357,7 @@ func newLegoExportCmd() *cobra.Command {
 			if withImages {
 				data.AddPartImages(img.NewFetcher(config.Get(config.ImageDir)))
 			}
-			if format == "sorting-html" {
+			if lego.IsSheetFormat(format) {
 				db.PrepareSortingSheet(ctx, data, img.NewFetcher(config.Get(config.ImageDir)))
 			}
 			body, _, warns, err := lego.Encode(format, data)

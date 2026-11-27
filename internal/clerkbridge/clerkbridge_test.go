@@ -572,3 +572,23 @@ func TestLinkedIDPrefersTheExternalIDUsersCannotEdit(t *testing.T) {
 		t.Fatalf("with no external ID the username is all there is, got %q", got)
 	}
 }
+
+func TestCreateSignInTokenAsksClerkForATicketForThatUser(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/sign_in_tokens" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"token":"tkt_123"}`))
+	}))
+	defer server.Close()
+	old := apiBase
+	apiBase = server.URL
+	defer func() { apiBase = old }()
+	t.Setenv(config.ClerkSecretKey, "sk_test_fake")
+	tok, err := CreateSignInToken("user_abc")
+	if err != nil || tok != "tkt_123" || got["user_id"] != "user_abc" {
+		t.Fatalf("token %q err %v body %v", tok, err, got)
+	}
+}

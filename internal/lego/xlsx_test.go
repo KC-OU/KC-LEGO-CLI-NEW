@@ -271,3 +271,69 @@ func TestShortNameDropsBracketedRemarks(t *testing.T) {
 		}
 	}
 }
+
+func TestSortingSheetCountsPiecesAndOnlyCrossesAreMissing(t *testing.T) {
+	d := &ExportData{Title: "Set 1-1", When: time.Now(), Rows: []ExportRow{{PartNum: "3001", ColorName: "Red", Qty: 6}}}
+	b, err := SortingHTML(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`"got "+t.pc`,    // tallies say how many pieces were got, not just lines
+		"c[st]++;tot+=n", // every line's quantity goes into the total
+		"st===2){var m=Math.min(n,+q.m.value||1)", // missing comes only from crosses; a cross with no number is 1 short
+		"todo:c[0]+c[3]",                     // a ? line is still to do
+		`c.m.value="1";c.m.dataset.auto="1"`, // marking a cross fills in the 1
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("sheet is missing %q", want)
+		}
+	}
+}
+
+func TestSortingSheetHasANotesSectionUnderBorrowed(t *testing.T) {
+	d := &ExportData{Title: "Set 1-1", When: time.Now(), Rows: []ExportRow{{PartNum: "3001", ColorName: "Red", Qty: 6}}}
+	b, err := SortingHTML(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	borrowed, notes := strings.Index(s, `class="borrow"`), strings.Index(s, `<section class="notes">`)
+	if borrowed < 0 || notes < borrowed || !strings.Contains(s, "notes:notes.value") || !strings.Contains(s, "saved.notes") {
+		t.Fatalf("a Notes box must follow the Borrowed parts and be saved with the sheet (borrowed %d, notes %d)", borrowed, notes)
+	}
+}
+
+func TestCountSheetWorksOutMissingAndExtraFromWhatWasGot(t *testing.T) {
+	d := &ExportData{Title: "Set 1-1", When: time.Now(), SetNum: "1-1", CheckerID: "10932",
+		Rows:     []ExportRow{{PartNum: "3001", ColorName: "Red", Qty: 6}, {PartNum: "3023", ColorName: "Blue", Qty: 4}},
+		Borrowed: []BorrowedPart{{NeedPartNum: "3001", ColorName: "Red", Qty: 2, FromSetNum: "10696-1"}}}
+	b, err := Encode0(t, "count-html", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		"Count sheet", `data-n="6"`, `data-n="4"`, "Parts needed", ">Got<", ">Missing<", ">Extra<",
+		"Math.max(0,n-g)", "Math.max(0,g-n)", // short is missing, over is extra
+		"got:Math.min(g,n)",               // got never counts past the need
+		`id="notes"`, "notes:notes.value", // notes under the borrowed parts, saved
+		`id="kc-state"`, "tr[data-rec]", ">10696-1<", // saves in the sorting sheet's form so it can be uploaded as the paper check
+		"A4 landscape", "column-count:2", // two columns on a landscape page, like the sorting sheet
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("count sheet is missing %q", want)
+		}
+	}
+	if strings.Index(s, `class="borrow"`) > strings.Index(s, `<section class="notes">`) {
+		t.Error("notes must come after the borrowed parts")
+	}
+}
+
+// Encode0 encodes through the public entry point so the format name is what is tested.
+func Encode0(t *testing.T, format string, d *ExportData) ([]byte, error) {
+	t.Helper()
+	body, _, _, err := Encode(format, d)
+	return body, err
+}

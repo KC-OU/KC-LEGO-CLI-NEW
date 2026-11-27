@@ -13,6 +13,7 @@ import (
 var (
 	switchFind   = clerkbridge.FindByIdentifier
 	switchVerify = clerkbridge.VerifyPassword
+	signInTicket = clerkbridge.CreateSignInToken
 )
 
 type switchLoginRequest struct {
@@ -85,4 +86,26 @@ func (s *Server) handleSwitchLogin(w http.ResponseWriter, r *http.Request) {
 		resp.Email = id
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSignInToken is POST /dashboard/auth/sign-in-token {clerk_user_id}: a one-time browser sign-in ticket for that
+// Clerk user. The Rust service calls it only after verifying that the caller holds a genuine Clerk session for exactly
+// that user, so the KC-Parts app can open the web dashboard already signed in.
+func (s *Server) handleSignInToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ClerkUserID string `json:"clerk_user_id"`
+		By          string `json:"by"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&req); err != nil || strings.TrimSpace(req.ClerkUserID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "clerk_user_id is required"})
+		return
+	}
+	ticket, err := signInTicket(strings.TrimSpace(req.ClerkUserID))
+	if err != nil {
+		s.logAudit(req.By, "DASHBOARD_APP_TICKET", "ERROR", err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not get a sign-in ticket"})
+		return
+	}
+	s.logAudit(req.By, "DASHBOARD_APP_TICKET", "SUCCESS", "")
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": ticket})
 }

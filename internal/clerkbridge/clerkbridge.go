@@ -691,3 +691,35 @@ func LinkEmail(email, id string) error {
 	}
 	return PatchUser(info.ID, map[string]string{"external_id": id}, "the link")
 }
+
+// CreateSignInToken asks Clerk for a one-time ticket that signs the browser in as clerkUserID. It is only ever asked for
+// the user who is already signed in (the dashboard checks that), so it hands the same person a browser session without a
+// second password prompt. It lives two minutes and works once.
+func CreateSignInToken(clerkUserID string) (string, error) {
+	secret := config.Get(config.ClerkSecretKey)
+	if secret == "" {
+		return "", fmt.Errorf("dashboard login provisioning is not configured (set %s)", config.ClerkSecretKey)
+	}
+	body, _ := json.Marshal(map[string]any{"user_id": clerkUserID, "expires_in_seconds": 120})
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/sign_in_tokens", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("could not reach Clerk: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Clerk would not issue a sign-in ticket (%d)", resp.StatusCode)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Token == "" {
+		return "", fmt.Errorf("malformed response from Clerk")
+	}
+	return out.Token, nil
+}

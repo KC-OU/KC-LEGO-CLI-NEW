@@ -393,7 +393,7 @@ func BuildCSV(d *ExportData) []byte {
 func FormatsFor(kind string) []string {
 	switch kind {
 	case "set":
-		return []string{"json", "xlsx", "html", "sorting-html"}
+		return []string{"json", "xlsx", "html", "sorting-html", "count-html"}
 	case "missing":
 		return []string{"json", "xlsx", "csv", "html", "bricklink-xml", "rebrickable-csv"}
 	case "owned":
@@ -404,7 +404,11 @@ func FormatsFor(kind string) []string {
 	return nil
 }
 
-var Formats = []string{"rebrickable-csv", "bricklink-xml", "csv", "sets-csv", "json", "xlsx", "html", "report", "sorting-html"}
+var Formats = []string{"rebrickable-csv", "bricklink-xml", "csv", "sets-csv", "json", "xlsx", "html", "report", "sorting-html", "count-html"}
+
+// IsSheetFormat is true for the two printable check sheets, which need their pictures, element ids and sign-off
+// prepared (PrepareSortingSheet) before they are encoded.
+func IsSheetFormat(format string) bool { return format == "sorting-html" || format == "count-html" }
 
 // Encode writes d in format and returns the bytes and the file extension to use.
 func Encode(format string, d *ExportData) (body []byte, ext string, warns ExportWarnings, err error) {
@@ -440,6 +444,9 @@ func Encode(format string, d *ExportData) (body []byte, ext string, warns Export
 		return body, "html", nil, err
 	case "sorting-html":
 		body, err = SortingHTML(d)
+		return body, "html", nil, err
+	case "count-html":
+		body, err = CountHTML(d)
 		return body, "html", nil, err
 	}
 	return nil, "", nil, fmt.Errorf("unknown format %q: use %s", format, strings.Join(Formats, ", "))

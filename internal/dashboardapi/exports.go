@@ -71,7 +71,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if kind != "set" && kind != "build" { // the terminal adds pictures to these too
 		data.AddPartImages(images)
 	}
-	if format == "sorting-html" {
+	if lego.IsSheetFormat(format) {
 		data.CheckerID = lego.WorkerID(r.URL.Query().Get("by")) // pre-fills the sheet's Sorted by / Checked by boxes: a numeric ID, never a name
 		s.legoDB.PrepareSortingSheet(r.Context(), data, images) // every sorting sheet: element ids, swatches, embedded pictures
 	}
@@ -82,7 +82,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	name := kind + "-" + label
 	if !slices.Contains([]string{"json", "xlsx", "csv", "html"}, format) {
-		name += "-" + format // sorting-html, bricklink-xml, rebrickable-csv
+		name += "-" + format // sorting-html, count-html, bricklink-xml, rebrickable-csv
 	}
 	ct := mime.TypeByExtension("." + ext)
 	if ct == "" {

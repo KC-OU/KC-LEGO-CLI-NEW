@@ -20,13 +20,24 @@ var logoSrc = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeT
 // SortingHTML is a set's parts grouped by colour, then category, with pictures,
 // counts and tick boxes: a sheet for sorting a set's parts or building it.
 func SortingHTML(d *ExportData) ([]byte, error) {
-	type group struct {
-		Colour string
-		Swatch template.CSS // the colour as a CSS value, "" when unknown
-		Pieces int
-		Rows   []ExportRow
-	}
-	byColour := map[string]*group{}
+	groups, total := sheetGroups(d)
+	var b bytes.Buffer
+	err := sortingTmpl.Execute(&b, map[string]any{"Title": d.Title, "Groups": groups, "Total": total, "Lines": len(d.Rows), "Colours": len(groups), "Date": d.When.Format("2006-01-02"),
+		"CheckerID": idDigits(d.CheckerID), "Borrowed": d.Borrowed, "Blank": make([]int, 8), "Logo": logoSrc, "SetNum": d.SetNum})
+	return b.Bytes(), err
+}
+
+// sheetGroup is one colour of a set's parts, in the order the sheets list them.
+type sheetGroup struct {
+	Colour string
+	Swatch template.CSS // the colour as a CSS value, "" when unknown
+	Pieces int
+	Rows   []ExportRow
+}
+
+// sheetGroups groups a set's parts by colour, then category and part number, and totals the pieces.
+func sheetGroups(d *ExportData) ([]sheetGroup, int) {
+	byColour := map[string]*sheetGroup{}
 	var order []string
 	for _, r := range d.Rows {
 		c := r.ColorName
@@ -35,7 +46,7 @@ func SortingHTML(d *ExportData) ([]byte, error) {
 		}
 		g := byColour[c]
 		if g == nil {
-			g = &group{Colour: c}
+			g = &sheetGroup{Colour: c}
 			if hexRGB.MatchString(r.ColorRGB) {
 				g.Swatch = template.CSS("#" + r.ColorRGB)
 			}
@@ -46,7 +57,7 @@ func SortingHTML(d *ExportData) ([]byte, error) {
 		g.Pieces += r.Qty
 	}
 	sort.Strings(order)
-	var groups []group
+	var groups []sheetGroup
 	total := 0
 	for _, c := range order {
 		g := byColour[c]
@@ -59,10 +70,7 @@ func SortingHTML(d *ExportData) ([]byte, error) {
 		groups = append(groups, *g)
 		total += g.Pieces
 	}
-	var b bytes.Buffer
-	err := sortingTmpl.Execute(&b, map[string]any{"Title": d.Title, "Groups": groups, "Total": total, "Lines": len(d.Rows), "Colours": len(groups), "Date": d.When.Format("2006-01-02"),
-		"CheckerID": idDigits(d.CheckerID), "Borrowed": d.Borrowed, "Blank": make([]int, 8), "Logo": logoSrc, "SetNum": d.SetNum})
-	return b.Bytes(), err
+	return groups, total
 }
 
 // WorkerID returns s when it is a numeric worker ID (digits only, at most six) and "" otherwise, so a name or
@@ -122,6 +130,8 @@ var sortingTmpl = template.Must(template.New("sort").Funcs(template.FuncMap{"img
  .borrow td{height:1.5rem} .borrow td.q{text-align:left}
  .bi{width:100%;border:0;border-bottom:1px solid #8b93a5;background:transparent;font:inherit;padding:0;border-radius:0}
  .borrow small{color:var(--muted);font-size:9px}
+ .notes{margin:.6rem .9rem 0;break-inside:avoid}
+ .notes textarea{display:block;width:100%;min-height:7.5rem;border:1px solid var(--line);border-top:0;padding:.2rem .5rem;font:inherit;font-size:11px;line-height:1.5rem;resize:vertical;color:var(--ink);background:repeating-linear-gradient(transparent,transparent calc(1.5rem - 1px),#c5cbd9 calc(1.5rem - 1px),#c5cbd9 1.5rem)}
  .ack{display:flex;align-items:flex-start;gap:.5rem;margin:.5rem 0 0;padding:.4rem .6rem;border:1.5px solid var(--navy);font-size:11px;font-weight:600;color:var(--ink)}
  .ack input{width:16px;height:16px;margin:0;flex:none;accent-color:var(--navy)}
  .key{display:flex;flex-wrap:wrap;gap:.2rem .9rem;align-items:center;margin:.35rem .9rem 0;padding:.25rem .5rem;border:1px solid var(--line);border-radius:4px;background:var(--zebra);font-size:9.5px;color:var(--muted)}
@@ -173,7 +183,7 @@ var sortingTmpl = template.Must(template.New("sort").Funcs(template.FuncMap{"img
  td.pn small{display:block;font-weight:400;font-size:9px;color:var(--muted);letter-spacing:.02em}
  .foot{margin:.8rem .9rem 0;padding-top:.3rem;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
  @page{size:A4 landscape;margin:5mm 5mm 10mm;@bottom-left{content:"KC-Parts · Sorting sheet · {{.Title}}";font:9px Inter,Arial,sans-serif;color:#5d6678}@bottom-right{content:"page " counter(page) " of " counter(pages);font:9px Inter,Arial,sans-serif;color:#5d6678}}
- @media print{html,body{width:100%}.page{max-width:none;padding:0 6mm}.foot,.np{display:none}.cols{padding:0;column-count:2;column-gap:8mm;column-rule:1px solid #d5dae4}.sign,.borrow,.key{margin-left:0;margin-right:0}section{margin-top:0;margin-bottom:.4rem}.borrow{margin-top:.5rem}.hid,.si,.bi{border-bottom-color:#8b93a5}}
+ @media print{html,body{width:100%}.page{max-width:none;padding:0 6mm}.foot,.np{display:none}.cols{padding:0;column-count:2;column-gap:8mm;column-rule:1px solid #d5dae4}.sign,.borrow,.notes,.key{margin-left:0;margin-right:0}section{margin-top:0;margin-bottom:.4rem}.borrow{margin-top:.5rem}.hid,.si,.bi{border-bottom-color:#8b93a5}}
 </style></head><body><div class="page" data-set="{{.SetNum}}">
 <header class="band"><img class="logo" alt="KC-Parts" src="{{.Logo}}"><div><h1>{{.Title}}</h1><p>Sorting sheet · {{.Lines}} part lines · {{.Total}} pieces · {{.Colours}} colours · by colour, then category · Use only your username ID number, and never your name</p></div><input class="pill" id="hd" value="{{.Date}}" aria-label="Date" size="10"></header>
 <div class="sign"><span>Sorted by (ID) <input class="hid" id="hs" inputmode="numeric" maxlength="6" value="{{.CheckerID}}"></span><span>Checked by (ID) <input class="hid" id="hc" inputmode="numeric" maxlength="6" value="{{.CheckerID}}"></span><span class="tally" id="tally"></span><button type="button" class="np" id="save" title="Download a copy with every mark, ID and date saved in it, to upload as your paper check">Save filled sheet</button><button type="button" class="np" id="clear">Clear marks</button></div>
@@ -192,12 +202,14 @@ var sortingTmpl = template.Must(template.New("sort").Funcs(template.FuncMap{"img
 {{end}}{{range .Blank}}<tr><td><input class="bi" aria-label="Part needed"></td><td><input class="bi" aria-label="Colour"></td><td><input class="bi" inputmode="numeric" aria-label="Quantity"></td><td><input class="bi" aria-label="Borrowed from set"></td><td><input class="bi" aria-label="From part"></td><td><input class="bi" aria-label="Note"></td></tr>
 {{end}}</tbody></table>
 <label class="ack"><input type="checkbox" id="ack"><span>Borrowed parts have been added to the system straight away after this check. This is a priority and must be done now.</span></label></section>
+<section class="notes"><div class="bar"><span>Notes</span><span class="n">anything the admin or the next person should know</span></div><textarea id="notes" rows="6" aria-label="Notes" placeholder="Damaged parts, wrong colours, things to ask..."></textarea></section>
 <div class="foot"><span>KC-Parts · Sorting sheet · {{.Title}}</span><span>Print at 100% on A4 landscape (two columns)</span></div>
 <script>
 (function(){
  var rows=[].slice.call(document.querySelectorAll("tbody tr")).filter(function(r){return r.querySelector(".mk")}),
   key="sort2:"+document.title+":"+rows.length,tally=document.getElementById("tally"),saved={},hs=document.getElementById("hs"),hc=document.getElementById("hc"),hd=document.getElementById("hd"),
   ack=document.getElementById("ack"),bis=[].slice.call(document.querySelectorAll(".bi")),page=document.querySelector(".page");
+ var notes=document.getElementById("notes");
  try{saved=JSON.parse(localStorage.getItem(key)||"{}")}catch(e){}
  var emb=document.getElementById("kc-state");if(emb){try{saved=JSON.parse(emb.textContent)}catch(e){}}
  function digits(el,n){var v=el.value.replace(/\D/g,"").slice(0,n);if(v!==el.value)el.value=v}
@@ -207,28 +219,40 @@ var sortingTmpl = template.Must(template.New("sort").Funcs(template.FuncMap{"img
  function stamp(c){if(!c.d.value)c.d.value=short(hd.value)}
  function collect(){var rec=0,br=[];[].slice.call(document.querySelectorAll("tr[data-rec]")).forEach(function(r){rec+=+r.dataset.rec||0});
   for(var i=0;i<bis.length;i+=6)br.push(bis.slice(i,i+6).map(function(e){return e.value}));
-  return{set:page.dataset.set||"",h:{s:hs.value,c:hc.value,d:hd.value},ack:ack.checked?1:0,rec:rec,borrowed:br,
+  return{set:page.dataset.set||"",h:{s:hs.value,c:hc.value,d:hd.value},ack:ack.checked?1:0,rec:rec,borrowed:br,notes:notes.value,
    lines:rows.map(function(r){var c=cells(r);return{p:r.dataset.p,c:+r.dataset.c,s:+(c.b.dataset.s||0),m:c.m.value,x:c.x.value,i:c.g.dataset.b||"",d:c.d.value}})}}
- function sum(){var n=[0,0,0,0],ms=0,ex=0;
-  [].slice.call(document.querySelectorAll("section.cs")).forEach(function(sec){var c=[0,0,0,0],m=0,x=0,rs=[].slice.call(sec.querySelectorAll("tbody tr"));rs.forEach(function(r){var q=cells(r),st=+(q.b.dataset.s||0);c[st]++;m+=+q.m.value||0;x+=+q.x.value||0});
-   sec.querySelector(".ct").textContent="\u2713 "+c[1]+"  \u2717 "+c[2]+"  ? "+c[3]+"  \u00b7  missing "+m+"  extra "+x;sec.querySelector(".left").textContent=c[0]+" to do"});
-  rows.forEach(function(r){var c=cells(r),s=+(c.b.dataset.s||0);n[s]++;ms+=+c.m.value||0;ex+=+c.x.value||0});
+ function qty(r){var q=r.querySelector(".q");return q?(parseInt(q.textContent,10)||0):0}
+ function setState(c,v){if(v)c.b.dataset.s=v;else delete c.b.dataset.s}
+ // Counts for some rows: lines by mark, pieces counted (a tick counts the whole line, a cross all but what is missing,
+ // an unmarked or ? line none), missing only from crosses (a cross with no number is 1 short), and what is still to do.
+ function tl(rs){var c=[0,0,0,0],pc=0,tot=0,ms=0,ex=0;rs.forEach(function(r){var q=cells(r),st=+(q.b.dataset.s||0),n=qty(r);c[st]++;tot+=n;
+   if(st===1)pc+=n;else if(st===2){var m=Math.min(n,+q.m.value||1);ms+=m;pc+=n-m}ex+=+q.x.value||0});
+  return{c:c,pc:pc,tot:tot,ms:ms,ex:ex,todo:c[0]+c[3]}}
+ function txt(t){return"\u2713 "+t.c[1]+"  \u2717 "+t.c[2]+"  ? "+t.c[3]+"  \u00b7  "+"got "+t.pc+"/"+t.tot+"  \u00b7  missing "+t.ms+"  \u00b7  extra "+t.ex}
+ function sum(){
+  [].slice.call(document.querySelectorAll("section.cs")).forEach(function(sec){var t=tl([].slice.call(sec.querySelectorAll("tbody tr")));
+   sec.querySelector(".ct").textContent=txt(t);sec.querySelector(".left").textContent=t.todo+" to do"});
+  var t=tl(rows);
   try{localStorage.setItem(key,JSON.stringify(collect()))}catch(e){}
-  tally.textContent="\u2713 "+n[1]+"  \u2717 "+n[2]+"  ? "+n[3]+"  \u00b7  missing "+ms+"  extra "+ex}
+  tally.textContent=txt(t)+"  \u00b7  "+t.todo+" to do"}
  var h=saved.h;if(h){if(h.s)hs.value=h.s;if(h.c)hc.value=h.c;if(h.d)hd.value=h.d}
+ if(saved.notes)notes.value=saved.notes;
  if(saved.lines||saved.ack||saved.borrowed){ack.checked=!!saved.ack;(saved.borrowed||[]).forEach(function(row,i){row.forEach(function(v,j){if(bis[i*6+j])bis[i*6+j].value=v})})}
  rows.forEach(function(r,i){var c=cells(r),v=(saved.lines||[])[i];
   if(v&&v.p===r.dataset.p){if(v.s)c.b.dataset.s=v.s;c.m.value=v.m||"";c.x.value=v.x||"";setBag(c,v.i);c.d.value=v.d||""}
-  c.b.addEventListener("click",function(){c.b.dataset.s=((+c.b.dataset.s||0)+1)%4||"";if(!c.b.dataset.s)delete c.b.dataset.s;else stamp(c);sum()});
-  [c.m,c.x].forEach(function(e){e.addEventListener("input",function(){digits(e,4);sum()})});
+  c.b.addEventListener("click",function(){var was=+(c.b.dataset.s||0),v=(was+1)%4;
+   if(was===2&&c.m.dataset.auto&&c.m.value==="1")c.m.value="";delete c.m.dataset.auto;
+   setState(c,v);if(v===0){c.m.value="";c.x.value=""}if(v===2&&!c.m.value){c.m.value="1";c.m.dataset.auto="1"}if(v)stamp(c);sum()});
+  c.m.addEventListener("input",function(){digits(c.m,4);delete c.m.dataset.auto;var v=+(c.b.dataset.s||0);if(c.m.value&&v<2){setState(c,2);stamp(c)}sum()});
+  c.x.addEventListener("input",function(){digits(c.x,4);if(c.x.value&&!(+(c.b.dataset.s||0))){setState(c,1);stamp(c)}sum()});
   c.g.addEventListener("click",function(){setBag(c,{"":"1","1":"2","2":""}[c.g.dataset.b||""]);sum()});
   c.d.addEventListener("input",sum);c.d.addEventListener("focus",function(){if(!c.d.value){c.d.value=short(hd.value);sum()}})});
- [hs,hc].forEach(function(e){e.addEventListener("input",function(){digits(e,6);sum()})});hd.addEventListener("input",sum);ack.addEventListener("change",sum);bis.forEach(function(e){e.addEventListener("input",sum)});
+ [hs,hc].forEach(function(e){e.addEventListener("input",function(){digits(e,6);sum()})});hd.addEventListener("input",sum);ack.addEventListener("change",sum);notes.addEventListener("input",sum);bis.forEach(function(e){e.addEventListener("input",sum)});
  var cb=document.getElementById("clear"),timer;
  function disarm(){clearTimeout(timer);cb.textContent="Clear marks";cb.removeAttribute("data-arm")}
  cb.addEventListener("click",function(){
   if(!cb.hasAttribute("data-arm")){cb.setAttribute("data-arm","1");cb.textContent="Tap again to clear";timer=setTimeout(disarm,4000);return}
-  disarm();rows.forEach(function(r){var c=cells(r);c.b.removeAttribute("data-s");c.m.value="";c.x.value="";setBag(c,"");c.d.value=""});sum()});
+  disarm();rows.forEach(function(r){var c=cells(r);c.b.removeAttribute("data-s");delete c.m.dataset.auto;c.m.value="";c.x.value="";setBag(c,"");c.d.value=""});sum()});
  document.getElementById("save").addEventListener("click",function(){
   sum();var out=document.documentElement.cloneNode(true),old=out.querySelector("#kc-state");if(old)old.remove();
   var sc=document.createElement("script");sc.type="application/json";sc.id="kc-state";sc.textContent=JSON.stringify(collect()).replace(/</g,"\\u003c");

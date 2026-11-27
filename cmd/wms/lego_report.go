@@ -27,7 +27,7 @@ func writeReport(t ui.Theme, db *lego.DB, kind string, data *lego.ExportData, fo
 	if format == "" {
 		format = "report"
 	}
-	if format == "sorting-html" {
+	if lego.IsSheetFormat(format) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		db.PrepareSortingSheet(ctx, data, img.NewFetcher(config.Get(config.ImageDir)))

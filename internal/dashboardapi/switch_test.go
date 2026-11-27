@@ -53,3 +53,23 @@ func TestSwitchLoginIsAdminOnlyPasswordOnlyAndLocksOut(t *testing.T) {
 		t.Fatalf("locked out identifier still got in: %d", c)
 	}
 }
+
+func TestSignInTokenIsIssuedForTheNamedUserOnly(t *testing.T) {
+	isolateGraceStores(t)
+	old := signInTicket
+	defer func() { signInTicket = old }()
+	var asked string
+	signInTicket = func(id string) (string, error) { asked = id; return "tkt_abc", nil }
+	_, srv := testServer(t, "secret")
+	defer srv.Close()
+	resp := postJSON(t, srv.URL, "/dashboard/auth/sign-in-token", `{"clerk_user_id":"user_chk","by":"10932"}`)
+	defer resp.Body.Close()
+	var out map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK || out["ticket"] != "tkt_abc" || asked != "user_chk" {
+		t.Fatalf("status %d, body %v, asked %q", resp.StatusCode, out, asked)
+	}
+	if r := postJSON(t, srv.URL, "/dashboard/auth/sign-in-token", `{"clerk_user_id":""}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("an empty user = %d, want 400", r.StatusCode)
+	}
+}

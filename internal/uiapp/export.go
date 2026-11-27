@@ -55,6 +55,7 @@ var formatKeys = map[string][2]string{
 	"bricklink-xml":   {"B", "BrickLink wanted list (XML upload)"},
 	"rebrickable-csv": {"R", "Rebrickable parts list (CSV import)"},
 	"sorting-html":    {"G", "Sorting sheet: parts by colour with pictures and tick boxes"},
+	"count-html":      {"N", "Count sheet: type how many you got per line; it works out missing and extra"},
 	"report":          {"P", "Printable report (clean, title-page form — for reading or printing)"},
 	"sets-csv":        {"L", "Sets CSV — sets only (plain csv is parts-only, and empty for a sets-only report)"},
 	"checklist":       {"K", "Printable checklist (blank, to print and count)"},
@@ -211,7 +212,7 @@ func runExport(app *App, job *exportJob, format string) {
 			app.setMsg("Export failed: "+err.Error(), true)
 			return
 		}
-		if format == "sorting-html" {
+		if lego.IsSheetFormat(format) {
 			data.CheckerID = lego.WorkerID(app.userName())
 			app.legoDB.PrepareSortingSheet(app.ctx(), data, app.images)
 		}
