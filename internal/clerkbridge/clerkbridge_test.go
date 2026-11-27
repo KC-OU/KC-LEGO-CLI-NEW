@@ -563,3 +563,12 @@ func TestRenameUserWithNoClerkAccountIsNotAnError(t *testing.T) {
 		t.Fatalf("RenameUser = %v, %v; want false, nil", ok, err)
 	}
 }
+
+func TestLinkedIDPrefersTheExternalIDUsersCannotEdit(t *testing.T) {
+	if got := linkedID("7421", "7354"); got != "7421" {
+		t.Fatalf("a user who renamed themselves to 7354 must still be %q, got %q", "7421", got)
+	}
+	if got := linkedID("", "checker"); got != "checker" {
+		t.Fatalf("with no external ID the username is all there is, got %q", got)
+	}
+}

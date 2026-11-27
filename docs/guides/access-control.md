@@ -260,3 +260,13 @@ On the dashboard, **Overview → Switch to admin**: type an admin's ID or email 
 30 minutes, with no authenticator code; **Back to my account** returns you. The terminal's **V** key does the same. Only an
 admin account can be switched to, five wrong passwords lock that ID for a while, and every switch is audited
 (`DASHBOARD_ADMIN_SWITCH`). It needs `DASHBOARD_GRACE_SECRET` set on the dashboard service.
+
+## Clerk logins: tie each one to an ID the user cannot edit
+
+The dashboard decides who a Clerk login *is* from the `username` claim in its session token. A user can change their own
+Clerk username from Clerk's account screen, so a username alone is not safe as an identity: someone could rename themselves
+to another account's ID. An **external ID** can only be set from here, so use that:
+
+1. `wms-go access user link <id> <email>` for every linked login (`wms-go access user rename` and account creation already set it).
+2. In the Clerk dashboard, *Sessions → Customize session token*, change the `username` claim from `{{user.username}}` to
+   `{{user.external_id}}`. A login with no external ID then has no ID and is simply not linked, which fails closed.

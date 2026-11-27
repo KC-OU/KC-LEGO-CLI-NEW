@@ -723,6 +723,27 @@ func newAccessUserCmd() *cobra.Command {
 		},
 	}
 
+	linkCmd := &cobra.Command{
+		Use:   "link <id> <email>",
+		Short: "Tie a Clerk (dashboard) login to a user ID in a way the user cannot edit",
+		Long: "Sets the external ID of the Clerk account with this email to <id>. The dashboard trusts a Clerk user's\n" +
+			"username as their ID unless an external ID is set, and a user can change their own username from Clerk's\n" +
+			"account screen; an external ID can only be changed here. Run it for every linked login.",
+		Example: "  wms access user link 7421 checker@kcparts.xyz",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !clerkbridge.Configured() {
+				return usageError("dashboard login provisioning is not configured")
+			}
+			if err := clerkbridge.LinkEmail(strings.TrimSpace(args[1]), strings.TrimSpace(args[0])); err != nil {
+				return withCode(exitFailure, err)
+			}
+			_ = audit.New().Log(cliUser(), "", "DASHBOARD_LOGIN_LINKED", "SUCCESS", "id="+args[0])
+			say(ui.Status(ui.New(), true, args[1]+" is now linked to "+args[0]))
+			return emit(map[string]any{"id": args[0], "email": args[1]})
+		},
+	}
+
 	remove := &cobra.Command{
 		Use: "remove <user>", Short: "Delete the user's entry (they go back to their ModernWMS role's access)", Args: cobra.ExactArgs(1),
 		Example: "  wms access user remove alex",
@@ -742,7 +763,7 @@ func newAccessUserCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, dashboard, expires, timeouts, noteCmd, badgeCmd, setPasswordCmd, setNameCmd, renameCmd, remove)
+	cmd.AddCommand(list, show, setGroups, permCmd("allow"), permCmd("deny"), permCmd("inherit"), twofaCmd, channels, dashboard, expires, timeouts, noteCmd, badgeCmd, setPasswordCmd, setNameCmd, renameCmd, linkCmd, remove)
 	return cmd
 }
 

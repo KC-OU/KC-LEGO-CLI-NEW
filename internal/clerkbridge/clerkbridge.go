@@ -207,6 +207,9 @@ type UserInfo struct {
 	// leaves both "" (its callers don't need them).
 	Username string
 	Role     string
+	// ExternalID is the Go-side ID Provision/RenameUser store on the Clerk user. Unlike Username, a user cannot
+	// change it from Clerk's own account screen.
+	ExternalID string
 }
 
 type clerkUserFull struct {
@@ -301,6 +304,7 @@ func FindUserByEmail(email string) (*UserInfo, error) {
 	var out []struct {
 		clerkUserFull
 		Username       string `json:"username"`
+		ExternalID     string `json:"external_id"`
 		PublicMetadata struct {
 			Role string `json:"role"`
 		} `json:"public_metadata"`
@@ -320,7 +324,7 @@ func FindUserByEmail(email string) (*UserInfo, error) {
 			if match != nil {
 				return nil, nil // a second candidate also matched -- refuse rather than guess which is right
 			}
-			match = &UserInfo{ID: u.ID, TOTPEnabled: u.TOTPEnabled, Username: u.Username, Role: u.PublicMetadata.Role}
+			match = &UserInfo{ID: u.ID, TOTPEnabled: u.TOTPEnabled, Username: linkedID(u.ExternalID, u.Username), Role: u.PublicMetadata.Role, ExternalID: u.ExternalID}
 			break
 		}
 	}
@@ -615,7 +619,7 @@ func FindByUsername(id string) (*UserInfo, error) {
 	if match == nil {
 		return nil, nil
 	}
-	return &UserInfo{ID: match.ID, TOTPEnabled: match.TOTPEnabled, Username: match.Username, Role: match.PublicMetadata.Role}, nil
+	return &UserInfo{ID: match.ID, TOTPEnabled: match.TOTPEnabled, Username: linkedID(match.ExternalID, match.Username), Role: match.PublicMetadata.Role, ExternalID: match.ExternalID}, nil
 }
 
 // FindByIdentifier takes what someone types to sign in: an email address or a user ID/username.
@@ -635,20 +639,34 @@ func RenameUser(oldID, newID string) (bool, error) {
 	if err != nil || info == nil {
 		return false, err
 	}
-	body, _ := json.Marshal(map[string]string{"username": newID, "external_id": newID})
-	req, err := http.NewRequest(http.MethodPatch, apiBase+"/users/"+url.PathEscape(info.ID), bytes.NewReader(body))
+	return true, PatchUser(info.ID, map[string]string{"username": newID, "external_id": newID}, "the new ID")
+}
+
+// linkedID is the ID Go uses for a Clerk account: its external_id when set, which only the backend can change, else
+// its username, which the user can edit from Clerk's own account screen (so never rely on it once external_id is set).
+func linkedID(externalID, username string) string {
+	if strings.TrimSpace(externalID) != "" {
+		return externalID
+	}
+	return username
+}
+
+// PatchUser updates fields on a Clerk user. what names the change in an error ("the new ID").
+func PatchUser(clerkID string, fields map[string]string, what string) error {
+	body, _ := json.Marshal(fields)
+	req, err := http.NewRequest(http.MethodPatch, apiBase+"/users/"+url.PathEscape(clerkID), bytes.NewReader(body))
 	if err != nil {
-		return false, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+config.Get(config.ClerkSecretKey))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return false, fmt.Errorf("could not reach Clerk: %w", err)
+		return fmt.Errorf("could not reach Clerk: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
-		return true, nil
+		return nil
 	}
 	var e struct {
 		Errors []struct {
@@ -657,7 +675,19 @@ func RenameUser(oldID, newID string) (bool, error) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&e)
 	if len(e.Errors) > 0 && e.Errors[0].LongMessage != "" {
-		return false, fmt.Errorf("Clerk refused the new ID: %s", e.Errors[0].LongMessage)
+		return fmt.Errorf("Clerk refused %s: %s", what, e.Errors[0].LongMessage)
 	}
-	return false, fmt.Errorf("Clerk refused the new ID (%d)", resp.StatusCode)
+	return fmt.Errorf("Clerk refused %s (%d)", what, resp.StatusCode)
+}
+
+// LinkEmail sets the external_id of the Clerk account with this email to id: the link the dashboard should trust.
+func LinkEmail(email, id string) error {
+	info, err := FindUserByEmail(email)
+	if err != nil {
+		return err
+	}
+	if info == nil {
+		return fmt.Errorf("no single Clerk account has that email")
+	}
+	return PatchUser(info.ID, map[string]string{"external_id": id}, "the link")
 }
